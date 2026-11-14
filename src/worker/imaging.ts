@@ -1,4 +1,14 @@
-import { imageStats, parseFits, readImage, stretchValue, type FitsStats, type WaveTable } from '../lib/fits'
+import {
+  imageStats,
+  numberValue,
+  parseFits,
+  pixelScale,
+  readImage,
+  stretchValue,
+  textValue,
+  type FitsStats,
+  type WaveTable,
+} from '../lib/fits'
 
 const STOPS = [
   [4, 3, 14],
@@ -86,8 +96,18 @@ export type CutoutRaster = {
   png: Uint8Array
   width: number
   height: number
-  stats: FitsStats | null
+  stats: FitsStats
+  varianceStats: FitsStats | null
+  zodiStats: FitsStats | null
+  pixelScale: number | null
+  flaggedPixels: number
   wave: WaveTable | null
+  dateAvg: string
+  exposure: number | null
+  bunit: string
+  detector: string
+  band: string
+  obsid: string
 }
 
 export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster> {
@@ -97,6 +117,15 @@ export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster
   const pixels = readImage(buffer, image)
   const stats = imageStats(pixels)
   if (!stats) throw new Error('The cutout has no finite image pixels.')
+  const variance = fits.hdus.find((hdu) => hdu.name.toUpperCase() === 'VARIANCE')
+  const zodi = fits.hdus.find((hdu) => hdu.name.toUpperCase() === 'ZODI')
+  const flags = fits.hdus.find((hdu) => hdu.name.toUpperCase() === 'FLAGS')
+  const flagValues = flags ? readImage(buffer, flags) : null
+  const flaggedPixels = flagValues
+    ? flagValues.reduce((total, value) => total + (Number.isFinite(value) && value !== 0 ? 1 : 0), 0)
+    : 0
+  const scale = pixelScale(image)
+  const exposure = numberValue(image.header, 'EXPTIME', Number.NaN)
 
   const rgba = new Uint8Array(image.width * image.height * 4)
   for (let index = 0; index < pixels.length; index += 1) {
@@ -118,6 +147,16 @@ export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster
     width: image.width,
     height: image.height,
     stats,
+    varianceStats: variance ? imageStats(readImage(buffer, variance)) : null,
+    zodiStats: zodi ? imageStats(readImage(buffer, zodi)) : null,
+    pixelScale: Number.isFinite(scale) ? scale : null,
+    flaggedPixels,
     wave: fits.wave,
+    dateAvg: textValue(image.header, 'DATE-AVG'),
+    exposure: Number.isFinite(exposure) ? exposure : null,
+    bunit: textValue(image.header, 'BUNIT'),
+    detector: textValue(image.header, 'DETECTOR'),
+    band: textValue(image.header, 'BAND'),
+    obsid: textValue(image.header, 'OBSID'),
   }
 }

@@ -70,12 +70,20 @@ The Worker source is `src/worker/index.ts`, `src/worker/irsa.ts` and
 SIA2 rows: visit count, detector products, bands, date span, cadence and an
 estimated full-frame download size. `GET /api/spherex/summary` fetches one real
 cutout and returns its server-side FITS summary: dimensions, IMAGE statistics,
-flag-bit counts, WCS-WAVE range and key header values. `GET /api/spherex/frames`
-selects real time-separated visits for a field and returns their SIA2 metadata
-plus same-origin PNG URLs. Those URLs are served by `GET /api/spherex/png`,
-which rasterizes the actual IMAGE FITS pixels from the IRSA cutout. All of these
-routes use the same validation, cache and fallback rules as the viewer routes.
-The Render frontend uses `/frames` and `/png`; it does not generate demo pixels.
+VARIANCE and ZODI statistics, pixel scale, flag-bit counts, WCS-WAVE range and
+key header values, plus the IAU constellation and sky coordinates. `GET
+/api/spherex/frames` selects real time-separated visits for a field and returns
+their SIA2 metadata, same-origin PNG URLs, and `sky`: IAU constellation, J2000
+sexagesimal RA/Dec, galactic longitude/latitude and ecliptic longitude/latitude.
+Those URLs are served by `GET /api/spherex/png`, which rasterizes the actual
+IMAGE FITS pixels from the IRSA cutout. Its response headers expose the real
+IMAGE min/max/low/high/median/mean, VARIANCE and ZODI medians, flagged-pixel
+count, pixel scale, wavelength range and bandwidth, DATE-AVG, exposure when
+present, detector, band, OBSID and BUNIT. Constellation names use
+[`astronomy-engine`](https://github.com/cosinekitty/astronomy), not a hand-coded
+lookup table. All of these routes use the same validation, cache and fallback
+rules as the viewer routes. The Render frontend uses `/frames` and `/png`; it
+does not generate demo pixels.
 
 ## Backend behaviour
 
@@ -89,7 +97,7 @@ The Render frontend uses `/frames` and `/png`; it does not generate demo pixels.
   exponential backoff and `Retry-After` support. SIA2 has a 50 s total budget;
   cutouts and TAP queries have 45 s budgets. Responses are size-limited.
 - **Caching** — SIA2, catalogue and spectrum results use bounded TTL caches.
-  Successful GETs are also stored in the `drift-api-v2` Cache API namespace and
+  Successful GETs are also stored in the `drift-api-v6` Cache API namespace and
   report `X-Cache: HIT` or `MISS`. Identical concurrent requests are coalesced.
 - **Failure handling** — SIA2 and catalogue services enter a 30 s cooldown
   after a failed request, returning `503` with `Retry-After` instead of
@@ -117,8 +125,9 @@ and a real D2 cutout so the first render does not wait on an IRSA queue:
 - `public/data/spherex/dr1-d2-150.fits` — real IRSA DR1 D2 cutout for the
   default field, 176 × 176 pixels, with EPSF removed.
 
-The badge marks this as a cached IRSA cutout. **Refetch** and any other field use
-the live Worker routes. IRSA occasionally answers the cutout service with
+When the bundled index is used, the badge reads **CACHED IRSA • REAL FITS**;
+live SIA2 results read **LIVE IRSA • REAL FITS**. **Refetch** and any other field
+use the live Worker routes. IRSA occasionally answers the cutout service with
 `503 Server busy`; the proxy retries and the UI exposes a Retry button rather
 than substituting a model.
 
@@ -188,6 +197,7 @@ catalogue services belong to their respective archives.
 
 ```
 src/worker/index.ts          Hono routes: find, cutout, spectrum, catalog
+src/worker/sky.ts            IAU constellation + galactic/ecliptic coordinates
 src/worker/http.ts           validation, retry, caches, URL allowlist, limits
 src/worker/irsa.ts           SIA2, cutout proxy, FITS strip, catalogue services
 src/lib/real.ts              client fetch/group/parse/projection helpers

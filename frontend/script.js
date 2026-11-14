@@ -14,9 +14,15 @@ const el = {
   frameA: $('frameA'), frameB: $('frameB'), blink: $('blink'), showCompare: $('showCompare'),
   compareGrid: $('compareGrid'), compareImageA: $('compareImageA'), compareImageB: $('compareImageB'),
   compareLabelA: $('compareLabelA'), compareLabelB: $('compareLabelB'),
-  detailSource: $('detailSource'), detailFrame: $('detailFrame'), detailSize: $('detailSize'),
-  detailRA: $('detailRA'), detailDec: $('detailDec'), detailDate: $('detailDate'),
-  detailWavelength: $('detailWavelength'), toast: $('toast')
+  detailSource: $('detailSource'), detailFrame: $('detailFrame'), detailObsid: $('detailObsid'),
+  detailSize: $('detailSize'), detailRA: $('detailRA'), detailDec: $('detailDec'),
+  detailSexagesimal: $('detailSexagesimal'), detailConstellation: $('detailConstellation'),
+  detailGalactic: $('detailGalactic'), detailEcliptic: $('detailEcliptic'),
+  detailDate: $('detailDate'), detailWavelength: $('detailWavelength'),
+  detailIntensity: $('detailIntensity'), detailRange: $('detailRange'), detailFullRange: $('detailFullRange'),
+  detailMean: $('detailMean'), detailVariance: $('detailVariance'), detailZodi: $('detailZodi'),
+  detailFlags: $('detailFlags'), detailWave: $('detailWave'),
+  detailExposure: $('detailExposure'), detailPixelScale: $('detailPixelScale'), toast: $('toast')
 };
 
 const targets = {
@@ -27,7 +33,7 @@ let frames = [];
 let frameIndex = 0, interval = null, blinkMode = false, comparisonOpen = false;
 let zoom = 1, panX = 0, panY = 0, isDragging = false, dragStart = null;
 let ownedObjectUrls = [];
-let toastTimeout = null, loadingReal = false;
+let toastTimeout = null, loadingReal = false, sky = null, realBadge = 'LIVE IRSA • REAL FITS';
 
 function notify(message) {
   el.toast.textContent = message;
@@ -74,25 +80,132 @@ function stopPlayback() {
   el.play.textContent = '▶ Play'; el.blink.textContent = 'Blink A / B';
 }
 
+function formatNumber(value) {
+  if (!Number.isFinite(value)) return '—';
+  if (value === 0) return '0';
+  const absolute = Math.abs(value);
+  if (absolute >= 1000 || absolute < 0.001) return value.toExponential(2);
+  return value.toFixed(3);
+}
+
+function formatSky() {
+  if (!sky) {
+    el.detailConstellation.textContent = '—';
+    el.detailGalactic.textContent = '—';
+    el.detailEcliptic.textContent = '—';
+    el.detailSexagesimal.textContent = '—';
+    return;
+  }
+  el.detailConstellation.textContent = sky.constellation.name === sky.constellation.symbol
+    ? sky.constellation.name
+    : `${sky.constellation.name} (${sky.constellation.symbol})`;
+  el.detailGalactic.textContent = `${sky.galactic.l.toFixed(2)}° / ${sky.galactic.b >= 0 ? '+' : ''}${sky.galactic.b.toFixed(2)}°`;
+  el.detailEcliptic.textContent = `${sky.ecliptic.lon.toFixed(2)}° / ${sky.ecliptic.lat >= 0 ? '+' : ''}${sky.ecliptic.lat.toFixed(2)}°`;
+  el.detailSexagesimal.textContent = `${sky.raHms} · ${sky.decDms}`;
+}
+
 function updateDetails(frame) {
   if (!frame) {
     el.detailSource.textContent = '—';
     el.detailFrame.textContent = '—';
+    el.detailObsid.textContent = '—';
     el.detailSize.textContent = '—';
     el.detailDate.textContent = 'Not provided';
     el.detailWavelength.textContent = 'Not provided';
+    el.detailIntensity.textContent = '—';
+    el.detailRange.textContent = '—';
+    el.detailFullRange.textContent = '—';
+    el.detailMean.textContent = '—';
+    el.detailVariance.textContent = '—';
+    el.detailZodi.textContent = '—';
+    el.detailFlags.textContent = '—';
+    el.detailWave.textContent = '—';
+    el.detailExposure.textContent = '—';
+    el.detailPixelScale.textContent = '—';
+    formatSky();
     return;
   }
+  const analysis = frame.analysis;
   el.detailSource.textContent = frame.real ? 'IRSA SPHEREx DR1' : 'Local PNG files';
   el.detailFrame.textContent = frame.label;
+  el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
   el.detailSize.textContent = frame.width && frame.height ? `${frame.width} × ${frame.height} px` : 'Loading real pixels…';
-  el.detailDate.textContent = frame.iso ? frame.iso.replace('T', ' ').slice(0, 19) : 'Not provided';
+  el.detailDate.textContent = analysis?.dateAvg
+    ? analysis.dateAvg.replace('T', ' ').slice(0, 23)
+    : frame.iso ? frame.iso.replace('T', ' ').slice(0, 19) : 'Not provided';
   el.detailWavelength.textContent = frame.band ? `SPHEREx ${frame.band}` : 'Not provided';
+  el.detailIntensity.textContent = analysis ? `${formatNumber(analysis.median)} ${analysis.bunit || 'MJy sr⁻¹'}` : 'Measuring FITS…';
+  el.detailRange.textContent = analysis ? `${formatNumber(analysis.low)} – ${formatNumber(analysis.high)}` : '—';
+  el.detailFullRange.textContent = analysis ? `${formatNumber(analysis.min)} – ${formatNumber(analysis.max)}` : '—';
+  el.detailMean.textContent = analysis ? `${formatNumber(analysis.mean)} / ${formatNumber(analysis.median)}` : '—';
+  el.detailVariance.textContent = analysis && Number.isFinite(analysis.varianceMedian) ? formatNumber(analysis.varianceMedian) : '—';
+  el.detailZodi.textContent = analysis && Number.isFinite(analysis.zodiMedian) ? formatNumber(analysis.zodiMedian) : '—';
+  el.detailFlags.textContent = analysis
+    ? frame.width && frame.height
+      ? `${analysis.flagged.toLocaleString()} (${((analysis.flagged / (frame.width * frame.height)) * 100).toFixed(1)}%)`
+      : analysis.flagged.toLocaleString()
+    : '—';
+  el.detailWave.textContent = analysis && Number.isFinite(analysis.waveMin) && Number.isFinite(analysis.waveMax)
+    ? `${analysis.waveMin.toFixed(3)}–${analysis.waveMax.toFixed(3)} μm${Number.isFinite(analysis.waveBwMin) && Number.isFinite(analysis.waveBwMax) ? ` (Δλ ${analysis.waveBwMin.toFixed(3)}–${analysis.waveBwMax.toFixed(3)})` : ''}`
+    : '—';
+  el.detailExposure.textContent = analysis && Number.isFinite(analysis.exposure)
+    ? `${analysis.exposure.toFixed(1)} s`
+    : analysis ? 'Not in cutout header' : '—';
+  el.detailPixelScale.textContent = analysis && Number.isFinite(analysis.pixelScale) ? `${analysis.pixelScale.toFixed(2)}″ / px` : '—';
+  formatSky();
 }
 
-function loadFrames(newFrames, source) {
+function readFrameHeaders(response) {
+  const number = (name) => {
+    const raw = response.headers.get(name);
+    if (raw === null || raw.trim() === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  };
+  return {
+    min: number('X-Frame-Min'),
+    max: number('X-Frame-Max'),
+    low: number('X-Frame-Low'),
+    high: number('X-Frame-High'),
+    median: number('X-Frame-Median'),
+    mean: number('X-Frame-Mean'),
+    varianceMedian: number('X-Frame-Variance-Median'),
+    zodiMedian: number('X-Frame-Zodi-Median'),
+    flagged: number('X-Frame-Flagged') ?? 0,
+    pixelScale: number('X-Frame-Pixel-Scale'),
+    waveMin: number('X-Frame-Wave-Min'),
+    waveMax: number('X-Frame-Wave-Max'),
+    waveBwMin: number('X-Frame-Wave-BW-Min'),
+    waveBwMax: number('X-Frame-Wave-BW-Max'),
+    dateAvg: response.headers.get('X-Frame-Date-Avg') || '',
+    exposure: number('X-Frame-Exposure'),
+    bunit: response.headers.get('X-Frame-Bunit') || '',
+    detector: response.headers.get('X-Frame-Detector') || '',
+    band: response.headers.get('X-Frame-Band') || '',
+    obsid: response.headers.get('X-Frame-Obsid') || ''
+  };
+}
+
+async function loadFrameData(frame) {
+  try {
+    const response = await fetch(frame.src, { headers: { Accept: 'image/png' } });
+    if (!response.ok) throw new Error(`FITS frame returned ${response.status}.`);
+    const analysis = readFrameHeaders(response);
+    const blob = await response.blob();
+    if (!frames.includes(frame)) return;
+    const objectUrl = URL.createObjectURL(blob);
+    ownedObjectUrls.push(objectUrl);
+    frame.analysis = analysis;
+    frame.src = objectUrl;
+    if (frames[frameIndex] === frame) render();
+  } catch (error) {
+    notify(`Could not measure that FITS frame: ${error.message}`);
+  }
+}
+
+function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   stopPlayback(); releaseImages();
-  frames = newFrames; frameIndex = 0; comparisonOpen = false;
+  frames = newFrames; frameIndex = 0; comparisonOpen = false; realBadge = badge;
   el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side';
   el.sourceLabel.textContent = source;
   el.timeline.max = String(Math.max(0, frames.length - 1));
@@ -107,11 +220,12 @@ function loadFrames(newFrames, source) {
   }
   el.empty.hidden = enabled;
   el.stageBadge.hidden = !frames.some(f => f.real);
-  el.stageBadge.textContent = 'LIVE IRSA • REAL FITS';
+  el.stageBadge.textContent = realBadge;
   resetView(); render();
 }
 
 async function loadPNGFiles(files) {
+  sky = null;
   const pngs = Array.from(files).filter(file => file.type === 'image/png' || file.name.toLowerCase().endsWith('.png'));
   if (!pngs.length) { notify('Please select PNG files.'); return; }
   pngs.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -134,19 +248,6 @@ async function loadPNGFiles(files) {
   if (valid.length < 2) notify('Load at least 2 observations to see changes over time.');
 }
 
-function preloadDimensions(frame) {
-  if (frame.width && frame.height) return;
-  const image = new Image();
-  image.src = frame.src;
-  image.decode().then(() => {
-    frame.width = image.naturalWidth;
-    frame.height = image.naturalHeight;
-    if (frames[frameIndex] === frame) updateDetails(frame);
-  }).catch(() => {
-    notify('One real IRSA cutout could not be decoded.');
-  });
-}
-
 async function loadRealFrames() {
   if (loadingReal) return;
   let field;
@@ -158,7 +259,7 @@ async function loadRealFrames() {
   notify('Loading real SPHEREx detector frames from IRSA.');
   try {
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '6'
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '6', v: '6'
     });
     const response = await fetch(`/api/spherex/frames?${params.toString()}`, { headers: { Accept: 'application/json' } });
     const payload = await response.json().catch(() => ({}));
@@ -176,13 +277,20 @@ async function loadRealFrames() {
       detector: frame.detector,
       uri: frame.uri,
       obsid: frame.obsid,
+      analysis: null,
       real: true
     }));
-    loadFrames(realFrames, `${realFrames.length} real SPHEREx DR1 frames · ${payload.detector} detector`);
+    sky = payload.sky || null;
+    const badge = /bundled|last known|fallback|last-good/i.test(payload.source?.label || '')
+      ? 'CACHED IRSA • REAL FITS'
+      : 'LIVE IRSA • REAL FITS';
+    const visitCount = payload.summary?.visits;
+    const coverage = visitCount ? ` · ${visitCount} real visits in field` : '';
+    loadFrames(realFrames, `${realFrames.length} real SPHEREx DR1 frames · ${payload.detector} detector${coverage}`, badge);
     el.viewerTitle.textContent = targets[el.target.value]?.label || 'Custom sky region';
     el.detailRA.textContent = `${field.ra.toFixed(3)}°`;
     el.detailDec.textContent = `${field.dec > 0 ? '+' : ''}${field.dec.toFixed(3)}°`;
-    realFrames.forEach(preloadDimensions);
+    realFrames.forEach(loadFrameData);
     notify(`Loaded ${realFrames.length} real IRSA SPHEREx frames.`);
   } catch (error) {
     el.sourceLabel.textContent = `IRSA request failed: ${error.message}`;
@@ -213,7 +321,7 @@ function render() {
   el.frameCount.textContent = `${frameIndex + 1} / ${frames.length}`;
   el.timeline.value = String(frameIndex);
   el.stageBadge.hidden = !f.real;
-  el.stageBadge.textContent = 'LIVE IRSA • REAL FITS';
+  el.stageBadge.textContent = realBadge;
   updateDetails(f);
 }
 
@@ -268,7 +376,7 @@ el.apply.addEventListener('click', applyCoordinates);
 el.loadReal.addEventListener('click', loadRealFrames);
 el.emptyReal.addEventListener('click', loadRealFrames);
 el.fileInput.addEventListener('change', async e => { await loadPNGFiles(e.target.files); e.target.value = ''; });
-el.clear.addEventListener('click', () => loadFrames([], 'No real frames loaded'));
+el.clear.addEventListener('click', () => { sky = null; loadFrames([], 'No real frames loaded'); });
 el.play.addEventListener('click', togglePlay);
 el.next.addEventListener('click', nextFrame);
 el.previous.addEventListener('click', previousFrame);

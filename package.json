@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",
+    "astronomy-engine": "^2.1.19",
     "hono": "^4.13.0",
     "lucide-react": "^1.60.0",
     "motion": "^14.4.0",

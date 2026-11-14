@@ -1,4 +1,4 @@
-import { imageStats, numberValue, parseFits, readImage, textValue, waveAt, type FitsFile, type FitsHdu } from '../lib/fits'
+import { imageStats, numberValue, parseFits, pixelScale, readImage, textValue, waveAt, type FitsFile, type FitsHdu } from '../lib/fits'
 import {
   ApiError,
   SingleFlight,
@@ -501,6 +501,9 @@ export type CutoutSummary = {
   depth: number
   bitPix: number
   stats: ReturnType<typeof imageStats>
+  varianceStats: ReturnType<typeof imageStats>
+  zodiStats: ReturnType<typeof imageStats>
+  pixelScale: number | null
   flags: Array<{ bit: number; count: number }>
   wave: { min: number; max: number; minBandwidth: number; maxBandwidth: number } | null
   meta: {
@@ -519,15 +522,21 @@ export type CutoutSummary = {
 export function summarizeCutout(buffer: ArrayBuffer): CutoutSummary {
   const fits = parseFits(buffer)
   const image = fits.hdus[0]
+  const variance = hduByName(fits, 'VARIANCE')
+  const zodi = hduByName(fits, 'ZODI')
   const flags = hduByName(fits, 'FLAGS')
   const header = image?.header
   const exposure = header ? numberValue(header, 'EXPTIME', Number.NaN) : Number.NaN
+  const scale = image ? pixelScale(image) : Number.NaN
   return {
     width: image?.width ?? 0,
     height: image?.height ?? 0,
     depth: image?.depth ?? 0,
     bitPix: image?.bitPix ?? 0,
     stats: image ? imageStats(readImage(buffer, image)) : null,
+    varianceStats: variance ? imageStats(readImage(buffer, variance)) : null,
+    zodiStats: zodi ? imageStats(readImage(buffer, zodi)) : null,
+    pixelScale: Number.isFinite(scale) ? scale : null,
     flags: flags ? flagSummary(readImage(buffer, flags)) : [],
     wave: fits.wave
       ? {

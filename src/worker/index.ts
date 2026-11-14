@@ -15,6 +15,7 @@ import {
 } from './irsa'
 import { ApiError, queryEnum, queryNumber, validateIrsaProductUri } from './http'
 import { rasterizeCutout } from './imaging'
+import { skyContext } from './sky'
 import { getSourceHealth } from './sources'
 
 type Env = {
@@ -31,7 +32,7 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 const MAX_SPECTRUM_DETECTORS = 6
 const SPECTRUM_CONCURRENCY = 3
-const CACHE_NAME = 'drift-api-v3'
+const CACHE_NAME = 'drift-api-v6'
 const DEFAULT_FIELD = { ra: 150, dec: 19.5, fov: 0.3 }
 
 function asciiHeader(value: string) {
@@ -300,7 +301,7 @@ app.get('/api/spherex/frames', async (c) => {
           (index) => frames[index],
         )
     const query = (uri: string) =>
-      `/api/spherex/png?${new URLSearchParams({ uri, ra: String(ra), dec: String(dec), fov: String(fov) }).toString()}`
+      `/api/spherex/png?${new URLSearchParams({ uri, ra: String(ra), dec: String(dec), fov: String(fov), v: '4' }).toString()}`
 
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
     c.header('X-Data-Source', asciiHeader(data.source.label))
@@ -308,6 +309,8 @@ app.get('/api/spherex/frames', async (c) => {
     const response = c.json({
       source: data.source,
       field: { ra, dec, fov },
+      summary: data.summary,
+      sky: skyContext(ra, dec),
       detector,
       frames: picked.map(({ row, product }) => ({
         id: row.obsid.replace(/_\d+$/, ''),
@@ -354,6 +357,26 @@ app.get('/api/spherex/png', async (c) => {
     c.header('X-Data-Url', cutout.uri)
     c.header('X-Frame-Width', String(raster.width))
     c.header('X-Frame-Height', String(raster.height))
+    c.header('X-Frame-Min', String(raster.stats.min))
+    c.header('X-Frame-Max', String(raster.stats.max))
+    c.header('X-Frame-Low', String(raster.stats.low))
+    c.header('X-Frame-High', String(raster.stats.high))
+    c.header('X-Frame-Median', String(raster.stats.median))
+    c.header('X-Frame-Mean', String(raster.stats.mean))
+    c.header('X-Frame-Variance-Median', String(raster.varianceStats?.median ?? ''))
+    c.header('X-Frame-Zodi-Median', String(raster.zodiStats?.median ?? ''))
+    c.header('X-Frame-Flagged', String(raster.flaggedPixels))
+    c.header('X-Frame-Pixel-Scale', String(raster.pixelScale ?? ''))
+    c.header('X-Frame-Wave-Min', String(raster.wave?.minWavelength ?? ''))
+    c.header('X-Frame-Wave-Max', String(raster.wave?.maxWavelength ?? ''))
+    c.header('X-Frame-Wave-BW-Min', String(raster.wave?.minBandwidth ?? ''))
+    c.header('X-Frame-Wave-BW-Max', String(raster.wave?.maxBandwidth ?? ''))
+    c.header('X-Frame-Date-Avg', asciiHeader(raster.dateAvg))
+    c.header('X-Frame-Exposure', String(raster.exposure ?? ''))
+    c.header('X-Frame-Bunit', asciiHeader(raster.bunit))
+    c.header('X-Frame-Detector', asciiHeader(raster.detector))
+    c.header('X-Frame-Band', asciiHeader(raster.band))
+    c.header('X-Frame-Obsid', asciiHeader(raster.obsid))
     const response = c.body(raster.png.buffer as ArrayBuffer)
     edgeStore(c, response)
     return withCacheState(response, 'MISS')
@@ -418,6 +441,7 @@ app.get('/api/spherex/summary', async (c) => {
       },
       uri: cutout.uri,
       cutoutSize: cutout.size,
+      sky: skyContext(ra, dec),
       summary,
     })
     edgeStore(c, response)
