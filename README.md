@@ -19,6 +19,30 @@ npm run build      # dist/client (assets) + dist/creative_agency/index.js (Worke
 npm run typecheck
 ```
 
+## Deploy on Render
+
+The repository includes `render.yaml` and a small Node entrypoint for Render.
+The rendered site is the static `frontend/` app imported from the
+`frontend-development` branch; the existing IRSA backend remains available at
+`/api/*` from the same service.
+
+1. Push this repository to GitHub.
+2. In Render, choose **New → Blueprint** and select the repository.
+3. Render reads `render.yaml`, runs `npm ci --include=dev && npm run build`, and
+   starts `node server.mjs`.
+4. The health check is `GET /api/health`.
+
+To run the Render entrypoint locally after a build:
+
+```sh
+npm run build
+PORT=3000 npm start
+# http://localhost:3000
+```
+
+Render uses Node 22.22+, which is required by the current `react-router`
+dependency.
+
 ## The real pipeline
 
 1. `GET /api/spherex/find` queries IRSA SIA2 with
@@ -35,12 +59,50 @@ npm run typecheck
    wavelength and bandwidth from WCS-WAVE. It returns the measured samples and
    real FLAGS values; nothing is interpolated across detector gaps.
 5. `GET /api/catalog` queries Gaia DR3 through the ESA Gaia Archive TAP service
-   and AllWISE through IRSA TAP. Positions are projected back onto the real
-   detector WCS for the overlay.
+   and AllWISE through IRSA's Gator cone-search service. Positions are projected
+   back onto the real detector WCS for the overlay.
 
-The Worker source is `src/worker/index.ts` and `src/worker/irsa.ts`. The client
-data layer is `src/lib/real.ts`; the viewer is `src/components/RealSky.tsx` and
-`src/pages/Tool.tsx`.
+The Worker source is `src/worker/index.ts`, `src/worker/irsa.ts` and
+`src/worker/http.ts`. The client data layer is `src/lib/real.ts`; the viewer is
+`src/components/RealSky.tsx` and `src/pages/Tool.tsx`.
+
+`GET /api/spherex/brief` returns a compact field briefing computed from the same
+SIA2 rows: visit count, detector products, bands, date span, cadence and an
+estimated full-frame download size. `GET /api/spherex/summary` fetches one real
+cutout and returns its server-side FITS summary: dimensions, IMAGE statistics,
+flag-bit counts, WCS-WAVE range and key header values. Both routes use the same
+validation, cache and fallback rules as the viewer routes.
+
+## Backend behaviour
+
+- **Validation** — numeric sky fields are range-checked and enum parameters are
+  allowlisted before an upstream request is made. Errors are JSON
+  `{ error, code, requestId }` with `Cache-Control: no-store`.
+- **SSRF boundary** — cutout and spectrum URLs must be HTTPS
+  `irsa.ipac.caltech.edu/ibe/data/spherex/...fits` products. Userinfo, ports,
+  fragments and path traversal are rejected.
+- **Bounded upstream work** — transient `408`/`429`/5xx responses retry with
+  exponential backoff and `Retry-After` support. SIA2 has a 50 s total budget;
+  cutouts and TAP queries have 45 s budgets. Responses are size-limited.
+- **Caching** — SIA2, catalogue and spectrum results use bounded TTL caches.
+  Successful GETs are also stored in the `drift-api-v2` Cache API namespace and
+  report `X-Cache: HIT` or `MISS`. Identical concurrent requests are coalesced.
+- **Failure handling** — SIA2 and catalogue services enter a 30 s cooldown
+  after a failed request, returning `503` with `Retry-After` instead of
+  hammering a degraded archive. The default field falls back to the bundled
+  real IRSA index with `X-Data-Fallback: bundled`; the badge labels it as
+  cached.
+- **Limits** — spectra accept at most six detector products, fetched three at a
+time. A cutout response is capped at 40 MB and a spectrum strip is capped at
+40 MB. `GET /api/health` is the lightweight liveness route.
+- **Hard timeouts** — every upstream attempt is raced against a real timer, so a
+  stalled archive connection cannot pin a Worker request open even if the
+  platform fetch ignores an abort. SIA2 has a 12 s discovery budget before the
+  bundled default index is used.
+- **Pressure test** — `npm run stress` runs contract, validation, cache and
+  concurrency checks against a running dev server. Set `BASE_URL` to target a
+  different origin; `STRESS_ALLOW_UPSTREAM=1` treats 502-504 upstream failures as
+  expected degradation.
 
 ### Cached real data
 
@@ -107,9 +169,13 @@ products. See `public/data/3iatlas/README.txt` for provenance.
 
 ## Design notes
 
-The iridescent shell, typography and card layout are intentional. The data path
-is deliberately FITS-first: no raster tiles, no synthesized sky, and the exact
-IRSA product URL is linked from the viewer.
+The viewer is the landing surface, not a marketing page above a viewer. It
+behaves like a map: scroll or use the +/- controls to zoom, drag to pan, click
+to measure a pixel, and use the fit button to return to the whole cutout. The
+zoom is a view transform on the native detector array; it does not resample or
+invent pixels. The iridescent shell and typography are intentional, but the data
+path stays FITS-first: no raster tiles, no synthesized sky, and the exact IRSA
+product URL is linked from the frame.
 
 This is not an official NASA, IPAC or SPHEREx mission product. Mission data and
 catalogue services belong to their respective archives.
@@ -118,7 +184,8 @@ catalogue services belong to their respective archives.
 
 ```
 src/worker/index.ts          Hono routes: find, cutout, spectrum, catalog
-src/worker/irsa.ts           SIA2, cutout proxy, FITS strip, TAP catalogues
+src/worker/http.ts           validation, retry, caches, URL allowlist, limits
+src/worker/irsa.ts           SIA2, cutout proxy, FITS strip, catalogue services
 src/lib/real.ts              client fetch/group/parse/projection helpers
 src/components/RealSky.tsx   real FITS plane renderer + provenance badge
 src/components/RealSpectrum.tsx  real aperture-spectrum chart

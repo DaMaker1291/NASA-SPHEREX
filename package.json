@@ -6,10 +6,16 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build && node scripts/postbuild.mjs",
+    "start": "node server.mjs",
     "preview": "vite preview",
+    "stress": "node scripts/stress.mjs",
     "typecheck": "tsc --noEmit"
   },
+  "engines": {
+    "node": ">=22.22.0"
+  },
   "dependencies": {
+    "@hono/node-server": "^2.1.8",
     "hono": "^4.13.0",
     "lucide-react": "^1.60.0",
     "motion": "^14.4.0",

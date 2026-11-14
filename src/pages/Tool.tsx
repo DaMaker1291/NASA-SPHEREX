@@ -17,10 +17,11 @@ import { Button, IconButton } from '../components/Button'
 import { Card } from '../components/Card'
 import { Field, Input, Select } from '../components/Field'
 import { FitsLab } from '../components/FitsLab'
-import { Hero } from '../components/Hero'
 import { Holo } from '../components/Holo'
+import { Nav } from '../components/Nav'
 import { RealSky, type RealLayer } from '../components/RealSky'
 import { RealSpectrumPanel } from '../components/RealSpectrum'
+import { SourceHealthPanel } from '../components/SourceHealth'
 import { LINKS } from '../data'
 import { cx } from '../lib/cx'
 import { ARRAYS, formatDec, formatRA } from '../lib/spherex'
@@ -29,19 +30,23 @@ import {
   REAL_PRESETS,
   detectorLabel,
   findRealField,
+  formatBytes,
   formatTime,
   groupVisits,
   loadCatalog,
   loadRealCutout,
   loadRealSpectrum,
+  loadSourceHealth,
   loadStaticIndex,
   normalizeField,
   skyAtPixel,
+  summarizeVisits,
   type CatalogResult,
   type IrsaFind,
   type RealCutout,
   type RealSpectrum,
   type RealVisit,
+  type SourceHealth,
 } from '../lib/real'
 import { useDocumentTitle } from '../lib/storage'
 
@@ -65,6 +70,13 @@ function initialDetector() {
 
 function fieldLabel(ra: number, dec: number) {
   return `${formatRA(ra)} ${formatDec(dec)}`
+}
+
+function formatGap(days: number | null | undefined) {
+  if (days == null || !Number.isFinite(days)) return ''
+  if (days >= 1) return `${days.toFixed(1)} days`
+  if (days * 24 >= 1) return `${(days * 24).toFixed(1)} hours`
+  return `${Math.max(1, Math.round(days * 1440))} minutes`
 }
 
 export function Tool() {
@@ -94,12 +106,52 @@ export function Tool() {
   const [cutoutError, setCutoutError] = useState('')
   const [reload, setReload] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [sourceHealth, setSourceHealth] = useState<SourceHealth | null>(null)
+  const [sourceHealthError, setSourceHealthError] = useState('')
   const findToken = useRef(0)
   const cutoutToken = useRef(0)
   const spectrumToken = useRef(0)
+  const retryCount = useRef(0)
 
   const currentVisit = visits[visitIndex] ?? null
   const effectiveDetector = currentVisit?.detectors.find((item) => item.detector === detector) ?? currentVisit?.detectors[0] ?? null
+
+  useEffect(() => {
+    let live = true
+    const check = () => {
+      loadSourceHealth()
+        .then((result) => {
+          if (!live) return
+          setSourceHealth(result)
+          setSourceHealthError('')
+        })
+        .catch((error: unknown) => {
+          if (!live) return
+          setSourceHealthError(error instanceof Error ? error.message : 'Source probe failed.')
+        })
+    }
+    void check()
+    const timer = window.setInterval(check, 15_000)
+    return () => {
+      live = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    retryCount.current = 0
+  }, [field.ra, field.dec, field.fov])
+
+  useEffect(() => {
+    if (!findError || loadingFind) return
+    const delay = Math.min(60_000, 15_000 * 2 ** Math.min(retryCount.current, 2))
+    const timer = window.setTimeout(() => {
+      retryCount.current += 1
+      setReload((value) => value + 1)
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [findError, loadingFind])
+
   useEffect(() => {
     const token = findToken.current + 1
     findToken.current = token
@@ -122,6 +174,7 @@ export function Tool() {
       .then((result) => {
         if (token !== findToken.current) return
         const grouped = groupVisits(result.observations)
+        retryCount.current = 0
         setFind(result)
         setVisits(grouped)
         const requestedVisit = new URLSearchParams(window.location.search).get('visit')
@@ -300,10 +353,15 @@ export function Tool() {
     loading: loadingFind || loadingCutout,
     cached: cutout?.cached,
   }
+  const summary = find?.summary ?? (visits.length ? summarizeVisits(visits) : null)
+  const visitProducts = currentVisit ? new Set(currentVisit.observations.flatMap((observation) => observation.detectors.map((item) => item.uri))).size : 0
+  const flaggedPixels = cutout?.flagCounts.reduce((total, count) => total + count, 0) ?? 0
 
   return (
     <div className="grid grid-cols-1 gap-2 p-2">
-      <Hero />
+      <Card className="px-4 py-0">
+        <Nav />
+      </Card>
 
       <section id="sky" aria-labelledby="sky-title" className="scroll-mt-2">
         <Card className="p-5 sm:p-8">
@@ -327,9 +385,10 @@ export function Tool() {
               </Button>
             </div>
           </div>
-          <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-pretty text-ink-2">
-            Every image here is a real SPHEREx level-2 detector cutout fetched from IRSA. Switch the science array, variance, flag
-            bitmask and zodiacal model without leaving the FITS. The source label stays in the top right of the frame.
+          <p className="mt-3 max-w-3xl text-[15px] leading-relaxed text-pretty text-ink-2">
+            A real detector frame is the map. Scroll to zoom into the native pixels, drag to move across the cutout, and click once to
+            measure the spectrum under that pixel. Switch the science array, variance, flag bitmask and zodiacal model without leaving
+            the FITS. The source label stays in the top right of the frame.
           </p>
 
           <form
@@ -417,8 +476,8 @@ export function Tool() {
             </button>
           </div>
 
-          <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,820px)_332px] lg:justify-center">
-            <div className="mx-auto w-full min-w-0 max-w-[820px]">
+          <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="mx-auto w-full min-w-0 max-w-[1000px]">
               <RealSky
                 cutout={cutout}
                 loading={loadingCutout}
@@ -476,7 +535,9 @@ export function Tool() {
                     {currentVisit ? `${formatTime(currentVisit.iso)} · ${currentVisit.obsid}` : 'waiting for IRSA observations'}
                   </p>
                   <p className="caps text-[9px] text-muted">
-                    {currentVisit ? `${currentVisit.detectors.length} detector products · ${currentVisit.observations.length} exposures` : 'no model frames'}
+                    {currentVisit
+                      ? `${visitProducts} detector products · ${currentVisit.detectors.length} arrays · ${currentVisit.observations.length} exposures`
+                      : 'no model frames'}
                   </p>
                 </div>
               </div>
@@ -568,6 +629,58 @@ export function Tool() {
                 </div>
                 <p className="caps mt-3 text-[8px] leading-relaxed text-muted">No synthesized noise, ghost or stray-light layer is drawn.</p>
               </Card>
+
+              <Card size="sm" className="p-4">
+                <p className="caps text-[9px] text-muted">Field brief</p>
+                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                  {[
+                    ['Visits', summary ? String(summary.visits) : '—'],
+                    ['Products', summary ? String(summary.products) : '—'],
+                    ['Detectors', summary ? summary.detectors.join(' ') : '—'],
+                    ['Bands', summary ? summary.bands.join(' ') : '—'],
+                    ['Span', summary ? `${summary.spanDays.toFixed(1)} d` : '—'],
+                    ['Cutout set', summary ? formatBytes(summary.estimatedBytes) : '—'],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <p className="caps text-[8px] text-muted">{label}</p>
+                      <p className="mt-0.5 truncate text-[12px] tabular-nums">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="caps mt-3 border-t border-line pt-2 text-[8px] leading-relaxed text-muted">
+                  {summary?.firstIso
+                    ? `${formatTime(summary.firstIso)} → ${formatTime(summary.lastIso)}`
+                    : 'No SIA2 visits for this field yet.'}
+                </p>
+                <p className="caps mt-1 text-[8px] leading-relaxed text-muted">
+                  {summary?.medianGapDays != null
+                    ? `Median visit gap ${formatGap(summary.medianGapDays)} · estimated full-frame bytes only`
+                    : 'Cadence appears when more than one visit is returned.'}
+                </p>
+              </Card>
+
+              {cutout && (
+                <Card size="sm" className="p-4">
+                  <p className="caps text-[9px] text-muted">Frame diagnostics</p>
+                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                    {[
+                      ['IMAGE median', cutout.stats ? cutout.stats.median.toExponential(2) : '—'],
+                      ['IMAGE range', cutout.stats ? `${cutout.stats.min.toExponential(1)} / ${cutout.stats.max.toExponential(1)}` : '—'],
+                      ['Wavelength', cutout.fits.wave ? `${cutout.fits.wave.minWavelength.toFixed(2)}–${cutout.fits.wave.maxWavelength.toFixed(2)} μm` : 'not in cutout'],
+                      ['Flagged pixels', flaggedPixels ? String(flaggedPixels) : '0'],
+                      ['Bitmask bits', String(cutout.flagCounts.filter((count) => count > 0).length)],
+                      ['FITS blocks', String(cutout.fits.totalHdus)],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <p className="caps text-[8px] text-muted">{label}</p>
+                        <p className="mt-0.5 truncate text-[11px] tabular-nums">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+
+              <SourceHealthPanel health={sourceHealth} error={sourceHealthError} />
 
               <Card size="sm" className="p-4">
                 <p className="caps flex items-center gap-1.5 text-[9px] text-muted">
@@ -708,7 +821,7 @@ export function Tool() {
 
           <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3">
             {[
-              ['Detector products', currentVisit ? String(currentVisit.detectors.length) : '—'],
+              ['Detector arrays', currentVisit ? String(currentVisit.detectors.length) : '—'],
               ['Real visits', visits.length ? String(visits.length) : '—'],
               ['First exposure', first],
               ['Last exposure', last],
@@ -748,7 +861,7 @@ export function Tool() {
               ['Imagery', 'IMAGE HDU from the IRSA cutout', ScanLine],
               ['Noise', 'VARIANCE HDU, not a synthesized field', Layers3],
               ['Contamination', 'FLAGS bitmask, bit counts shown raw', Database],
-              ['Overlays', 'Gaia DR3 and AllWISE TAP results', Target],
+              ['Overlays', 'Gaia DR3 TAP + AllWISE cone search', Target],
             ].map(([label, value, Icon]) => (
               <li key={label as string} className="flex items-start gap-3 border-t border-line pt-2.5">
                 <Icon className="mt-0.5 size-4 shrink-0 text-violet" aria-hidden />

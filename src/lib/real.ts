@@ -28,10 +28,24 @@ export type IrsaObservation = {
   detectors: IrsaDetector[]
 }
 
+export type IrsaFieldSummary = {
+  visits: number
+  observations: number
+  products: number
+  detectors: string[]
+  bands: string[]
+  firstIso: string
+  lastIso: string
+  spanDays: number
+  medianGapDays: number | null
+  estimatedBytes: number
+}
+
 export type IrsaFind = {
   source: { label: string; url: string; query: string }
   field: { ra: number; dec: number; fov: number }
   observations: IrsaObservation[]
+  summary?: IrsaFieldSummary
   cachedAt?: string
 }
 
@@ -109,6 +123,23 @@ export type CatalogResult = {
   sources: CatalogSource[]
 }
 
+export type SourceProbe = {
+  id: 'sia' | 'tap' | 's3' | 'hips'
+  label: string
+  ok: boolean
+  status: number | null
+  latencyMs: number | null
+  detail: string
+}
+
+export type SourceHealth = {
+  checkedAt: string
+  ok: boolean
+  discoveryOk: boolean
+  pixelsOk: boolean
+  sources: SourceProbe[]
+}
+
 export const DEFAULT_FIELD = { ra: 150, dec: 19.5, fov: 0.3 }
 export const REAL_PRESETS = [
   { ra: 150, dec: 19.5, fov: 0.3, label: 'RA 150 · Dec +19.5', note: 'SPHEREx DR1 coverage · 2025 April–June' },
@@ -128,6 +159,42 @@ function hduOffset(hdu: FitsHdu) {
   const cutY = numberValue(hdu.header, 'CUTY0', Number.NaN)
   if (Number.isFinite(cutX) && Number.isFinite(cutY)) return { x: cutX, y: cutY }
   return { x: -numberValue(hdu.header, 'CRPIX1A', -1), y: -numberValue(hdu.header, 'CRPIX2A', -1) }
+}
+
+export function summarizeVisits(visits: RealVisit[]): IrsaFieldSummary {
+  const detectors = new Set<string>()
+  const bands = new Set<string>()
+  const products = new Set<string>()
+  for (const visit of visits) {
+    for (const observation of visit.observations) {
+      for (const detector of observation.detectors) {
+        detectors.add(detector.detector)
+        bands.add(detector.band)
+        products.add(detector.uri)
+      }
+    }
+  }
+  const times = visits.map((visit) => visit.mjd).filter((mjd) => Number.isFinite(mjd)).sort((a, b) => a - b)
+  const gaps = times.slice(1).map((time, index) => time - times[index]).filter((gap) => gap > 0).sort((a, b) => a - b)
+  return {
+    visits: visits.length,
+    observations: visits.reduce((total, visit) => total + visit.observations.length, 0),
+    products: products.size,
+    detectors: [...detectors].sort(),
+    bands: [...bands].sort(),
+    firstIso: visits[0]?.iso ?? '',
+    lastIso: visits[visits.length - 1]?.iso ?? '',
+    spanDays: times.length > 1 ? times[times.length - 1] - times[0] : 0,
+    medianGapDays: gaps.length ? gaps[Math.floor(gaps.length / 2)] : null,
+    estimatedBytes: products.size * 72 * 1024 * 1024,
+  }
+}
+
+export function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB'
+  if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(2)} TB`
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`
 }
 
 export function groupVisits(observations: IrsaObservation[]): RealVisit[] {
@@ -165,6 +232,13 @@ export async function loadStaticIndex() {
   const response = await fetch('/data/spherex/dr1-150.json')
   if (!response.ok) throw new Error('The cached IRSA index is unavailable.')
   return (await response.json()) as IrsaFind
+}
+
+export async function loadSourceHealth() {
+  const response = await fetch('/api/health/sources')
+  const data = (await response.json()) as SourceHealth | { error: string }
+  if (!response.ok || 'error' in data) throw new Error('error' in data ? data.error : 'Source probe failed.')
+  return data
 }
 
 export async function findRealField(ra: number, dec: number, fov: number) {

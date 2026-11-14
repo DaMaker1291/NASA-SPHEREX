@@ -138,7 +138,7 @@ export function Guide() {
               'The cutout is stripped of its large EPSF table and returned to the browser as FITS.',
               'The browser parses IMAGE, VARIANCE, FLAGS, ZODI and WCS-WAVE, then draws the physical plane you choose.',
               'Spectrum extraction fetches real detector strips and averages a five-pixel aperture row by row.',
-              'Gaia DR3 and AllWISE positions come from their TAP services and are projected onto the detector WCS.',
+              'Gaia DR3 positions come from Gaia TAP; AllWISE positions come from IRSA’s cone search. Both are projected onto the detector WCS.',
             ].map((step, index) => (
               <li key={step} className="flex gap-3 border-t border-line pt-2">
                 <span className="caps text-[9px] text-violet">0{index + 1}</span>

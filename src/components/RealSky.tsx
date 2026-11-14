@@ -1,4 +1,4 @@
-import { AlertTriangle, ExternalLink, LoaderCircle, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ExternalLink, LoaderCircle, Maximize2, Minus, Plus, RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { formatDec, formatRA } from '../lib/spherex'
@@ -134,8 +134,28 @@ export function RealSky({
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const dragRef = useRef<{ id: number; x: number; y: number; cx: number; cy: number; moved: boolean } | null>(null)
   const [size, setSize] = useState(620)
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null)
+  const [zoom, setZoom] = useState(1)
+  const [view, setView] = useState<{ cx: number; cy: number } | null>(null)
+  const [dragging, setDragging] = useState(false)
+
+  const imageWidth = cutout?.image.width ?? 1
+  const imageHeight = cutout?.image.height ?? 1
+  const activeZoom = Math.min(16, Math.max(1, zoom))
+  const viewWidth = imageWidth / activeZoom
+  const viewHeight = imageHeight / activeZoom
+  const halfWidth = viewWidth / 2
+  const halfHeight = viewHeight / 2
+  const centerX = Math.min(imageWidth - halfWidth, Math.max(halfWidth, view?.cx ?? imageWidth / 2))
+  const centerY = Math.min(imageHeight - halfHeight, Math.max(halfHeight, view?.cy ?? imageHeight / 2))
+
+  useEffect(() => {
+    setZoom(1)
+    setView(null)
+    setHover(null)
+  }, [cutout?.uri])
 
   useEffect(() => {
     const element = wrapRef.current
@@ -173,11 +193,19 @@ export function RealSky({
     const stats = layerStats(cutout, layer)
     const min = stats?.min ?? 0
     const max = stats?.max ?? 1
+    const viewLeft = centerX - halfWidth
+    const viewTop = centerY + halfHeight
     const image = context.createImageData(width, height)
     for (let y = 0; y < height; y += 1) {
-      const sourceY = Math.min(cutout.image.height - 1, cutout.image.height - 1 - Math.floor((y * cutout.image.height) / height))
+      const sourceY = Math.min(
+        cutout.image.height - 1,
+        Math.max(0, Math.floor(viewTop - ((y + 0.5) / height) * viewHeight)),
+      )
       for (let x = 0; x < width; x += 1) {
-        const sourceX = Math.min(cutout.image.width - 1, Math.floor((x * cutout.image.width) / width))
+        const sourceX = Math.min(
+          cutout.image.width - 1,
+          Math.max(0, Math.floor(viewLeft + ((x + 0.5) / width) * viewWidth)),
+        )
         const color = colorFor(data[sourceY * cutout.image.width + sourceX], min, max, layer)
         const at = (y * width + x) * 4
         image.data[at] = color[0]
@@ -188,8 +216,10 @@ export function RealSky({
     }
     context.putImageData(image, 0, 0)
 
-    const scaleX = width / cutout.image.width
-    const scaleY = height / cutout.image.height
+    const toCanvas = (pixelX: number, pixelY: number) => ({
+      x: ((pixelX - viewLeft) / viewWidth) * width,
+      y: ((viewTop - pixelY) / viewHeight) * height,
+    })
     const drawCatalog = (catalog: CatalogResult | null, color: string) => {
       if (!catalog) return
       context.strokeStyle = color
@@ -198,10 +228,10 @@ export function RealSky({
       for (const source of catalog.sources) {
         const pixel = worldToPixel(cutout.image, source.ra, source.dec)
         if (!pixel) continue
-        const x = pixel.x * scaleX
-        const y = (cutout.image.height - 1 - pixel.y) * scaleY
+        const point = toCanvas(pixel.x, pixel.y)
+        if (point.x < -12 || point.y < -12 || point.x > width + 12 || point.y > height + 12) continue
         context.beginPath()
-        context.arc(x, y, 4.5 * dpr, 0, Math.PI * 2)
+        context.arc(point.x, point.y, 4.5 * dpr, 0, Math.PI * 2)
         context.stroke()
       }
       context.setLineDash([])
@@ -210,32 +240,68 @@ export function RealSky({
     if (catalogLayers.wise) drawCatalog(catalogs.wise, 'rgba(116,227,255,0.95)')
 
     if (probe) {
-      const x = probe.x * scaleX
-      const y = (cutout.image.height - 1 - probe.y) * scaleY
+      const point = toCanvas(probe.x, probe.y)
       context.strokeStyle = 'rgba(255,255,255,0.9)'
       context.lineWidth = dpr
       context.beginPath()
-      context.arc(x, y, 8 * dpr, 0, Math.PI * 2)
+      context.arc(point.x, point.y, 8 * dpr, 0, Math.PI * 2)
       context.stroke()
       context.beginPath()
-      context.moveTo(x - 14 * dpr, y)
-      context.lineTo(x + 14 * dpr, y)
-      context.moveTo(x, y - 14 * dpr)
-      context.lineTo(x, y + 14 * dpr)
+      context.moveTo(point.x - 14 * dpr, point.y)
+      context.lineTo(point.x + 14 * dpr, point.y)
+      context.moveTo(point.x, point.y - 14 * dpr)
+      context.lineTo(point.x, point.y + 14 * dpr)
       context.stroke()
     }
-  }, [cutout, layer, size, catalogs, catalogLayers, probe])
+  }, [cutout, layer, size, catalogs, catalogLayers, probe, activeZoom, centerX, centerY, viewWidth, viewHeight])
 
   const pixelAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!cutout) return null
     const rect = event.currentTarget.getBoundingClientRect()
     const nx = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
     const ny = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
+    const left = centerX - halfWidth
+    const top = centerY + halfHeight
     return {
-      x: Math.min(cutout.image.width - 1, Math.floor(nx * cutout.image.width)),
-      y: Math.min(cutout.image.height - 1, cutout.image.height - 1 - Math.floor(ny * cutout.image.height)),
+      x: Math.min(cutout.image.width - 1, Math.max(0, Math.floor(left + nx * viewWidth))),
+      y: Math.min(cutout.image.height - 1, Math.max(0, Math.floor(top - ny * viewHeight))),
     }
   }
+
+  const applyZoom = (nextZoom: number, nx = 0.5, ny = 0.5) => {
+    if (!cutout) return
+    const next = Math.min(16, Math.max(1, nextZoom))
+    if (Math.abs(next - activeZoom) < 0.0001) return
+    const anchorX = centerX - halfWidth + nx * viewWidth
+    const anchorY = centerY + halfHeight - ny * viewHeight
+    const nextWidth = imageWidth / next
+    const nextHeight = imageHeight / next
+    const nextCenterX = Math.min(
+      imageWidth - nextWidth / 2,
+      Math.max(nextWidth / 2, anchorX + (0.5 - nx) * nextWidth),
+    )
+    const nextCenterY = Math.min(
+      imageHeight - nextHeight / 2,
+      Math.max(nextHeight / 2, anchorY + (ny - 0.5) * nextHeight),
+    )
+    setZoom(next)
+    setView({ cx: nextCenterX, cy: nextCenterY })
+  }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !cutout) return
+    const onWheel = (event: WheelEvent) => {
+      if (!event.deltaY) return
+      event.preventDefault()
+      const rect = canvas.getBoundingClientRect()
+      const nx = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+      const ny = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
+      applyZoom(activeZoom * Math.exp(-event.deltaY * 0.0018), nx, ny)
+    }
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', onWheel)
+  }, [cutout, activeZoom, centerX, centerY, viewWidth, viewHeight, imageWidth, imageHeight])
 
   const hoverSky = cutout && hover ? skyAtPixel(cutout, hover.x, hover.y) : null
   const hoverWave = cutout && hover ? waveAtPixel(cutout, hover.x, hover.y) : null
@@ -255,18 +321,68 @@ export function RealSky({
         <canvas
           ref={canvasRef}
           style={{ width: '100%', height: 'auto' }}
-          className="block touch-none select-none"
+          className={`block touch-none select-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
           role="img"
           aria-label={
             cutout
-              ? `Real IRSA SPHEREx ${cutout.image.width} by ${cutout.image.height} pixel detector cutout, ${LAYER_LABEL[layer]}`
+              ? `Real IRSA SPHEREx ${cutout.image.width} by ${cutout.image.height} pixel detector cutout, ${LAYER_LABEL[layer]}, ${activeZoom.toFixed(1)} times zoom`
               : 'Real IRSA SPHEREx cutout loading'
           }
-          onPointerMove={(event) => setHover(pixelAt(event))}
-          onPointerLeave={() => setHover(null)}
+          onPointerDown={(event) => {
+            if (!cutout) return
+            if (event.pointerType === 'mouse' && event.button !== 0) return
+            dragRef.current = {
+              id: event.pointerId,
+              x: event.clientX,
+              y: event.clientY,
+              cx: centerX,
+              cy: centerY,
+              moved: false,
+            }
+            event.currentTarget.setPointerCapture(event.pointerId)
+            setDragging(true)
+          }}
+          onPointerMove={(event) => {
+            const drag = dragRef.current
+            if (drag && drag.id === event.pointerId) {
+              const rect = event.currentTarget.getBoundingClientRect()
+              const dx = event.clientX - drag.x
+              const dy = event.clientY - drag.y
+              if (Math.hypot(dx, dy) > 3) drag.moved = true
+              if (drag.moved) {
+                setView({
+                  cx: Math.min(
+                    imageWidth - halfWidth,
+                    Math.max(halfWidth, drag.cx - (dx / rect.width) * viewWidth),
+                  ),
+                  cy: Math.min(
+                    imageHeight - halfHeight,
+                    Math.max(halfHeight, drag.cy + (dy / rect.height) * viewHeight),
+                  ),
+                })
+                setHover(null)
+                return
+              }
+            }
+            setHover(pixelAt(event))
+          }}
           onPointerUp={(event) => {
+            const drag = dragRef.current
+            dragRef.current = null
+            setDragging(false)
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId)
+            }
+            if (drag && drag.id === event.pointerId && drag.moved) return
             const point = pixelAt(event)
             if (point) onProbe(point)
+          }}
+          onPointerCancel={() => {
+            dragRef.current = null
+            setDragging(false)
+          }}
+          onPointerLeave={() => {
+            if (!dragRef.current) setHover(null)
           }}
         />
 
@@ -277,6 +393,9 @@ export function RealSky({
             </span>
             <span className="caps rounded-full bg-violet/30 px-2.5 py-1.5 text-[9px] text-white backdrop-blur-sm">
               {LAYER_LABEL[layer]} · real array
+            </span>
+            <span className="caps rounded-full bg-black/45 px-2.5 py-1.5 text-[9px] tabular-nums text-white/75 backdrop-blur-sm">
+              {activeZoom.toFixed(1)}×
             </span>
           </div>
 
@@ -297,6 +416,45 @@ export function RealSky({
             {provenance.cached && <span className="caps mt-0.5 block text-[8px] text-cyan">cached IRSA cutout</span>}
           </a>
         </div>
+
+        {cutout && (
+          <div className="absolute top-1/2 right-3 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-full border border-white/20 bg-black/55 p-1 backdrop-blur-md">
+            <button
+              type="button"
+              aria-label="Zoom in"
+              onClick={() => applyZoom(activeZoom * 1.5)}
+              className="grid size-8 place-items-center rounded-full text-white/75 transition-colors hover:bg-white/15 hover:text-white"
+            >
+              <Plus className="size-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label="Zoom out"
+              onClick={() => applyZoom(activeZoom / 1.5)}
+              disabled={activeZoom <= 1}
+              className="grid size-8 place-items-center rounded-full text-white/75 transition-colors hover:bg-white/15 hover:text-white disabled:opacity-30"
+            >
+              <Minus className="size-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label="Fit the whole cutout"
+              onClick={() => {
+                setZoom(1)
+                setView(null)
+              }}
+              className="grid size-8 place-items-center rounded-full text-white/75 transition-colors hover:bg-white/15 hover:text-white"
+            >
+              <Maximize2 className="size-3.5" aria-hidden />
+            </button>
+          </div>
+        )}
+
+        {cutout && (
+          <div className="pointer-events-none absolute right-3 bottom-15 z-10 hidden text-right sm:block">
+            <span className="caps block text-[8px] text-white/40">scroll to zoom · drag to pan · click to measure</span>
+          </div>
+        )}
 
         {cutout && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 sm:p-4">
