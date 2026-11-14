@@ -1,0 +1,37 @@
+{
+  "updated": "2026-11-06",
+  "source": "NASA/IPAC IRSA — SPHEREx quick releases",
+  "note": "The viewer fetches this file at runtime. Add a release object to make it selectable without rebuilding the app.",
+  "releases": [
+    {
+      "id": "qr3",
+      "name": "Quick Release 3",
+      "status": "current",
+      "start": "2026-09-04",
+      "cadenceDays": 2,
+      "epochs": 10,
+      "product": "L2 spectral images · 2040×2040 · 6 HDUs",
+      "notes": "Weekly arrivals. Deeper calibrations and improved ice-band response."
+    },
+    {
+      "id": "qr2",
+      "name": "Quick Release 2",
+      "status": "archived",
+      "start": "2025-10-16",
+      "cadenceDays": 7,
+      "epochs": 8,
+      "product": "L2 spectral images · 2040×2040 · 6 HDUs",
+      "notes": "First well-calibrated release; headers corrected April 2026."
+    },
+    {
+      "id": "qr1",
+      "name": "Quick Release 1",
+      "status": "retired",
+      "start": "2025-07-02",
+      "cadenceDays": 7,
+      "epochs": 6,
+      "product": "L2 spectral images · early calibration",
+      "notes": "Retired from IRSA in February 2026. Kept here to show the archive growing."
+    }
+  ]
+}
