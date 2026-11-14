@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#080e1d">
   <title>SPHEREx Explorer | Sky through time</title>
-  <link rel="stylesheet" href="style.css?v=real-1">
-  <script defer src="script.js?v=real-9"></script>
+  <link rel="stylesheet" href="style.css?v=real-10">
+  <script defer src="script.js?v=real-11"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="#top" aria-label="SPHEREx Explorer home"><span class="brand-mark">✦</span><span>SPHEREx <strong>Explorer</strong></span></a>
-    <div class="top-right"><span class="chip"><span class="dot"></span> Live IRSA data</span><a href="#guide">How to use</a></div>
+    <div class="top-right"><span class="chip"><span class="dot"></span> Live IRSA data</span><button id="mailShortcut" class="button secondary compact" type="button">✉ Mail observation</button><a href="#guide">How to use</a></div>
   </header>
   <main id="top" class="shell">
     <section class="intro"><div><p class="eyebrow">SKY OBSERVATION STUDIO</p><h1>See the sky change over time.</h1><p class="subheading">Load real SPHEREx detector frames from IRSA, inspect their FITS pixels, and blink between visits to spot changes.</p></div><div class="intro-note">IRSA SIA2 <span>•</span> Real FITS cutouts</div></section>
@@ -44,6 +44,39 @@
       </section>
       <aside class="panel metadata"><div class="panel-header"><h2>Observation details</h2><span class="step">03 / INSPECT</span></div><dl class="details"><div><dt>Dataset</dt><dd id="detailSource">—</dd></div><div><dt>Current frame</dt><dd id="detailFrame">—</dd></div><div><dt>Observation ID</dt><dd id="detailObsid">—</dd></div><div><dt>Image dimensions</dt><dd id="detailSize">—</dd></div><div><dt>Right Ascension</dt><dd id="detailRA">150</dd></div><div><dt>Declination</dt><dd id="detailDec">19.5</dd></div><div><dt>J2000 coordinates</dt><dd id="detailSexagesimal">—</dd></div><div><dt>Constellation</dt><dd id="detailConstellation">—</dd></div><div><dt>Galactic l / b</dt><dd id="detailGalactic">—</dd></div><div><dt>Ecliptic lon / lat</dt><dd id="detailEcliptic">—</dd></div><div><dt>Observation date</dt><dd id="detailDate">Not provided</dd></div><div><dt>Band</dt><dd id="detailWavelength">Not provided</dd></div><div><dt>Light intensity</dt><dd id="detailIntensity">Measuring FITS…</dd></div><div><dt>Intensity range</dt><dd id="detailRange">—</dd></div><div><dt>Full min / max</dt><dd id="detailFullRange">—</dd></div><div><dt>Mean / median</dt><dd id="detailMean">—</dd></div><div><dt>Variance median</dt><dd id="detailVariance">—</dd></div><div><dt>Zodiacal median</dt><dd id="detailZodi">—</dd></div><div><dt>Flagged pixels</dt><dd id="detailFlags">—</dd></div><div><dt>Wavelength</dt><dd id="detailWave">—</dd></div><div><dt>Exposure</dt><dd id="detailExposure">—</dd></div><div><dt>Pixel scale</dt><dd id="detailPixelScale">—</dd></div></dl><div class="notice"><strong>Scientific note</strong><p>Frames are real IRSA SPHEREx level-2 detector cutouts. Local PNG uploads stay in this browser and are never uploaded. Align local images to the same sky grid before blinking.</p></div></aside>
     </div>
+    <section class="lab panel" id="lab" aria-label="Field lab">
+      <div class="lab-head"><div><p class="eyebrow">FIELD LAB</p><h2>Learn it. Play it. Mail it.</h2></div><span class="step">MAIL • LEARN • GAMES</span></div>
+      <div class="lab-tabs" role="tablist" aria-label="Field lab tools">
+        <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labMail" data-lab-tab="mail">✉ Mail</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learn</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labGames" data-lab-tab="games">Games</button>
+      </div>
+      <div class="lab-panel" id="labMail" role="tabpanel">
+        <div class="lab-grid">
+          <div>
+            <h3>Mail this observation</h3>
+            <p class="small muted">Builds an email from the frame currently on screen. Your mail app opens for review; this page does not send mail itself.</p>
+            <div class="field"><label for="mailTo">Send to</label><input id="mailTo" type="email" placeholder="you@example.com" autocomplete="email"></div>
+            <div class="field"><label for="mailNote">Your note <span class="muted">(optional)</span></label><textarea id="mailNote" rows="3" placeholder="Add a note for the recipient"></textarea></div>
+            <div class="mail-actions"><button id="mailOpen" class="button primary" type="button">Open in mail app</button><button id="mailCopy" class="button secondary" type="button">Copy email</button></div>
+            <p id="mailStatus" class="small muted" role="status">Load real frames to build an observation email.</p>
+          </div>
+          <div class="mail-preview"><div class="lab-card-head"><h3>Current observation</h3><span class="step">LIVE FROM THE FRAME</span></div><pre id="mailPreview">Load real frames to build an observation email.</pre></div>
+        </div>
+      </div>
+      <div class="lab-panel" id="labLearn" role="tabpanel" hidden>
+        <div class="lab-grid">
+          <div class="lab-card"><div class="lab-card-head"><h3>Read this frame</h3><span class="step">REAL DATA</span></div><p class="small muted">The lesson updates from the frame currently displayed — no prewritten per-night facts.</p><dl class="lab-facts"><div><dt>Constellation</dt><dd id="learnConstellation">—</dd></div><div><dt>Position</dt><dd id="learnPosition">—</dd></div><div><dt>Median light</dt><dd id="learnLight">—</dd></div><div><dt>Wavelength</dt><dd id="learnWave">—</dd></div><div><dt>Flagged pixels</dt><dd id="learnFlags">—</dd></div><div><dt>Frames loaded</dt><dd id="learnFrames">0</dd></div></dl></div>
+          <div class="lab-card"><div class="lab-card-head"><h3>Knowledge check</h3><span id="learnScore" class="lab-score">0 correct</span></div><p id="learnQuestion" class="quiz-question">Load real frames to start a lesson.</p><div id="learnOptions" class="option-grid"></div><p id="learnFeedback" class="quiz-feedback" role="status"></p><button id="learnNext" class="button secondary" type="button" disabled>Next question</button></div>
+        </div>
+      </div>
+      <div class="lab-panel" id="labGames" role="tabpanel" hidden>
+        <div class="lab-grid">
+          <div class="game-card"><div class="lab-card-head"><h3>Brighter frame</h3><span class="lab-score">GAME 01</span></div><p class="small muted">Choose the real frame with the higher median light intensity.</p><div id="brighterChoices" class="option-grid"></div><p id="brighterFeedback" class="quiz-feedback" role="status"></p><button id="brighterNext" class="button secondary" type="button" disabled>New round</button></div>
+          <div class="game-card"><div class="lab-card-head"><h3>Wavelength window</h3><span class="lab-score">GAME 02</span></div><p class="small muted">Pick the wavelength that falls inside the displayed frame’s measured range.</p><div id="waveChoices" class="option-grid"></div><p id="waveFeedback" class="quiz-feedback" role="status"></p><button id="waveNext" class="button secondary" type="button" disabled>New round</button></div>
+        </div>
+      </div>
+    </section>
     <section class="guide" id="guide"><h2>How to use this viewer</h2><div class="guide-grid"><div><span>01</span><h3>Load real frames</h3><p>Choose a field and load real SPHEREx frames. The backend queries IRSA SIA2 and renders the actual IMAGE FITS pixels.</p></div><div><span>02</span><h3>Load and play</h3><p>Step through the real visits, play the timeline, and zoom or drag to inspect the detector cutouts.</p></div><div><span>03</span><h3>Compare frames</h3><p>Pick two real observations and blink between them or show both together. Dates and detector bands come from SIA2.</p></div></div></section>
   </main>
   <footer>SPHEREx Explorer · Real IRSA data · Not affiliated with or endorsed by NASA</footer>

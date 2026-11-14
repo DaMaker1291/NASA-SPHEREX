@@ -266,11 +266,13 @@ async function loadFrameData(frame) {
       frame.measurementError = 'FITS measurement headers were not returned.';
     }
     if (frames[frameIndex] === frame) render();
+    else updateLab();
   } catch (error) {
     if (frames.includes(frame)) {
       frame.analysis = null;
       frame.measurementError = error.message;
       if (frames[frameIndex] === frame) render();
+      else updateLab();
     }
     notify(`Could not measure that FITS frame: ${error.message}`);
   }
@@ -381,6 +383,7 @@ function render() {
     el.image.hidden = true; el.empty.hidden = false;
     el.frameLabel.textContent = 'No images loaded'; el.frameCount.textContent = '0 / 0';
     updateDetails(null);
+    updateLab();
     return;
   }
   el.empty.hidden = true;
@@ -397,6 +400,7 @@ function render() {
   el.stageBadge.hidden = !f.real;
   el.stageBadge.textContent = realBadge;
   updateDetails(f);
+  updateLab();
 }
 
 function nextFrame() { if (!frames.length) return; frameIndex = (frameIndex + 1) % frames.length; render(); }
@@ -483,5 +487,323 @@ el.stage.addEventListener('pointermove', e => {
 function stopDrag() { isDragging = false; el.stage.classList.remove('dragging'); }
 el.stage.addEventListener('pointerup', stopDrag);
 el.stage.addEventListener('pointercancel', stopDrag);
+
+// Field lab: user-facing mail, learning prompts and real-data games.
+const lab = {
+  tabs: Array.from(document.querySelectorAll('[data-lab-tab]')),
+  panels: { mail: $('labMail'), learn: $('labLearn'), games: $('labGames') },
+  shortcut: $('mailShortcut'), mailTo: $('mailTo'), mailNote: $('mailNote'),
+  mailOpen: $('mailOpen'), mailCopy: $('mailCopy'), mailStatus: $('mailStatus'), mailPreview: $('mailPreview'),
+  learnConstellation: $('learnConstellation'), learnPosition: $('learnPosition'),
+  learnLight: $('learnLight'), learnWave: $('learnWave'), learnFlags: $('learnFlags'), learnFrames: $('learnFrames'),
+  learnQuestion: $('learnQuestion'), learnOptions: $('learnOptions'), learnFeedback: $('learnFeedback'),
+  learnNext: $('learnNext'), learnScore: $('learnScore'),
+  brighterChoices: $('brighterChoices'), brighterFeedback: $('brighterFeedback'), brighterNext: $('brighterNext'),
+  waveChoices: $('waveChoices'), waveFeedback: $('waveFeedback'), waveNext: $('waveNext')
+};
+
+const labState = {
+  learnScore: 0,
+  question: null,
+  frameSetKey: '',
+  brighter: null,
+  wave: null
+};
+
+function shuffle(values) {
+  const copy = [...values];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[swap]] = [copy[swap], copy[index]];
+  }
+  return copy;
+}
+
+function labData() {
+  const frame = frames[frameIndex] || null;
+  const analysis = frame?.analysis || null;
+  return {
+    frame,
+    analysis,
+    constellation: analysis?.constellation || sky?.constellation?.name || '',
+    ra: Number.isFinite(analysis?.ra) ? analysis.ra : Number.isFinite(frame?.ra) ? frame.ra : null,
+    dec: Number.isFinite(analysis?.dec) ? analysis.dec : Number.isFinite(frame?.dec) ? frame.dec : null,
+    band: frame?.band || analysis?.band || '',
+    median: Number.isFinite(analysis?.median) ? analysis.median : null,
+    waveMin: Number.isFinite(analysis?.waveMin) ? analysis.waveMin : null,
+    waveMax: Number.isFinite(analysis?.waveMax) ? analysis.waveMax : null,
+    flagged: Number.isFinite(analysis?.flagged) ? analysis.flagged : null,
+    bunit: analysis?.bunit || 'MJy / sr'
+  };
+}
+
+function setLabTab(name) {
+  for (const tab of lab.tabs) {
+    const active = tab.dataset.labTab === name;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  }
+  for (const [key, panel] of Object.entries(lab.panels)) panel.hidden = key !== name;
+  if (name === 'mail') updateLab();
+}
+
+function labFactPosition(data) {
+  if (data.ra === null || data.dec === null) return '—';
+  return `${formatRaHms(data.ra)} · ${formatDecDms(data.dec)}`;
+}
+
+function buildMailContent(data = labData()) {
+  if (!data.frame) {
+    return {
+      subject: 'SPHEREx Explorer observation',
+      text: 'Load real frames in SPHEREx Explorer to share an observation.'
+    };
+  }
+  const lines = [
+    'SPHEREx Explorer observation',
+    '',
+    `Frame: ${data.frame.label}`,
+    `Dataset: ${data.frame.real ? 'IRSA SPHEREx DR1' : 'Local PNG image'}`,
+    `Constellation: ${data.constellation || 'Not available'}`,
+    `Position: ${labFactPosition(data)}`,
+    `Observation ID: ${data.frame.obsid || 'Not available'}`,
+    `Observation date: ${data.analysis?.dateAvg || data.frame.iso || 'Not available'}`,
+    `Median light intensity: ${data.median === null ? 'Not available' : `${formatNumber(data.median)} ${data.bunit}`}`,
+    `Wavelength: ${data.waveMin === null || data.waveMax === null ? 'Not available' : `${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm`}`,
+    `Flagged pixels: ${data.flagged === null ? 'Not available' : data.flagged.toLocaleString()}`,
+    '',
+    'Created with SPHEREx Explorer · real IRSA data'
+  ];
+  return {
+    subject: `SPHEREx Explorer — ${data.constellation || 'sky field'}${data.frame.date ? ` · ${data.frame.date}` : ''}`,
+    text: lines.join('\n')
+  };
+}
+
+function updateLab() {
+  const data = labData();
+  const frameLabel = data.frame ? `${frameIndex + 1} / ${frames.length}` : '0';
+  lab.learnConstellation.textContent = data.constellation || 'Load frames to resolve';
+  lab.learnPosition.textContent = labFactPosition(data);
+  lab.learnLight.textContent = data.median === null ? 'Not measured yet' : `${formatNumber(data.median)} ${data.bunit}`;
+  lab.learnWave.textContent = data.waveMin === null || data.waveMax === null ? 'Not measured yet' : `${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm`;
+  lab.learnFlags.textContent = data.flagged === null
+    ? 'Not measured yet'
+    : data.frame?.width && data.frame?.height
+      ? `${data.flagged.toLocaleString()} (${((data.flagged / (data.frame.width * data.frame.height)) * 100).toFixed(1)}%)`
+      : data.flagged.toLocaleString();
+  lab.learnFrames.textContent = frameLabel;
+  lab.mailPreview.textContent = buildMailContent(data).text;
+  if (!data.frame) lab.mailStatus.textContent = 'Load real frames to build an observation email.';
+  else if (lab.mailStatus.textContent.startsWith('Load real frames')) lab.mailStatus.textContent = 'Ready to mail this observation.';
+
+  if (!labState.question || (labState.question.needsData && data.frame)) newLearnQuestion();
+
+  const frameSetKey = frames.map(frame => `${frame.label}:${frame.analysis?.median ?? ''}:${frame.analysis?.waveMin ?? ''}`).join('|');
+  if (frameSetKey !== labState.frameSetKey) {
+    labState.frameSetKey = frameSetKey;
+    newBrighterRound();
+    newWaveRound();
+  }
+}
+
+function addLabChoice(container, label, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'option-button';
+  button.textContent = label;
+  button.addEventListener('click', onClick);
+  container.append(button);
+  return button;
+}
+
+function newLearnQuestion() {
+  const data = labData();
+  const questions = [];
+
+  if (data.constellation) {
+    const pool = ['Orion', 'Leo', 'Cygnus', 'Lyra', 'Taurus', 'Andromeda', 'Gemini', 'Virgo', 'Pegasus', 'Aquila', 'Bootes', 'Canis Major']
+      .filter(name => name !== data.constellation);
+    const options = shuffle([data.constellation, ...shuffle(pool).slice(0, 2)]);
+    questions.push({
+      question: 'Which constellation contains this cutout center?',
+      options,
+      correct: data.constellation,
+      explanation: `The backend maps the WCS center to the IAU constellation ${data.constellation}.`
+    });
+  }
+
+  if (data.band) {
+    const detectors = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'].filter(name => name !== data.band);
+    const options = shuffle([data.band, ...shuffle(detectors).slice(0, 2)]);
+    questions.push({
+      question: 'Which detector produced this frame?',
+      options,
+      correct: data.band,
+      explanation: `This frame is labeled ${data.band} in its SIA2 and FITS metadata.`
+    });
+  }
+
+  if (data.waveMin !== null && data.waveMax !== null && data.waveMax > data.waveMin) {
+    const middle = (data.waveMin + data.waveMax) / 2;
+    const options = [middle, data.waveMax + 0.2, Math.max(0.1, data.waveMin - 0.2)].map(value => `${value.toFixed(3)} μm`);
+    questions.push({
+      question: 'Which wavelength is inside this frame?',
+      options: shuffle([...new Set(options)]),
+      correct: `${middle.toFixed(3)} μm`,
+      explanation: `The measured WCS-WAVE range is ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`
+    });
+  }
+
+  if (!questions.length) {
+    labState.question = { needsData: true };
+    lab.learnQuestion.textContent = 'Load real frames to start a lesson.';
+    lab.learnOptions.replaceChildren();
+    lab.learnFeedback.textContent = '';
+    lab.learnNext.disabled = true;
+    return;
+  }
+
+  const question = questions[Math.floor(Math.random() * questions.length)];
+  labState.question = { ...question, needsData: false, answered: false };
+  lab.learnQuestion.textContent = question.question;
+  lab.learnOptions.replaceChildren();
+  for (const option of question.options) {
+    addLabChoice(lab.learnOptions, option, event => {
+      if (!labState.question || labState.question.answered) return;
+      labState.question.answered = true;
+      const correct = option === question.correct;
+      const buttons = [...lab.learnOptions.querySelectorAll('button')];
+      for (const button of buttons) {
+        button.disabled = true;
+        if (button.textContent === question.correct) button.classList.add('correct');
+      }
+      event.currentTarget.classList.add(correct ? 'correct' : 'wrong');
+      if (correct) {
+        labState.learnScore += 1;
+        lab.learnScore.textContent = `${labState.learnScore} correct`;
+        lab.learnFeedback.textContent = `Correct. ${question.explanation}`;
+        lab.learnFeedback.className = 'quiz-feedback correct-text';
+      } else {
+        lab.learnFeedback.textContent = `Not quite. ${question.explanation}`;
+        lab.learnFeedback.className = 'quiz-feedback wrong-text';
+      }
+      lab.learnNext.disabled = false;
+    });
+  }
+  lab.learnFeedback.textContent = '';
+  lab.learnFeedback.className = 'quiz-feedback';
+  lab.learnNext.disabled = true;
+}
+
+function newBrighterRound() {
+  const candidates = frames.filter(frame => Number.isFinite(frame.analysis?.median));
+  lab.brighterChoices.replaceChildren();
+  lab.brighterFeedback.textContent = '';
+  lab.brighterNext.disabled = true;
+  if (candidates.length < 2) {
+    lab.brighterChoices.innerHTML = '<p class="small muted">Load at least two measured frames to play.</p>';
+    labState.brighter = null;
+    return;
+  }
+  const pair = shuffle(candidates).slice(0, 2);
+  const brighter = pair[0].analysis.median >= pair[1].analysis.median ? pair[0] : pair[1];
+  labState.brighter = { pair, brighter, answered: false };
+  for (const frame of pair) {
+    addLabChoice(lab.brighterChoices, frame.label, () => {
+      if (!labState.brighter || labState.brighter.answered) return;
+      labState.brighter.answered = true;
+      const correct = frame === brighter;
+      for (const button of lab.brighterChoices.querySelectorAll('button')) button.disabled = true;
+      const labels = pair.map(item => `${item.label}: ${formatNumber(item.analysis.median)} MJy / sr`).join(' · ');
+      lab.brighterFeedback.textContent = `${correct ? 'Correct.' : 'Not quite.'} ${labels}`;
+      lab.brighterFeedback.className = `quiz-feedback ${correct ? 'correct-text' : 'wrong-text'}`;
+      lab.brighterNext.disabled = false;
+    });
+  }
+}
+
+function newWaveRound() {
+  const data = labData();
+  lab.waveChoices.replaceChildren();
+  lab.waveFeedback.textContent = '';
+  lab.waveNext.disabled = true;
+  if (data.waveMin === null || data.waveMax === null || data.waveMax <= data.waveMin) {
+    lab.waveChoices.innerHTML = '<p class="small muted">Load a measured frame to play.</p>';
+    labState.wave = null;
+    return;
+  }
+  const middle = (data.waveMin + data.waveMax) / 2;
+  const options = [...new Set([middle, data.waveMax + 0.2, Math.max(0.1, data.waveMin - 0.2)].map(value => `${value.toFixed(3)} μm`))];
+  labState.wave = { answered: false, correct: `${middle.toFixed(3)} μm`, min: data.waveMin, max: data.waveMax };
+  for (const option of shuffle(options)) {
+    addLabChoice(lab.waveChoices, option, () => {
+      if (!labState.wave || labState.wave.answered) return;
+      labState.wave.answered = true;
+      const correct = option === labState.wave.correct;
+      for (const button of lab.waveChoices.querySelectorAll('button')) button.disabled = true;
+      lab.waveFeedback.textContent = `${correct ? 'Correct.' : 'Not quite.'} This frame spans ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`;
+      lab.waveFeedback.className = `quiz-feedback ${correct ? 'correct-text' : 'wrong-text'}`;
+      lab.waveNext.disabled = false;
+    });
+  }
+}
+
+async function copyMail() {
+  if (!frames[frameIndex]) {
+    lab.mailStatus.textContent = 'Load real frames before copying an observation.';
+    return;
+  }
+  const content = buildMailContent();
+  const note = lab.mailNote.value.trim();
+  const text = note ? `${note}\n\n${content.text}` : content.text;
+  try {
+    await navigator.clipboard.writeText(text);
+    lab.mailStatus.textContent = 'Observation email copied to the clipboard.';
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+    lab.mailStatus.textContent = 'Observation email copied to the clipboard.';
+  }
+}
+
+function openMail() {
+  const data = labData();
+  if (!data.frame) {
+    lab.mailStatus.textContent = 'Load real frames before mailing an observation.';
+    return;
+  }
+  const content = buildMailContent(data);
+  const note = lab.mailNote.value.trim();
+  const body = note ? `${note}\n\n${content.text}` : content.text;
+  const recipient = lab.mailTo.value.trim();
+  window.location.href = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(content.subject)}&body=${encodeURIComponent(body)}`;
+  lab.mailStatus.textContent = 'Opening your mail app with this observation. Review it there before sending.';
+}
+
+function initLab() {
+  for (const tab of lab.tabs) tab.addEventListener('click', () => setLabTab(tab.dataset.labTab));
+  lab.shortcut.addEventListener('click', () => {
+    setLabTab('mail');
+    $('lab').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  lab.mailOpen.addEventListener('click', openMail);
+  lab.mailCopy.addEventListener('click', copyMail);
+  lab.learnNext.addEventListener('click', newLearnQuestion);
+  lab.brighterNext.addEventListener('click', newBrighterRound);
+  lab.waveNext.addEventListener('click', newWaveRound);
+  setLabTab('mail');
+  newLearnQuestion();
+  newBrighterRound();
+  newWaveRound();
+}
+
+initLab();
 render();
 loadRealFrames();
