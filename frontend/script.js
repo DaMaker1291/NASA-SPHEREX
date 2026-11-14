@@ -61,12 +61,10 @@ function readField() {
 }
 
 function applyCoordinates() {
-  let field;
-  try { field = readField(); } catch (error) { notify(error.message); return; }
+  try { readField(); } catch (error) { notify(error.message); return; }
   const target = targets[el.target.value];
   el.viewerTitle.textContent = target ? target.label : 'Custom sky region';
-  el.detailRA.textContent = `${field.ra.toFixed(3)}°`;
-  el.detailDec.textContent = `${field.dec > 0 ? '+' : ''}${field.dec.toFixed(3)}°`;
+  // The observation panel stays with the frame on screen until new frames load.
   notify('Region updated. Load frames to query IRSA.');
 }
 
@@ -110,6 +108,8 @@ function updateDetails(frame) {
     el.detailFrame.textContent = '—';
     el.detailObsid.textContent = '—';
     el.detailSize.textContent = '—';
+    el.detailRA.textContent = '—';
+    el.detailDec.textContent = '—';
     el.detailDate.textContent = 'Not provided';
     el.detailWavelength.textContent = 'Not provided';
     el.detailIntensity.textContent = '—';
@@ -126,32 +126,50 @@ function updateDetails(frame) {
     return;
   }
   const analysis = frame.analysis;
+  const measurementFailed = Boolean(frame.measurementError);
+  const measurementPending = frame.real && !analysis && !measurementFailed;
+  const unavailable = measurementFailed ? 'Unavailable (measurement failed)' : '—';
   el.detailSource.textContent = frame.real ? 'IRSA SPHEREx DR1' : 'Local PNG files';
   el.detailFrame.textContent = frame.label;
   el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
   el.detailSize.textContent = frame.width && frame.height ? `${frame.width} × ${frame.height} px` : 'Loading real pixels…';
+  if (frame.real && Number.isFinite(frame.ra) && Number.isFinite(frame.dec)) {
+    el.detailRA.textContent = `${frame.ra.toFixed(3)}°`;
+    el.detailDec.textContent = `${frame.dec > 0 ? '+' : ''}${frame.dec.toFixed(3)}°`;
+  } else {
+    el.detailRA.textContent = '—';
+    el.detailDec.textContent = '—';
+  }
   el.detailDate.textContent = analysis?.dateAvg
     ? analysis.dateAvg.replace('T', ' ').slice(0, 23)
     : frame.iso ? frame.iso.replace('T', ' ').slice(0, 19) : 'Not provided';
   el.detailWavelength.textContent = frame.band ? `SPHEREx ${frame.band}` : 'Not provided';
-  el.detailIntensity.textContent = analysis ? `${formatNumber(analysis.median)} ${analysis.bunit || 'MJy sr⁻¹'}` : 'Measuring FITS…';
-  el.detailRange.textContent = analysis ? `${formatNumber(analysis.low)} – ${formatNumber(analysis.high)}` : '—';
-  el.detailFullRange.textContent = analysis ? `${formatNumber(analysis.min)} – ${formatNumber(analysis.max)}` : '—';
-  el.detailMean.textContent = analysis ? `${formatNumber(analysis.mean)} / ${formatNumber(analysis.median)}` : '—';
-  el.detailVariance.textContent = analysis && Number.isFinite(analysis.varianceMedian) ? formatNumber(analysis.varianceMedian) : '—';
-  el.detailZodi.textContent = analysis && Number.isFinite(analysis.zodiMedian) ? formatNumber(analysis.zodiMedian) : '—';
-  el.detailFlags.textContent = analysis
+  el.detailIntensity.textContent = analysis
+    ? `${formatNumber(analysis.median)} ${analysis.bunit || 'MJy sr⁻¹'}`
+    : measurementFailed ? unavailable : measurementPending ? 'Measuring FITS…' : '—';
+  el.detailRange.textContent = analysis ? `${formatNumber(analysis.low)} – ${formatNumber(analysis.high)}` : unavailable;
+  el.detailFullRange.textContent = analysis ? `${formatNumber(analysis.min)} – ${formatNumber(analysis.max)}` : unavailable;
+  el.detailMean.textContent = analysis ? `${formatNumber(analysis.mean)} / ${formatNumber(analysis.median)}` : unavailable;
+  el.detailVariance.textContent = analysis && Number.isFinite(analysis.varianceMedian)
+    ? formatNumber(analysis.varianceMedian)
+    : analysis ? 'Not in cutout' : unavailable;
+  el.detailZodi.textContent = analysis && Number.isFinite(analysis.zodiMedian)
+    ? formatNumber(analysis.zodiMedian)
+    : analysis ? 'Not in cutout' : unavailable;
+  el.detailFlags.textContent = analysis && Number.isFinite(analysis.flagged)
     ? frame.width && frame.height
       ? `${analysis.flagged.toLocaleString()} (${((analysis.flagged / (frame.width * frame.height)) * 100).toFixed(1)}%)`
       : analysis.flagged.toLocaleString()
-    : '—';
+    : measurementFailed || analysis ? 'Unavailable' : measurementPending ? 'Measuring FITS…' : '—';
   el.detailWave.textContent = analysis && Number.isFinite(analysis.waveMin) && Number.isFinite(analysis.waveMax)
     ? `${analysis.waveMin.toFixed(3)}–${analysis.waveMax.toFixed(3)} μm${Number.isFinite(analysis.waveBwMin) && Number.isFinite(analysis.waveBwMax) ? ` (Δλ ${analysis.waveBwMin.toFixed(3)}–${analysis.waveBwMax.toFixed(3)})` : ''}`
-    : '—';
+    : analysis ? 'Not in cutout' : unavailable;
   el.detailExposure.textContent = analysis && Number.isFinite(analysis.exposure)
     ? `${analysis.exposure.toFixed(1)} s`
-    : analysis ? 'Not in cutout header' : '—';
-  el.detailPixelScale.textContent = analysis && Number.isFinite(analysis.pixelScale) ? `${analysis.pixelScale.toFixed(2)}″ / px` : '—';
+    : analysis ? 'Not in cutout header' : unavailable;
+  el.detailPixelScale.textContent = analysis && Number.isFinite(analysis.pixelScale)
+    ? `${analysis.pixelScale.toFixed(2)}″ / px`
+    : analysis ? 'Not in cutout' : unavailable;
   formatSky();
 }
 
@@ -162,7 +180,7 @@ function readFrameHeaders(response) {
     const value = Number(raw);
     return Number.isFinite(value) ? value : null;
   };
-  return {
+  const headers = {
     min: number('X-Frame-Min'),
     max: number('X-Frame-Max'),
     low: number('X-Frame-Low'),
@@ -171,7 +189,7 @@ function readFrameHeaders(response) {
     mean: number('X-Frame-Mean'),
     varianceMedian: number('X-Frame-Variance-Median'),
     zodiMedian: number('X-Frame-Zodi-Median'),
-    flagged: number('X-Frame-Flagged') ?? 0,
+    flagged: number('X-Frame-Flagged'),
     pixelScale: number('X-Frame-Pixel-Scale'),
     waveMin: number('X-Frame-Wave-Min'),
     waveMax: number('X-Frame-Wave-Max'),
@@ -184,6 +202,10 @@ function readFrameHeaders(response) {
     band: response.headers.get('X-Frame-Band') || '',
     obsid: response.headers.get('X-Frame-Obsid') || ''
   };
+  return {
+    ...headers,
+    measured: Number.isFinite(headers.median) && Number.isFinite(headers.mean)
+  };
 }
 
 async function loadFrameData(frame) {
@@ -195,10 +217,21 @@ async function loadFrameData(frame) {
     if (!frames.includes(frame)) return;
     const objectUrl = URL.createObjectURL(blob);
     ownedObjectUrls.push(objectUrl);
-    frame.analysis = analysis;
     frame.src = objectUrl;
+    if (analysis.measured) {
+      frame.analysis = analysis;
+      frame.measurementError = '';
+    } else {
+      frame.analysis = null;
+      frame.measurementError = 'FITS measurement headers were not returned.';
+    }
     if (frames[frameIndex] === frame) render();
   } catch (error) {
+    if (frames.includes(frame)) {
+      frame.analysis = null;
+      frame.measurementError = error.message;
+      if (frames[frameIndex] === frame) render();
+    }
     notify(`Could not measure that FITS frame: ${error.message}`);
   }
 }
@@ -277,7 +310,10 @@ async function loadRealFrames() {
       detector: frame.detector,
       uri: frame.uri,
       obsid: frame.obsid,
+      ra: payload.field?.ra ?? field.ra,
+      dec: payload.field?.dec ?? field.dec,
       analysis: null,
+      measurementError: null,
       real: true
     }));
     sky = payload.sky || null;
@@ -288,8 +324,6 @@ async function loadRealFrames() {
     const coverage = visitCount ? ` · ${visitCount} real visits in field` : '';
     loadFrames(realFrames, `${realFrames.length} real SPHEREx DR1 frames · ${payload.detector} detector${coverage}`, badge);
     el.viewerTitle.textContent = targets[el.target.value]?.label || 'Custom sky region';
-    el.detailRA.textContent = `${field.ra.toFixed(3)}°`;
-    el.detailDec.textContent = `${field.dec > 0 ? '+' : ''}${field.dec.toFixed(3)}°`;
     realFrames.forEach(loadFrameData);
     notify(`Loaded ${realFrames.length} real IRSA SPHEREx frames.`);
   } catch (error) {
