@@ -11,8 +11,10 @@ import {
   summarizeCutout,
   summarizeObservations,
   type IrsaFind,
+  type IrsaObservation,
 } from './irsa'
 import { ApiError, queryEnum, queryNumber, validateIrsaProductUri } from './http'
+import { rasterizeCutout } from './imaging'
 import { getSourceHealth } from './sources'
 
 type Env = {
@@ -223,6 +225,136 @@ app.get('/api/spherex/brief', async (c) => {
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
     c.header('X-Data-Source', asciiHeader(data.source.label))
     const response = c.json(data)
+    edgeStore(c, response)
+    return withCacheState(response, 'MISS')
+  } catch (error) {
+    return apiError(c, error)
+  }
+})
+
+app.get('/api/spherex/frames', async (c) => {
+  let ra: number
+  let dec: number
+  let fov: number
+  let limit: number
+  try {
+    ra = queryNumber(c.req.query('ra'), { label: 'ra', min: 0, max: 360, fallback: 150 })
+    dec = queryNumber(c.req.query('dec'), { label: 'dec', min: -90, max: 90, fallback: 19.5 })
+    fov = queryNumber(c.req.query('fov'), { label: 'fov', min: 0.1, max: 0.9, fallback: 0.3 })
+    limit = Math.round(queryNumber(c.req.query('limit'), { label: 'limit', min: 2, max: 8, fallback: 6 }))
+  } catch (error) {
+    return apiError(c, error)
+  }
+
+  try {
+    const cached = await edgeMatch(c.req.raw)
+    if (cached) return withCacheState(cached, 'HIT')
+
+    let data: IrsaFind
+    try {
+      data = await findSpherex(ra, dec, fov)
+    } catch (error) {
+      const fallback =
+        Math.abs(ra - DEFAULT_FIELD.ra) < 1e-9 &&
+        Math.abs(dec - DEFAULT_FIELD.dec) < 1e-9 &&
+        Math.abs(fov - DEFAULT_FIELD.fov) < 1e-9
+          ? await bundledFind(c)
+          : null
+      if (!fallback) throw error
+      data = fallback
+    }
+
+    const groups = new Map<string, IrsaObservation[]>()
+    for (const observation of data.observations) {
+      const key = observation.obsid.replace(/_\d+$/, '')
+      const rows = groups.get(key) ?? []
+      rows.push(observation)
+      groups.set(key, rows)
+    }
+
+    const available = new Set<string>()
+    for (const rows of groups.values()) {
+      for (const observation of rows) for (const detector of observation.detectors) available.add(detector.detector)
+    }
+    const requested = queryEnum(c.req.query('detector'), ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'] as const, 'D2')
+    const detector = available.has(requested) ? requested : [...available].sort()[0]
+    if (!detector) throw new ApiError(502, 'No detector products were returned for this field.', 'NO_DETECTORS')
+
+    const frames = [...groups.values()]
+      .map((rows) => {
+        const ordered = [...rows].sort((a, b) => a.mjd - b.mjd)
+        const row = ordered.find((observation) => observation.detectors.some((item) => item.detector === detector))
+        const product = row?.detectors.find((item) => item.detector === detector)
+        return row && product ? { row, product } : null
+      })
+      .filter((item): item is { row: IrsaObservation; product: IrsaFind['observations'][number]['detectors'][number] } => item !== null)
+      .sort((a, b) => a.row.mjd - b.row.mjd)
+
+    if (!frames.length) {
+      throw new ApiError(502, `No ${detector} products were returned for this field.`, 'NO_PRODUCTS')
+    }
+
+    const picked = frames.length <= limit
+      ? frames
+      : Array.from(new Set(Array.from({ length: limit }, (_, index) => Math.round((index * (frames.length - 1)) / (limit - 1))))).map(
+          (index) => frames[index],
+        )
+    const query = (uri: string) =>
+      `/api/spherex/png?${new URLSearchParams({ uri, ra: String(ra), dec: String(dec), fov: String(fov) }).toString()}`
+
+    c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
+    c.header('X-Data-Source', asciiHeader(data.source.label))
+    if (data.cachedAt) c.header('X-Data-Fallback', 'last-good')
+    const response = c.json({
+      source: data.source,
+      field: { ra, dec, fov },
+      detector,
+      frames: picked.map(({ row, product }) => ({
+        id: row.obsid.replace(/_\d+$/, ''),
+        obsid: row.obsid,
+        iso: row.iso,
+        date: row.iso.slice(0, 10),
+        detector: product.detector,
+        band: product.band,
+        file: product.file,
+        uri: product.uri,
+        pngUrl: query(product.uri),
+      })),
+    })
+    edgeStore(c, response)
+    return withCacheState(response, 'MISS')
+  } catch (error) {
+    return apiError(c, error)
+  }
+})
+
+app.get('/api/spherex/png', async (c) => {
+  try {
+    const rawUri = c.req.query('uri')
+    if (!rawUri) throw new ApiError(400, 'uri is required.', 'MISSING_QUERY')
+    const uri = validateIrsaProductUri(rawUri)
+    const ra = queryNumber(c.req.query('ra'), { label: 'ra', min: 0, max: 360 })
+    const dec = queryNumber(c.req.query('dec'), { label: 'dec', min: -90, max: 90 })
+    const fov = queryNumber(c.req.query('fov'), { label: 'fov', min: 0.02, max: 0.9, fallback: 0.3 })
+
+    const cached = await edgeMatch(c.req.raw)
+    if (cached) return withCacheState(cached, 'HIT')
+
+    const cutout = await getCutout(uri, ra, dec, fov)
+    let raster
+    try {
+      raster = await rasterizeCutout(cutout.buffer)
+    } catch {
+      throw new ApiError(502, 'IRSA returned a cutout the service could not rasterize.', 'BAD_UPSTREAM_RESPONSE')
+    }
+
+    c.header('Content-Type', 'image/png')
+    c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
+    c.header('X-Data-Source', 'IRSA SPHEREx cutout raster')
+    c.header('X-Data-Url', cutout.uri)
+    c.header('X-Frame-Width', String(raster.width))
+    c.header('X-Frame-Height', String(raster.height))
+    const response = c.body(raster.png.buffer as ArrayBuffer)
     edgeStore(c, response)
     return withCacheState(response, 'MISS')
   } catch (error) {

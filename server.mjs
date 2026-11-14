@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 
 const assetRoot = new URL('./frontend/', import.meta.url)
+const publicRoot = new URL('./public/', import.meta.url)
 const workerEntry = new URL('./dist/creative_agency/index.js', import.meta.url)
 
 const contentTypes = {
@@ -20,33 +21,34 @@ const contentTypes = {
 
 async function readAsset(request) {
   const url = new URL(request.url)
-  let relative = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '')
-  let assetUrl = new URL(relative, assetRoot)
+  const relative = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '')
+  const roots = [assetRoot, publicRoot]
 
-  if (!assetUrl.href.startsWith(assetRoot.href)) {
-    return new Response('Not found', { status: 404 })
-  }
-
-  try {
-    const body = await readFile(fileURLToPath(assetUrl))
-    const headers = new Headers({
-      'Content-Type': contentTypes[extname(assetUrl.pathname).toLowerCase()] ?? 'application/octet-stream',
-      'Cache-Control': relative === 'index.html' ? 'no-cache' : 'public, max-age=3600',
-      'X-Content-Type-Options': 'nosniff',
-    })
-    return new Response(request.method === 'HEAD' ? null : body, { headers })
-  } catch {
-    if (extname(relative)) return new Response('Not found', { status: 404 })
-    assetUrl = new URL('index.html', assetRoot)
-    const body = await readFile(fileURLToPath(assetUrl))
-    return new Response(request.method === 'HEAD' ? null : body, {
-      headers: {
-        'Content-Type': contentTypes['.html'],
-        'Cache-Control': 'no-cache',
+  for (const root of roots) {
+    const assetUrl = new URL(relative, root)
+    if (!assetUrl.href.startsWith(root.href)) continue
+    try {
+      const body = await readFile(fileURLToPath(assetUrl))
+      const headers = new Headers({
+        'Content-Type': contentTypes[extname(assetUrl.pathname).toLowerCase()] ?? 'application/octet-stream',
+        'Cache-Control': /^(index\.html|.*\.(?:js|css))$/.test(relative) ? 'no-cache' : 'public, max-age=3600',
         'X-Content-Type-Options': 'nosniff',
-      },
-    })
+      })
+      return new Response(request.method === 'HEAD' ? null : body, { headers })
+    } catch {
+      // Try the next asset root.
+    }
   }
+
+  if (extname(relative)) return new Response('Not found', { status: 404 })
+  const body = await readFile(fileURLToPath(new URL('index.html', assetRoot)))
+  return new Response(request.method === 'HEAD' ? null : body, {
+    headers: {
+      'Content-Type': contentTypes['.html'],
+      'Cache-Control': 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  })
 }
 
 const { default: app } = await import(workerEntry)

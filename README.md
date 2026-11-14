@@ -70,8 +70,12 @@ The Worker source is `src/worker/index.ts`, `src/worker/irsa.ts` and
 SIA2 rows: visit count, detector products, bands, date span, cadence and an
 estimated full-frame download size. `GET /api/spherex/summary` fetches one real
 cutout and returns its server-side FITS summary: dimensions, IMAGE statistics,
-flag-bit counts, WCS-WAVE range and key header values. Both routes use the same
-validation, cache and fallback rules as the viewer routes.
+flag-bit counts, WCS-WAVE range and key header values. `GET /api/spherex/frames`
+selects real time-separated visits for a field and returns their SIA2 metadata
+plus same-origin PNG URLs. Those URLs are served by `GET /api/spherex/png`,
+which rasterizes the actual IMAGE FITS pixels from the IRSA cutout. All of these
+routes use the same validation, cache and fallback rules as the viewer routes.
+The Render frontend uses `/frames` and `/png`; it does not generate demo pixels.
 
 ## Backend behaviour
 
