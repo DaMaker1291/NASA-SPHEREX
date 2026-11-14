@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080e1d">
+  <title>SPHEREx Explorer | Sky through time</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="script.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="SPHEREx Explorer home"><span class="brand-mark">✦</span><span>SPHEREx <strong>Explorer</strong></span></a>
+    <div class="top-right"><span class="chip"><span class="dot"></span> Citizen science prototype</span><a href="#guide">How to use</a></div>
+  </header>
+  <main id="top" class="shell">
+    <section class="intro"><div><p class="eyebrow">SKY OBSERVATION STUDIO</p><h1>See the sky change over time.</h1><p class="subheading">Load aligned PNG sky images, explore details, and blink between observations to spot changes.</p></div><div class="intro-note">PNG image viewer <span>•</span> Frontend prototype</div></section>
+    <div class="workspace">
+      <aside class="panel sidebar">
+        <div class="panel-header"><h2>Explore a region</h2><span class="step">01 / INPUT</span></div>
+        <p class="muted small">Coordinates label the region you are examining. Connecting them to image retrieval requires the team's backend.</p>
+        <div class="field"><label for="target">Example target</label><select id="target"><option value="custom">Custom region</option><option value="wise">WISE 0855</option><option value="barnard">Barnard’s Star</option></select></div>
+        <div class="field"><label for="ra">Right Ascension (RA)</label><input id="ra" type="text" placeholder="e.g. 08h 55m 10.831s" autocomplete="off"></div>
+        <div class="field"><label for="dec">Declination (Dec)</label><input id="dec" type="text" placeholder="e.g. -07° 14′ 42.53″" autocomplete="off"></div>
+        <button id="applyCoordinates" class="button secondary full">Set region label</button>
+        <div class="separator"></div>
+        <div class="panel-header"><h2>Observation images</h2><span class="step">02 / LOAD</span></div>
+        <p class="muted small">Select two or more PNG images of the <em>same, aligned</em> sky region. Filenames are shown as frame labels, in alphabetical order.</p>
+        <label class="upload-area" for="fileInput"><span class="upload-icon">↑</span><strong>Choose PNG images</strong><span>Multiple files accepted</span></label>
+        <input id="fileInput" type="file" accept="image/png,.png" multiple hidden>
+        <div class="upload-actions"><button id="loadDemo" class="button ghost">Try demo frames</button><button id="clearImages" class="button ghost">Clear</button></div>
+        <p id="sourceLabel" class="small muted">No images loaded</p>
+        <div class="separator"></div>
+        <div class="field"><label for="frameSpeed">Playback speed <span id="speedValue">1×</span></label><input id="frameSpeed" type="range" min="250" max="2000" step="250" value="1000"></div>
+        <label class="toggle-row" for="showCrosshair"><input id="showCrosshair" type="checkbox"><span>Show centre crosshair</span></label>
+      </aside>
+      <section class="panel viewer-panel" aria-label="Sky image viewer">
+        <div class="viewer-toolbar"><div><p class="eyebrow">LIVE VIEWER</p><h2 id="viewerTitle">No region selected</h2></div><div class="viewer-actions"><button id="zoomOut" class="icon-button" title="Zoom out" aria-label="Zoom out">−</button><span id="zoomLevel" class="zoom-level">100%</span><button id="zoomIn" class="icon-button" title="Zoom in" aria-label="Zoom in">+</button><button id="resetView" class="button ghost compact">Reset view</button></div></div>
+        <div class="viewer-stage" id="viewerStage" aria-label="Image viewing area"><div id="imageTransform" class="image-transform"><img id="skyImage" alt="Selected sky observation" draggable="false" hidden><canvas id="demoCanvas" width="900" height="580" hidden></canvas></div><div id="emptyState" class="empty-state"><div class="empty-icon">✧</div><h3>Your sky awaits</h3><p>Load PNG images from your team, or try the built-in simulated example.</p><button id="emptyDemo" class="button primary">Try sample animation</button></div><div id="crosshair" class="crosshair" hidden><span></span></div><div id="stageBadge" class="stage-badge" hidden>DEMO • SIMULATED DATA</div></div>
+        <div class="playback"><div class="playback-top"><div><span class="eyebrow">OBSERVATION TIMELINE</span><div id="frameLabel" class="frame-label">No images loaded</div></div><span id="frameCount" class="muted">0 / 0</span></div><input id="timeline" aria-label="Choose observation frame" type="range" min="0" max="0" value="0" disabled><div class="player-buttons"><button id="previous" class="icon-button" title="Previous frame" aria-label="Previous frame" disabled>⏮</button><button id="playPause" class="button primary play" disabled>▶ Play</button><button id="next" class="icon-button" title="Next frame" aria-label="Next frame" disabled>⏭</button><span class="player-hint">Tip: drag on image to pan • scroll to zoom</span></div></div>
+        <div class="comparison"><div class="comparison-heading"><div><h3>Compare observations</h3><p class="small muted">Blink between two frames or inspect them side by side.</p></div><div class="compare-buttons"><button id="blink" class="button secondary" disabled>Blink A / B</button><button id="showCompare" class="button secondary" disabled>Side by side</button></div></div><div class="compare-selectors"><div class="field"><label for="frameA">Frame A</label><select id="frameA" disabled></select></div><div class="field"><label for="frameB">Frame B</label><select id="frameB" disabled></select></div></div><div id="compareGrid" class="compare-grid" hidden><figure><img id="compareImageA" alt="First observation"/><canvas id="compareCanvasA" width="900" height="580" hidden></canvas><figcaption id="compareLabelA">A</figcaption></figure><figure><img id="compareImageB" alt="Second observation"/><canvas id="compareCanvasB" width="900" height="580" hidden></canvas><figcaption id="compareLabelB">B</figcaption></figure></div></div>
+      </section>
+      <aside class="panel metadata"><div class="panel-header"><h2>Observation details</h2><span class="step">03 / INSPECT</span></div><dl class="details"><div><dt>Dataset</dt><dd id="detailSource">—</dd></div><div><dt>Current frame</dt><dd id="detailFrame">—</dd></div><div><dt>Image dimensions</dt><dd id="detailSize">—</dd></div><div><dt>Right Ascension</dt><dd id="detailRA">—</dd></div><div><dt>Declination</dt><dd id="detailDec">—</dd></div><div><dt>Observation date</dt><dd id="detailDate">Not provided</dd></div><div><dt>Wavelength</dt><dd id="detailWavelength">Not provided</dd></div></dl><div class="notice"><strong>Scientific note</strong><p>Images must be aligned to the same sky coordinates and field of view before blinking or comparing. Demo data is artificial, not SPHEREx imagery.</p></div></aside>
+    </div>
+    <section class="guide" id="guide"><h2>How to use this prototype</h2><div class="guide-grid"><div><span>01</span><h3>Prepare images</h3><p>Ask the backend team for time-separated PNG cutouts of the same sky region, aligned to the same coordinate grid.</p></div><div><span>02</span><h3>Load and play</h3><p>Choose the PNGs, step through them, play the animation, and zoom or drag to investigate details.</p></div><div><span>03</span><h3>Compare frames</h3><p>Pick two observations and blink between them or show both together. Dates and wavelengths can be added when the backend supplies metadata.</p></div></div></section>
+  </main>
+  <footer>SPHEREx Explorer · Educational hackathon prototype · Not affiliated with or endorsed by NASA</footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
