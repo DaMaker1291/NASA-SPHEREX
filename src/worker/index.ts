@@ -13,8 +13,8 @@ import {
   type IrsaFind,
   type IrsaObservation,
 } from './irsa'
-import { ApiError, queryEnum, queryNumber, validateIrsaProductUri } from './http'
-import { rasterizeCutout } from './imaging'
+import { ApiError, TtlCache, queryEnum, queryNumber, validateIrsaProductUri } from './http'
+import { rasterizeCutoutCached } from './imaging'
 import { skyContext } from './sky'
 import { getSourceHealth } from './sources'
 
@@ -32,8 +32,9 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 const MAX_SPECTRUM_DETECTORS = 6
 const SPECTRUM_CONCURRENCY = 3
-const CACHE_NAME = 'drift-api-v6'
+const CACHE_NAME = 'drift-api-v7'
 const DEFAULT_FIELD = { ra: 150, dec: 19.5, fov: 0.3 }
+const summaryCache = new TtlCache<string, ReturnType<typeof summarizeCutout>>(600_000, 64)
 
 function asciiHeader(value: string) {
   return value.replace(/[^\x20-\x7E]/g, '-')
@@ -301,7 +302,7 @@ app.get('/api/spherex/frames', async (c) => {
           (index) => frames[index],
         )
     const query = (uri: string) =>
-      `/api/spherex/png?${new URLSearchParams({ uri, ra: String(ra), dec: String(dec), fov: String(fov), v: '4' }).toString()}`
+      `/api/spherex/png?${new URLSearchParams({ uri, ra: String(ra), dec: String(dec), fov: String(fov), v: '5' }).toString()}`
 
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
     c.header('X-Data-Source', asciiHeader(data.source.label))
@@ -344,17 +345,23 @@ app.get('/api/spherex/png', async (c) => {
     if (cached) return withCacheState(cached, 'HIT')
 
     const cutout = await getCutout(uri, ra, dec, fov)
-    let raster
+    let rasterResult
     try {
-      raster = await rasterizeCutout(cutout.buffer)
+      rasterResult = await rasterizeCutoutCached(
+        `${cutout.uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${fov.toFixed(3)}`,
+        cutout.buffer,
+      )
     } catch {
       throw new ApiError(502, 'IRSA returned a cutout the service could not rasterize.', 'BAD_UPSTREAM_RESPONSE')
     }
+    const raster = rasterResult.raster
 
     c.header('Content-Type', 'image/png')
     c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
     c.header('X-Data-Source', 'IRSA SPHEREx cutout raster')
     c.header('X-Data-Url', cutout.uri)
+    c.header('X-Cutout-Cache', cutout.cached ? 'HIT' : 'MISS')
+    c.header('X-Raster-Cache', rasterResult.cached ? 'HIT' : 'MISS')
     c.header('X-Frame-Width', String(raster.width))
     c.header('X-Frame-Height', String(raster.height))
     c.header('X-Frame-Min', String(raster.stats.min))
@@ -377,6 +384,18 @@ app.get('/api/spherex/png', async (c) => {
     c.header('X-Frame-Detector', asciiHeader(raster.detector))
     c.header('X-Frame-Band', asciiHeader(raster.band))
     c.header('X-Frame-Obsid', asciiHeader(raster.obsid))
+    if (raster.center) {
+      c.header('X-Frame-Ra', String(raster.center.ra))
+      c.header('X-Frame-Dec', String(raster.center.dec))
+    }
+    if (raster.sky) {
+      c.header('X-Frame-Constellation', asciiHeader(raster.sky.constellation.name))
+      c.header('X-Frame-Constellation-Symbol', asciiHeader(raster.sky.constellation.symbol))
+      c.header('X-Frame-Galactic-L', String(raster.sky.galactic.l))
+      c.header('X-Frame-Galactic-B', String(raster.sky.galactic.b))
+      c.header('X-Frame-Ecliptic-Lon', String(raster.sky.ecliptic.lon))
+      c.header('X-Frame-Ecliptic-Lat', String(raster.sky.ecliptic.lat))
+    }
     const response = c.body(raster.png.buffer as ArrayBuffer)
     edgeStore(c, response)
     return withCacheState(response, 'MISS')
@@ -403,6 +422,7 @@ app.get('/api/spherex/cutout', async (c) => {
     c.header('X-Data-Source', 'IRSA SPHEREx cutout')
     c.header('X-Data-Url', data.uri)
     c.header('X-Cutout-Size', String(data.size))
+    c.header('X-Cutout-Cache', data.cached ? 'HIT' : 'MISS')
     const response = c.body(data.buffer)
     edgeStore(c, response)
     return withCacheState(response, 'MISS')
@@ -424,15 +444,23 @@ app.get('/api/spherex/summary', async (c) => {
     if (cached) return withCacheState(cached, 'HIT')
 
     const cutout = await getCutout(uri, ra, dec, fov)
-    let summary
-    try {
-      summary = summarizeCutout(cutout.buffer)
-    } catch {
-      throw new ApiError(502, 'IRSA returned a cutout the Worker could not summarize.', 'BAD_UPSTREAM_RESPONSE')
+    const summaryKey = `${cutout.uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${fov.toFixed(3)}`
+    let summary = summaryCache.get(summaryKey)
+    let summaryCached = Boolean(summary)
+    if (!summary) {
+      try {
+        summary = summarizeCutout(cutout.buffer)
+      } catch {
+        throw new ApiError(502, 'IRSA returned a cutout the Worker could not summarize.', 'BAD_UPSTREAM_RESPONSE')
+      }
+      summaryCache.set(summaryKey, summary)
     }
+    const sky = summary.center ? skyContext(summary.center.ra, summary.center.dec) : skyContext(ra, dec)
 
     c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
     c.header('X-Data-Source', 'IRSA SPHEREx cutout header summary')
+    c.header('X-Cutout-Cache', cutout.cached ? 'HIT' : 'MISS')
+    c.header('X-Summary-Cache', summaryCached ? 'HIT' : 'MISS')
     const response = c.json({
       source: {
         label: 'IRSA SPHEREx level-2 cutout · server-side FITS summary',
@@ -441,7 +469,7 @@ app.get('/api/spherex/summary', async (c) => {
       },
       uri: cutout.uri,
       cutoutSize: cutout.size,
-      sky: skyContext(ra, dec),
+      sky,
       summary,
     })
     edgeStore(c, response)

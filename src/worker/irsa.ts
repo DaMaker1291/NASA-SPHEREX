@@ -1,4 +1,4 @@
-import { imageStats, numberValue, parseFits, pixelScale, readImage, textValue, waveAt, type FitsFile, type FitsHdu } from '../lib/fits'
+import { imageStats, numberValue, parseFits, pixelScale, readImage, skyAt, textValue, waveAt, type FitsFile, type FitsHdu } from '../lib/fits'
 import {
   ApiError,
   SingleFlight,
@@ -18,6 +18,8 @@ const CARD = 80
 const MAX_SIA_BYTES = 1_500_000
 const MAX_CATALOG_BYTES = 2_000_000
 const MAX_CUTOUT_BYTES = 40 * 1024 * 1024
+const CUTOUT_CACHE_TTL_MS = 10 * 60_000
+const CUTOUT_CACHE_MAX_BYTES = 96 * 1024 * 1024
 const MAX_HDUS = 64
 const decoder = new TextDecoder('ascii')
 
@@ -164,6 +166,8 @@ const catalogCache = new TtlCache<string, Awaited<ReturnType<typeof queryCatalog
 const catalogFlights = new SingleFlight<string, Awaited<ReturnType<typeof queryCatalog>>>(32)
 const catalogCooldownUntil: Record<'gaia' | 'wise', number> = { gaia: 0, wise: 0 }
 const cutoutFlights = new SingleFlight<string, ArrayBuffer>(32)
+const cutoutCache = new Map<string, { buffer: ArrayBuffer; at: number; bytes: number }>()
+let cutoutCacheBytes = 0
 const spectrumCache = new TtlCache<string, SpectrumSegment>(600_000, 64)
 const spectrumFlights = new SingleFlight<string, SpectrumSegment>(32)
 
@@ -467,15 +471,56 @@ async function fetchCutout(uri: string, ra: number, dec: number, size: string) {
   }
 }
 
+function readCutoutCache(key: string) {
+  const entry = cutoutCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.at > CUTOUT_CACHE_TTL_MS) {
+    cutoutCache.delete(key)
+    cutoutCacheBytes -= entry.bytes
+    return null
+  }
+  return entry.buffer
+}
+
+function storeCutoutCache(key: string, buffer: ArrayBuffer) {
+  const bytes = buffer.byteLength
+  const previous = cutoutCache.get(key)
+  if (previous) {
+    cutoutCache.delete(key)
+    cutoutCacheBytes -= previous.bytes
+  }
+  if (bytes > CUTOUT_CACHE_MAX_BYTES) return
+  while (cutoutCacheBytes + bytes > CUTOUT_CACHE_MAX_BYTES && cutoutCache.size) {
+    const oldest = cutoutCache.keys().next()
+    if (oldest.done) break
+    const entry = cutoutCache.get(oldest.value)
+    if (entry) cutoutCacheBytes -= entry.bytes
+    cutoutCache.delete(oldest.value)
+  }
+  cutoutCache.set(key, { buffer, at: Date.now(), bytes })
+  cutoutCacheBytes += bytes
+}
+
+async function getCutoutBuffer(uri: string, ra: number, dec: number, size: string) {
+  const key = `${uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${size}`
+  const cached = readCutoutCache(key)
+  if (cached) return { buffer: cached, cached: true }
+  const buffer = await cutoutFlights.run(key, async () => {
+    const fresh = await fetchCutout(uri, ra, dec, size)
+    storeCutoutCache(key, fresh)
+    return fresh
+  })
+  return { buffer, cached: false }
+}
+
 export async function getCutout(uri: string, ra: number, dec: number, fov: number) {
   const safeUri = validateIrsaProductUri(uri)
   if (!finite(ra) || ra < 0 || ra > 360 || !finite(dec) || dec < -90 || dec > 90) {
     throw new ApiError(400, 'Invalid cutout center.', 'OUT_OF_RANGE')
   }
   const size = clamp(fov, 0.02, 0.9).toFixed(3)
-  const key = `${safeUri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${size}`
-  const buffer = await cutoutFlights.run(key, () => fetchCutout(safeUri, ra, dec, `${size}d`))
-  return { buffer, size: Number(size), uri: safeUri }
+  const result = await getCutoutBuffer(safeUri, ra, dec, `${size}d`)
+  return { buffer: result.buffer, size: Number(size), uri: safeUri, cached: result.cached }
 }
 
 function hduByName(fits: FitsFile, name: string) {
@@ -504,6 +549,7 @@ export type CutoutSummary = {
   varianceStats: ReturnType<typeof imageStats>
   zodiStats: ReturnType<typeof imageStats>
   pixelScale: number | null
+  center: { ra: number; dec: number } | null
   flags: Array<{ bit: number; count: number }>
   wave: { min: number; max: number; minBandwidth: number; maxBandwidth: number } | null
   meta: {
@@ -521,13 +567,14 @@ export type CutoutSummary = {
 
 export function summarizeCutout(buffer: ArrayBuffer): CutoutSummary {
   const fits = parseFits(buffer)
-  const image = fits.hdus[0]
+  const image = hduByName(fits, 'IMAGE') ?? fits.hdus[0]
   const variance = hduByName(fits, 'VARIANCE')
   const zodi = hduByName(fits, 'ZODI')
   const flags = hduByName(fits, 'FLAGS')
   const header = image?.header
   const exposure = header ? numberValue(header, 'EXPTIME', Number.NaN) : Number.NaN
   const scale = image ? pixelScale(image) : Number.NaN
+  const center = image ? skyAt(image, (image.width - 1) / 2, (image.height - 1) / 2) : null
   return {
     width: image?.width ?? 0,
     height: image?.height ?? 0,
@@ -537,6 +584,7 @@ export function summarizeCutout(buffer: ArrayBuffer): CutoutSummary {
     varianceStats: variance ? imageStats(readImage(buffer, variance)) : null,
     zodiStats: zodi ? imageStats(readImage(buffer, zodi)) : null,
     pixelScale: Number.isFinite(scale) ? scale : null,
+    center,
     flags: flags ? flagSummary(readImage(buffer, flags)) : [],
     wave: fits.wave
       ? {
@@ -580,7 +628,7 @@ export async function getSpectrum(uri: string, ra: number, dec: number): Promise
   if (cached) return cached
 
   return spectrumFlights.run(key, async () => {
-    const buffer = await fetchCutout(safeUri, ra, dec, '24,2040pix')
+    const { buffer } = await getCutoutBuffer(safeUri, ra, dec, '24,2040pix')
     let fits: FitsFile
     try {
       fits = parseFits(buffer)

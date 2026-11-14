@@ -79,7 +79,11 @@ Those URLs are served by `GET /api/spherex/png`, which rasterizes the actual
 IMAGE FITS pixels from the IRSA cutout. Its response headers expose the real
 IMAGE min/max/low/high/median/mean, VARIANCE and ZODI medians, flagged-pixel
 count, pixel scale, wavelength range and bandwidth, DATE-AVG, exposure when
-present, detector, band, OBSID and BUNIT. Constellation names use
+present, detector, band, OBSID and BUNIT. The cutout's actual WCS-center
+RA/Dec, IAU constellation name/symbol, galactic longitude/latitude and ecliptic
+longitude/latitude are also sent as `X-Frame-Ra`, `X-Frame-Dec`,
+`X-Frame-Constellation`, `X-Frame-Galactic-L/B` and `X-Frame-Ecliptic-Lon/Lat`.
+Constellation names use
 [`astronomy-engine`](https://github.com/cosinekitty/astronomy), not a hand-coded
 lookup table. All of these routes use the same validation, cache and fallback
 rules as the viewer routes. The Render frontend uses `/frames` and `/png`; it
@@ -97,8 +101,13 @@ does not generate demo pixels.
   exponential backoff and `Retry-After` support. SIA2 has a 50 s total budget;
   cutouts and TAP queries have 45 s budgets. Responses are size-limited.
 - **Caching** — SIA2, catalogue and spectrum results use bounded TTL caches.
-  Successful GETs are also stored in the `drift-api-v6` Cache API namespace and
+  Successful GETs are also stored in the `drift-api-v7` Cache API namespace and
   report `X-Cache: HIT` or `MISS`. Identical concurrent requests are coalesced.
+  Inside the Worker, real cutout FITS buffers are kept in a bounded 96 MB,
+  10-minute cache (`X-Cutout-Cache`), rendered PNGs in a bounded raster cache
+  (`X-Raster-Cache`), and cutout summaries in a 64-entry cache
+  (`X-Summary-Cache`). This avoids repeatedly downloading and reparsing the
+  same IRSA product for the PNG, summary and spectrum paths.
 - **Failure handling** — SIA2 and catalogue services enter a 30 s cooldown
   after a failed request, returning `503` with `Retry-After` instead of
   hammering a degraded archive. The default field falls back to the bundled

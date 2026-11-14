@@ -86,20 +86,50 @@ function formatNumber(value) {
   return value.toFixed(3);
 }
 
-function formatSky() {
-  if (!sky) {
+function formatRaHms(ra) {
+  const hours = ra / 15;
+  const h = Math.floor(hours);
+  const minutes = Math.floor((hours - h) * 60);
+  const seconds = ((hours - h) * 60 - minutes) * 60;
+  return `${String(h).padStart(2, '0')}h ${String(minutes).padStart(2, '0')}m ${seconds.toFixed(2).padStart(5, '0')}s`;
+}
+
+function formatDecDms(dec) {
+  const sign = dec < 0 ? '−' : '+';
+  const absolute = Math.abs(dec);
+  const degrees = Math.floor(absolute);
+  const minutes = Math.floor((absolute - degrees) * 60);
+  const seconds = ((absolute - degrees) * 60 - minutes) * 60;
+  return `${sign}${String(degrees).padStart(2, '0')}° ${String(minutes).padStart(2, '0')}′ ${seconds.toFixed(2).padStart(5, '0')}″`;
+}
+
+function formatSky(source = null) {
+  const constellation = source?.constellation
+    ? { name: source.constellation, symbol: source.constellationSymbol || source.constellation }
+    : sky?.constellation;
+  const galactic = source && Number.isFinite(source.galacticL) && Number.isFinite(source.galacticB)
+    ? { l: source.galacticL, b: source.galacticB }
+    : sky?.galactic;
+  const ecliptic = source && Number.isFinite(source.eclipticLon) && Number.isFinite(source.eclipticLat)
+    ? { lon: source.eclipticLon, lat: source.eclipticLat }
+    : sky?.ecliptic;
+  const actualRa = Number.isFinite(source?.ra) ? source.ra : null;
+  const actualDec = Number.isFinite(source?.dec) ? source.dec : null;
+  if (!constellation || !galactic || !ecliptic) {
     el.detailConstellation.textContent = '—';
     el.detailGalactic.textContent = '—';
     el.detailEcliptic.textContent = '—';
     el.detailSexagesimal.textContent = '—';
     return;
   }
-  el.detailConstellation.textContent = sky.constellation.name === sky.constellation.symbol
-    ? sky.constellation.name
-    : `${sky.constellation.name} (${sky.constellation.symbol})`;
-  el.detailGalactic.textContent = `${sky.galactic.l.toFixed(2)}° / ${sky.galactic.b >= 0 ? '+' : ''}${sky.galactic.b.toFixed(2)}°`;
-  el.detailEcliptic.textContent = `${sky.ecliptic.lon.toFixed(2)}° / ${sky.ecliptic.lat >= 0 ? '+' : ''}${sky.ecliptic.lat.toFixed(2)}°`;
-  el.detailSexagesimal.textContent = `${sky.raHms} · ${sky.decDms}`;
+  el.detailConstellation.textContent = constellation.name === constellation.symbol
+    ? constellation.name
+    : `${constellation.name} (${constellation.symbol})`;
+  el.detailGalactic.textContent = `${galactic.l.toFixed(2)}° / ${galactic.b >= 0 ? '+' : ''}${galactic.b.toFixed(2)}°`;
+  el.detailEcliptic.textContent = `${ecliptic.lon.toFixed(2)}° / ${ecliptic.lat >= 0 ? '+' : ''}${ecliptic.lat.toFixed(2)}°`;
+  el.detailSexagesimal.textContent = actualRa !== null && actualDec !== null
+    ? `${formatRaHms(actualRa)} · ${formatDecDms(actualDec)}`
+    : sky?.raHms ? `${sky.raHms} · ${sky.decDms}` : '—';
 }
 
 function updateDetails(frame) {
@@ -133,9 +163,11 @@ function updateDetails(frame) {
   el.detailFrame.textContent = frame.label;
   el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
   el.detailSize.textContent = frame.width && frame.height ? `${frame.width} × ${frame.height} px` : 'Loading real pixels…';
-  if (frame.real && Number.isFinite(frame.ra) && Number.isFinite(frame.dec)) {
-    el.detailRA.textContent = `${frame.ra.toFixed(3)}°`;
-    el.detailDec.textContent = `${frame.dec > 0 ? '+' : ''}${frame.dec.toFixed(3)}°`;
+  const frameRa = Number.isFinite(analysis?.ra) ? analysis.ra : frame.ra;
+  const frameDec = Number.isFinite(analysis?.dec) ? analysis.dec : frame.dec;
+  if (frame.real && Number.isFinite(frameRa) && Number.isFinite(frameDec)) {
+    el.detailRA.textContent = `${frameRa.toFixed(3)}°`;
+    el.detailDec.textContent = `${frameDec > 0 ? '+' : ''}${frameDec.toFixed(3)}°`;
   } else {
     el.detailRA.textContent = '—';
     el.detailDec.textContent = '—';
@@ -170,7 +202,7 @@ function updateDetails(frame) {
   el.detailPixelScale.textContent = analysis && Number.isFinite(analysis.pixelScale)
     ? `${analysis.pixelScale.toFixed(2)}″ / px`
     : analysis ? 'Not in cutout' : unavailable;
-  formatSky();
+  formatSky(analysis);
 }
 
 function readFrameHeaders(response) {
@@ -200,7 +232,15 @@ function readFrameHeaders(response) {
     bunit: response.headers.get('X-Frame-Bunit') || '',
     detector: response.headers.get('X-Frame-Detector') || '',
     band: response.headers.get('X-Frame-Band') || '',
-    obsid: response.headers.get('X-Frame-Obsid') || ''
+    obsid: response.headers.get('X-Frame-Obsid') || '',
+    ra: number('X-Frame-Ra'),
+    dec: number('X-Frame-Dec'),
+    constellation: response.headers.get('X-Frame-Constellation') || '',
+    constellationSymbol: response.headers.get('X-Frame-Constellation-Symbol') || '',
+    galacticL: number('X-Frame-Galactic-L'),
+    galacticB: number('X-Frame-Galactic-B'),
+    eclipticLon: number('X-Frame-Ecliptic-Lon'),
+    eclipticLat: number('X-Frame-Ecliptic-Lat')
   };
   return {
     ...headers,
@@ -292,7 +332,7 @@ async function loadRealFrames() {
   notify('Loading real SPHEREx detector frames from IRSA.');
   try {
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '6', v: '6'
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '6', v: '7'
     });
     const response = await fetch(`/api/spherex/frames?${params.toString()}`, { headers: { Accept: 'application/json' } });
     const payload = await response.json().catch(() => ({}));

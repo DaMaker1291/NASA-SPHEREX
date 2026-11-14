@@ -4,11 +4,13 @@ import {
   parseFits,
   pixelScale,
   readImage,
+  skyAt,
   stretchValue,
   textValue,
   type FitsStats,
   type WaveTable,
 } from '../lib/fits'
+import { skyContext } from './sky'
 
 const STOPS = [
   [4, 3, 14],
@@ -108,7 +110,13 @@ export type CutoutRaster = {
   detector: string
   band: string
   obsid: string
+  center: { ra: number; dec: number } | null
+  sky: ReturnType<typeof skyContext> | null
 }
+
+const RASTER_CACHE_TTL_MS = 10 * 60_000
+const RASTER_CACHE_MAX_ENTRIES = 64
+const rasterCache = new Map<string, { raster: CutoutRaster; at: number }>()
 
 export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster> {
   const fits = parseFits(buffer)
@@ -126,6 +134,8 @@ export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster
     : 0
   const scale = pixelScale(image)
   const exposure = numberValue(image.header, 'EXPTIME', Number.NaN)
+  const center = skyAt(image, (image.width - 1) / 2, (image.height - 1) / 2)
+  const centerSky = center ? skyContext(center.ra, center.dec) : null
 
   const rgba = new Uint8Array(image.width * image.height * 4)
   for (let index = 0; index < pixels.length; index += 1) {
@@ -158,5 +168,23 @@ export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster
     detector: textValue(image.header, 'DETECTOR'),
     band: textValue(image.header, 'BAND'),
     obsid: textValue(image.header, 'OBSID'),
+    center,
+    sky: centerSky,
   }
+}
+
+export async function rasterizeCutoutCached(key: string, buffer: ArrayBuffer) {
+  const cached = rasterCache.get(key)
+  if (cached && Date.now() - cached.at <= RASTER_CACHE_TTL_MS) {
+    return { raster: cached.raster, cached: true }
+  }
+  if (cached) rasterCache.delete(key)
+
+  const raster = await rasterizeCutout(buffer)
+  if (rasterCache.size >= RASTER_CACHE_MAX_ENTRIES) {
+    const oldest = rasterCache.keys().next()
+    if (!oldest.done) rasterCache.delete(oldest.value)
+  }
+  rasterCache.set(key, { raster, at: Date.now() })
+  return { raster, cached: false }
 }
