@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-19">
-  <script defer src="script.js?v=next-38"></script>
+  <link rel="stylesheet" href="style.css?v=next-21">
+  <script defer src="script.js?v=next-41"></script>
 </head>
 <body>
   <header class="site-header">
@@ -183,6 +183,24 @@
           <span id="mapCursor" class="map-coordinates">Move over the image to read real sky coordinates</span>
           <span class="map-scale"><i id="mapScaleBar"></i><span id="mapScaleText">0.30°</span></span>
           <span id="mapHelp" class="map-help">Drag to pan · scroll to zoom · double-click to move</span>
+        </div>
+
+        <div class="quick-controls" aria-label="Time and display filters">
+          <div class="quick-group quick-time">
+            <span class="quick-title">TIME</span>
+            <button id="quickPrevious" class="icon-button" type="button" title="Previous visit" aria-label="Previous visit" disabled>←</button>
+            <button id="quickPlay" class="quick-play" type="button" title="Play visits" aria-label="Play visits" disabled>▶</button>
+            <button id="quickNext" class="icon-button" type="button" title="Next visit" aria-label="Next visit" disabled>→</button>
+            <input id="quickTimeline" class="quick-timeline" type="range" min="0" max="0" value="0" aria-label="Choose observation visit" disabled>
+            <label class="quick-field" for="quickVisit"><span>Visit</span><select id="quickVisit" disabled><option>No visits loaded</option></select></label>
+          </div>
+          <div class="quick-group quick-filters">
+            <span class="quick-title">FILTERS</span>
+            <label class="quick-field" for="quickBand"><span>Band</span><select id="quickBand"><option value="D1">D1</option><option value="D2">D2</option><option value="D3">D3</option><option value="D4">D4</option><option value="D5">D5</option><option value="D6">D6</option></select></label>
+            <label class="quick-field" for="quickPalette"><span>Palette</span><select id="quickPalette"><option value="iridescent">Iridescent</option><option value="gold">Gold</option><option value="ice">Ice</option><option value="mono">Mono</option></select></label>
+            <label class="quick-field" for="quickStretch"><span>Stretch</span><select id="quickStretch"><option value="asinh">Asinh</option><option value="linear">Linear</option><option value="log">Log</option></select></label>
+            <button id="quickMore" class="quick-more" type="button">More filters ↓</button>
+          </div>
         </div>
 
         <div class="transport">

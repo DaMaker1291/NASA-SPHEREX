@@ -7,6 +7,9 @@ const el = {
   loadReal: $('loadReal'), emptyReal: $('emptyReal'), sourceLabel: $('sourceLabel'),
   targetMeta: $('targetMeta'), fieldMeta: $('fieldMeta'), fieldConstellation: $('fieldConstellation'),
   speed: $('frameSpeed'), speedValue: $('speedValue'),
+  quickPrevious: $('quickPrevious'), quickPlay: $('quickPlay'), quickNext: $('quickNext'),
+  quickTimeline: $('quickTimeline'), quickVisit: $('quickVisit'), quickBand: $('quickBand'),
+  quickPalette: $('quickPalette'), quickStretch: $('quickStretch'), quickMore: $('quickMore'),
   crosshairCheck: $('showCrosshair'), crosshair: $('crosshair'),
   stage: $('viewerStage'), transform: $('imageTransform'), image: $('skyImage'),
   differenceCanvas: $('differenceCanvas'), difference: $('difference'),
@@ -247,6 +250,7 @@ function stopPlayback() {
   clearInterval(interval); interval = null; blinkMode = false;
   el.play.textContent = '▶ Play sequence';
   el.blink.textContent = 'Blink A / B';
+  syncQuickTime();
   clearDifference();
 }
 
@@ -389,6 +393,7 @@ function updateBandUI() {
     chip.setAttribute('aria-pressed', String(chip.dataset.band === detector));
   }
   el.detector.value = detector;
+  syncQuickFilters();
   updateHDControls();
 }
 
@@ -397,6 +402,57 @@ function setBand(value, shouldReload = true) {
   detector = value;
   updateBandUI();
   if (shouldReload && frames.some(frame => frame.real)) loadRealFrames();
+}
+
+function syncQuickFilters() {
+  if (el.quickBand) el.quickBand.value = detector;
+  if (el.quickPalette) el.quickPalette.value = palette;
+  if (el.quickStretch) el.quickStretch.value = stretch;
+}
+
+function populateQuickVisits() {
+  if (!el.quickVisit) return;
+  const signature = frames.map(frame => frame.label || frame.date || '').join('|');
+  if (el.quickVisit.dataset.signature === signature) return;
+  el.quickVisit.replaceChildren();
+  if (!frames.length) {
+    el.quickVisit.add(new Option('No visits loaded', ''));
+  } else {
+    frames.forEach((frame, index) => {
+      el.quickVisit.add(new Option(`${index + 1}. ${frame.label}`, String(index)));
+    });
+  }
+  el.quickVisit.dataset.signature = signature;
+}
+
+function syncQuickTime() {
+  if (!el.quickTimeline || !el.quickVisit) return;
+  const enabled = frames.length > 0;
+  el.quickTimeline.max = String(Math.max(0, frames.length - 1));
+  el.quickTimeline.value = String(frameIndex);
+  el.quickTimeline.disabled = !enabled;
+  el.quickPrevious.disabled = !enabled;
+  el.quickNext.disabled = !enabled;
+  el.quickPlay.disabled = frames.length < 2;
+  el.quickPlay.textContent = interval && !blinkMode ? '⏸' : '▶';
+  el.quickPlay.setAttribute('aria-label', interval && !blinkMode ? 'Pause visits' : 'Play visits');
+  populateQuickVisits();
+  el.quickVisit.value = String(frameIndex);
+  el.quickVisit.disabled = !enabled;
+}
+
+function applyDisplayFilters() {
+  palette = el.paletteSelect.value;
+  stretch = el.stretchSelect.value;
+  syncQuickFilters();
+  if (frames.some(frame => frame.real)) loadRealFrames();
+  else notify('Load a real IRSA field to apply archive display filters.');
+}
+
+function openFilterWorkspace() {
+  const tab = document.querySelector('[data-lab-tab="wavelength"]');
+  if (tab) tab.click();
+  document.getElementById('lab')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderConstellation(primary, neighborhood = null, error = '') {
@@ -1221,6 +1277,8 @@ function maybePrunePartialFrames() {
   frames = complete;
   frameIndex = Math.max(0, frames.indexOf(current));
   el.timeline.max = String(Math.max(0, frames.length - 1));
+  populateQuickVisits();
+  syncQuickTime();
   for (const selector of [el.frameA, el.frameB]) {
     selector.replaceChildren();
     frames.forEach((frame, index) => selector.add(new Option(`${index + 1}. ${frame.label}`, index)));
@@ -1299,6 +1357,8 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side';
   el.sourceLabel.textContent = source;
   el.timeline.max = String(Math.max(0, frames.length - 1));
+  populateQuickVisits();
+  syncQuickTime();
   for (const selector of [el.frameA, el.frameB]) {
     selector.replaceChildren();
     frames.forEach((frame, index) => selector.add(new Option(`${index + 1}. ${frame.label}`, index)));
@@ -1502,6 +1562,7 @@ function render() {
     el.crosshair.hidden = true;
     updateDetails(null);
     updateLab();
+    syncQuickTime();
     return;
   }
   el.empty.hidden = true;
@@ -1540,6 +1601,7 @@ function render() {
   updateTransform();
   drawMinimap();
   updateMapCenter();
+  syncQuickTime();
 }
 
 function nextFrame() { if (!frames.length) return; if (differenceMode) clearDifference(); frameIndex = (frameIndex + 1) % frames.length; render(); }
@@ -1550,6 +1612,7 @@ function startPlayback() {
   if (frames.length < 2) { notify('Load at least 2 frames to animate.'); return; }
   stopPlayback(); el.play.textContent = '⏸ Pause';
   interval = setInterval(nextFrame, playbackDelay());
+  syncQuickTime();
 }
 function togglePlay() { if (interval && !blinkMode) { stopPlayback(); return; } startPlayback(); }
 
@@ -1571,7 +1634,7 @@ function toggleComparison() {
 function toggleBlink() {
   if (blinkMode) { stopPlayback(); return; }
   if (frames.length < 2) { notify('Load at least 2 frames to blink.'); return; }
-  stopPlayback(); blinkMode = true; el.blink.textContent = 'Stop blinking';
+  stopPlayback(); blinkMode = true; el.blink.textContent = 'Stop blinking'; syncQuickTime();
   let showA = true;
   function tick() { frameIndex = Number(showA ? el.frameA.value : el.frameB.value); showA = !showA; render(); }
   tick(); interval = setInterval(tick, playbackDelay());
@@ -1732,13 +1795,39 @@ for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
   chip.addEventListener('click', () => setBand(chip.dataset.band, true));
 }
 for (const select of [el.paletteSelect, el.stretchSelect]) {
-  select.addEventListener('change', () => {
-    palette = el.paletteSelect.value;
-    stretch = el.stretchSelect.value;
-    if (frames.some(frame => frame.real)) loadRealFrames();
-    else notify('Load a real IRSA field to apply archive display filters.');
-  });
+  select.addEventListener('change', applyDisplayFilters);
 }
+el.quickBand?.addEventListener('change', () => {
+  el.detector.value = el.quickBand.value;
+  setBand(el.quickBand.value, true);
+});
+el.quickPalette?.addEventListener('change', () => {
+  el.paletteSelect.value = el.quickPalette.value;
+  el.stretchSelect.value = el.quickStretch.value;
+  applyDisplayFilters();
+});
+el.quickStretch?.addEventListener('change', () => {
+  el.paletteSelect.value = el.quickPalette.value;
+  el.stretchSelect.value = el.quickStretch.value;
+  applyDisplayFilters();
+});
+el.quickPrevious?.addEventListener('click', previousFrame);
+el.quickNext?.addEventListener('click', nextFrame);
+el.quickPlay?.addEventListener('click', togglePlay);
+el.quickTimeline?.addEventListener('input', () => {
+  const index = Number(el.quickTimeline.value);
+  stopPlayback();
+  frameIndex = index;
+  render();
+});
+el.quickVisit?.addEventListener('change', () => {
+  const index = Number(el.quickVisit.value);
+  if (!Number.isInteger(index) || !frames[index]) return;
+  stopPlayback();
+  frameIndex = index;
+  render();
+});
+el.quickMore?.addEventListener('click', openFilterWorkspace);
 for (const button of [el.hdToggle, el.hdToggleLab]) button?.addEventListener('click', toggleHD);
 el.sharpPixels.addEventListener('change', () => render());
 el.constellationRefresh.addEventListener('click', () => {
@@ -2768,6 +2857,8 @@ function initLab() {
 }
 
 restoreFromUrl();
+syncQuickFilters();
+syncQuickTime();
 initLab();
 render();
 loadRealFrames();

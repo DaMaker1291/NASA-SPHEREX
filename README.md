@@ -270,6 +270,21 @@ transient. R Draconis is a useful sanity check: its genuine long-period
 variability appears in the visit medians, while the candidate list still needs
 human review.
 
+## Time and filter dock
+
+A compact **Time & filters** strip sits directly under the sky stage, so the
+two most-used controls do not require a trip into the workspace:
+
+- **Time** — previous / play / next, a visit slider, and a named visit selector
+  showing the real observation date and detector.
+- **Filters** — detector band D1–D6, palette and intensity stretch. These drive
+  the same `/api/spherex/frames` and palette/stretch state used elsewhere.
+- **More filters ↓** opens the full Wavelength & filters workspace.
+
+The dock mirrors the transport, band rail and lab selectors in both directions;
+there is one viewer state, not two competing ones. It is responsive at phone
+width and uses native range/select controls for keyboard and assistive access.
+
 ## Map-like sky navigation
 
 The viewer behaves like a map over real SPHEREx cutouts:

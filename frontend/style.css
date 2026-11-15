@@ -231,6 +231,42 @@ img, canvas { max-width: 100%; }
 .map-help { flex: 0 0 auto; color: #6f8298; white-space: nowrap; }
 .viewer-stage.is-navigating { cursor: crosshair; }
 
+/* Always-visible time and filter controls under the viewer */
+.quick-controls {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 9px 17px; border-bottom: 1px solid #1d2a3a; background: #08111b;
+}
+.quick-group { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.quick-time { flex: 1 1 360px; }
+.quick-filters { flex: 1 1 360px; justify-content: flex-end; }
+.quick-title { flex: 0 0 auto; color: var(--gold); font-size: 8px; font-weight: 850; letter-spacing: 1px; }
+.quick-controls .icon-button { width: 26px; height: 26px; font-size: 12px; }
+.quick-play {
+  flex: 0 0 auto; width: 28px; height: 26px; border: 1px solid #526983; border-radius: 5px;
+  background: #111d2b; color: var(--gold); font-size: 11px; line-height: 1;
+}
+.quick-play:hover { border-color: var(--gold); }
+.quick-play:disabled { opacity: .42; cursor: not-allowed; }
+.quick-timeline { flex: 1 1 110px; min-width: 80px; height: 3px; accent-color: var(--gold); cursor: pointer; }
+.quick-timeline:disabled { cursor: not-allowed; }
+.quick-field { display: inline-flex; align-items: center; gap: 4px; color: #8295aa; font-size: 9px; white-space: nowrap; }
+.quick-field select {
+  max-width: 124px; border: 1px solid #344a61; border-radius: 5px; background: #0b1622;
+  color: #d5e2ef; padding: 4px 5px; font-family: inherit; font-size: 9.5px; line-height: 1.2;
+}
+.quick-field select:focus-visible, .quick-more:focus-visible, .quick-play:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.quick-more {
+  flex: 0 0 auto; border: 1px solid #344a61; border-radius: 100px; background: transparent;
+  color: #a8bdd3; padding: 5px 8px; font-family: inherit; font-size: 9px; white-space: nowrap;
+}
+.quick-more:hover { border-color: var(--gold); color: var(--gold); }
+@media (max-width: 780px) {
+  .quick-controls { align-items: stretch; padding: 8px 13px; }
+  .quick-time, .quick-filters { flex-basis: 100%; justify-content: flex-start; }
+  .quick-timeline { flex-basis: 100px; }
+  .quick-field select { max-width: 138px; }
+}
+
 /* Transport */
 .transport { padding: 13px 17px 9px; display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
 .transport-main { display: flex; align-items: center; gap: 14px; min-width: 0; }
