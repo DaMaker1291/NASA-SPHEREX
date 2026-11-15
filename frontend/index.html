@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-33">
-  <script type="module" src="script.js?v=next-59"></script>
+  <link rel="stylesheet" href="style.css?v=next-36">
+  <script type="module" src="script.js?v=next-66"></script>
 </head>
 <body>
   <header class="site-header">
@@ -58,7 +58,7 @@
             <option value="rdra">R Draconis · Draco</option>
             <option value="custom">Custom coordinates</option>
           </select>
-          <p id="targetMeta" class="target-meta">A real DR1 field with multiple IRSA visits. Load it, then press play.</p>
+          <p id="targetMeta" class="target-meta">A real DR1 field with multiple IRSA visits. Press Load real visits, then press play.</p>
         </div>
 
         <div class="coordinate-grid">
@@ -99,8 +99,9 @@
           <p id="bandHint" class="field-hint">Measured ranges from real DR1 WCS-WAVE headers. Change bands to compare the same sky at different infrared wavelengths.</p>
         </div>
 
-        <button id="loadReal" class="button primary full" type="button">Show this sky sequence</button>
+        <button id="loadReal" class="button primary full" type="button">Load real visits</button>
         <p id="sourceLabel" class="source-label" role="status">Connecting to IRSA…</p>
+        <p class="visit-steps"><strong>How to view a visit:</strong> 1 choose a patch · 2 press <b>Load real visits</b> · 3 pick a visit in the strip or press <b>▶ Play visits</b>.</p>
         <div class="query-note">
           <span class="note-mark">i</span>
           <p>Every image is rendered from a real IRSA SPHEREx level-2 FITS cutout. No simulated sky, no invented stars.</p>
@@ -180,9 +181,10 @@
           </div>
           <div id="crosshair" class="crosshair" aria-hidden="true"><span></span></div>
           <div id="skyMinimapWrap" class="sky-minimap" aria-label="All-sky navigation map. Background: the real NASA/JPL-Caltech SPHEREx 2025 all-sky mosaic.">
-            <div class="minimap-head"><span>ALL-SKY MAP</span><span id="minimapField">IAU J2000</span></div>
-            <canvas id="skyMinimap" width="420" height="210" aria-label="All-sky map using the real NASA/JPL-Caltech SPHEREx 2025 mosaic. Click or drag to move the field."></canvas>
-            <div class="minimap-foot"><span>NASA/JPL-Caltech mosaic</span><span>Click or drag</span></div>
+            <div class="minimap-head"><span id="minimapTitle">3D SKY GLOBE</span><span id="minimapField">IAU J2000</span></div>
+            <canvas id="skyMinimap" width="420" height="210" aria-label="3D sky globe using the real NASA/JPL-Caltech SPHEREx 2025 mosaic. Drag to rotate, scroll to zoom, click to jump."></canvas>
+            <p id="minimapHint" class="minimap-hint">Drag to rotate · ⌘/Ctrl-drag to tilt · scroll to zoom · click to jump</p>
+            <div class="minimap-foot"><span>NASA/JPL-Caltech mosaic</span><div class="minimap-tools"><button id="minimapMode" type="button" aria-pressed="true" title="Switch to flat all-sky map">3D</button><button id="minimapZoomOut" type="button" aria-label="Zoom out of the sky globe">−</button><button id="minimapZoomIn" type="button" aria-label="Zoom into the sky globe">+</button></div></div>
           </div>
           <div id="stageBadge" class="stage-badge" hidden>LIVE IRSA · REAL FITS</div>
           <div class="stage-hud">
@@ -226,7 +228,7 @@
           <div class="transport-main">
             <div class="transport-buttons">
               <button id="previous" class="icon-button" type="button" title="Previous frame" aria-label="Previous frame" disabled>←</button>
-              <button id="playPause" class="button primary play" type="button" disabled>▶ Play sequence</button>
+              <button id="playPause" class="button primary play" type="button" disabled>▶ Play visits</button>
               <button id="next" class="icon-button" type="button" title="Next frame" aria-label="Next frame" disabled>→</button>
             </div>
             <div class="transport-status">
@@ -241,9 +243,17 @@
           </div>
         </div>
         <input id="timeline" class="timeline" aria-label="Choose observation frame" type="range" min="0" max="0" value="0" disabled>
+        <div id="visitNotice" class="visit-notice" role="status" hidden>
+          <span id="visitNoticeText">This image is all-sky context, not a visit.</span>
+          <div class="visit-notice-actions"><button id="visitNoticeRetry" class="button secondary compact" type="button">Retry IRSA</button><button id="visitNoticeAction" class="button primary compact" type="button">Load verified Leo field</button></div>
+        </div>
 
         <div class="filmstrip-block">
-          <div class="filmstrip-head"><span class="kicker">VISITS IN THIS PATCH</span><span>Click any visit to inspect it</span></div>
+          <div class="filmstrip-head"><span class="kicker">VISITS IN THIS PATCH</span><span>A visit is one real observation · click one, or press ▶ Play visits</span></div>
+          <details id="visitWindowBox" class="visit-window" open hidden>
+            <summary><span id="visitWindowText">Visit window —</span><span class="visit-window-cue">Why this range?</span></summary>
+            <p id="visitWindowDetail"></p>
+          </details>
           <div id="filmstrip" class="filmstrip" aria-label="Observation visit thumbnails"></div>
         </div>
 
@@ -306,13 +316,14 @@
       <div class="how-intro">
         <p class="kicker">HOW TO SPOT MOTION</p>
         <h2>A tiny movie of a very large sky.</h2>
-        <p>SPHEREx revisits the same strip of sky across its survey. Differences between visits can reveal proper motion, variable stars, or an object that moved between exposures.</p>
+        <p>SPHEREx launched in March 2025 and revisits the same strip of sky across its survey. Its DR1 archive therefore starts with the 2025 survey; there is no earlier SPHEREx data. Differences between visits can reveal proper motion, variable stars, or an object that moved between exposures.</p>
       </div>
       <div class="how-grid">
         <article><span>01</span><h3>Choose a patch</h3><p>Use a named nearby star or enter any RA and Dec. A 0.30° field is a good starting point for a moving target.</p></article>
-        <article><span>02</span><h3>Play the visits</h3><p>Press <strong>Play sequence</strong> to cycle through real detector frames. Use the filmstrip to jump to any date.</p></article>
+        <article><span>02</span><h3>Play the visits</h3><p>Press <strong>Load real visits</strong>, then <strong>▶ Play visits</strong> to cycle through real detector frames. Click any date in the filmstrip to inspect that visit.</p></article>
         <article><span>03</span><h3>Blink or subtract</h3><p><strong>Blink A / B</strong> toggles two visits. <strong>Difference</strong> subtracts them so changes in position or brightness become obvious.</p></article>
       </div>
+      <p class="how-note">The bundled mirror is a small real-data sample per detector, not the complete SPHEREx archive. The date window in the viewer belongs only to the visits actually loaded; a live IRSA query can return a different window.</p>
     </section>
 
     <section class="lab-panel" id="lab" aria-label="Observation toolkit">

@@ -26,6 +26,10 @@ const el = {
   appDetailsClose: $('appDetailsClose'), appToolsClose: $('appToolsClose'), sequenceClose: $('sequenceClose'), appScrim: $('appScrim'),
   mapSearchForm: $('mapSearchForm'), mapSearch: $('mapSearch'), navBack: $('navBack'), navForward: $('navForward'), minimapToggle: $('minimapToggle'),
   skyMinimapWrap: $('skyMinimapWrap'), skyMinimap: $('skyMinimap'), minimapField: $('minimapField'),
+  minimapTitle: $('minimapTitle'), minimapHint: $('minimapHint'), minimapMode: $('minimapMode'),
+  minimapZoomIn: $('minimapZoomIn'), minimapZoomOut: $('minimapZoomOut'),
+  visitNotice: $('visitNotice'), visitNoticeText: $('visitNoticeText'), visitNoticeRetry: $('visitNoticeRetry'), visitNoticeAction: $('visitNoticeAction'),
+  visitWindowBox: $('visitWindowBox'), visitWindowText: $('visitWindowText'), visitWindowDetail: $('visitWindowDetail'),
   toolsSkyImage: $('toolsSkyImage'), toolsSkyTitle: $('toolsSkyTitle'), toolsSkyMeta: $('toolsSkyMeta'),
   mapCursor: $('mapCursor'), mapScaleBar: $('mapScaleBar'), mapScaleText: $('mapScaleText'), mapCompass: $('mapCompass'), mapHelp: $('mapHelp'),
   paletteSelect: $('paletteSelect'), stretchSelect: $('stretchSelect'), sharpPixels: $('sharpPixels'),
@@ -110,6 +114,7 @@ let singleGesture = null, pinchGesture = null;
 const navHistory = [];
 let navIndex = -1;
 let minimapPointer = null;
+let minimapGlobeGesture = null;
 let constellationRequest = 0, constellationData = null;
 let ownedObjectUrls = [];
 let toastTimeout = null, loadingReal = false, sky = null, realBadge = 'LIVE IRSA • REAL FITS';
@@ -340,7 +345,7 @@ function discardFrameObjects(list) {
 
 function stopPlayback() {
   clearInterval(interval); interval = null; blinkMode = false;
-  el.play.textContent = '▶ Play sequence';
+  el.play.textContent = '▶ Play visits';
   el.blink.textContent = 'Blink A / B';
   syncQuickTime();
   clearDifference();
@@ -779,7 +784,11 @@ const GALACTIC_AXIS = {
   y: [0.4941094278755837, -0.4448296299600112, 0.7469822444972180],
   z: [-0.8676661490190047, -0.1980763734312015, 0.4559837761750669]
 };
-const allSky = { pixels: null, width: 0, height: 0, background: null, loaded: false, failed: false, ready: null, resolveReady: null };
+const allSky = {
+  pixels: null, width: 0, height: 0, background: null, texture: null, textureWidth: 0, textureHeight: 0,
+  globeImage: null, loaded: false, failed: false, ready: null, resolveReady: null,
+  view: { mode: 'globe', zoom: 1, ra: null, dec: null, roll: 0, follow: true }
+};
 allSky.ready = new Promise(resolve => { allSky.resolveReady = resolve; });
 
 function equatorialToGalactic(raDegrees, decDegrees) {
@@ -795,10 +804,8 @@ function equatorialToGalactic(raDegrees, decDegrees) {
   return { l: (longitude + 360) % 360, b: latitude };
 }
 
-function buildAllSkyBackground() {
+function buildAllSkyBackground(outWidth = el.skyMinimap.width || 420, outHeight = el.skyMinimap.height || 210) {
   if (!allSky.pixels) return null;
-  const outWidth = el.skyMinimap.width || 420;
-  const outHeight = el.skyMinimap.height || 210;
   const canvas = document.createElement('canvas');
   canvas.width = outWidth;
   canvas.height = outHeight;
@@ -840,6 +847,13 @@ function initAllSkyMap() {
       allSky.width = canvas.width;
       allSky.height = canvas.height;
       allSky.background = buildAllSkyBackground();
+      const textureCanvas = buildAllSkyBackground(720, 360);
+      const textureContext = textureCanvas?.getContext('2d', { willReadFrequently: true });
+      if (textureContext) {
+        allSky.texture = textureContext.getImageData(0, 0, textureCanvas.width, textureCanvas.height);
+        allSky.textureWidth = textureCanvas.width;
+        allSky.textureHeight = textureCanvas.height;
+      }
       allSky.loaded = Boolean(allSky.background);
       allSky.resolveReady?.(true);
       drawMinimap();
@@ -851,6 +865,7 @@ function initAllSkyMap() {
   };
   image.onerror = () => { allSky.failed = true; allSky.resolveReady?.(false); drawMinimap(); };
   image.src = 'assets/spherex-allsky-2025.jpg';
+  setMinimapMode(allSky.view.mode);
 }
 
 function updateToolsSkyContext() {
@@ -872,7 +887,192 @@ function updateToolsSkyContext() {
     : 'The current visit has no measured WCS centre.';
 }
 
+function skyUnitVector(ra, dec) {
+  const raRad = ra * Math.PI / 180;
+  const decRad = dec * Math.PI / 180;
+  const cosDec = Math.cos(decRad);
+  return [cosDec * Math.cos(raRad), cosDec * Math.sin(raRad), Math.sin(decRad)];
+}
+
+function globeBasis() {
+  const center = skyUnitVector(allSky.view.ra ?? 150, allSky.view.dec ?? 19.5);
+  const raRad = (allSky.view.ra ?? 150) * Math.PI / 180;
+  const decRad = (allSky.view.dec ?? 19.5) * Math.PI / 180;
+  const east = [-Math.sin(raRad), Math.cos(raRad), 0];
+  const north = [-Math.sin(decRad) * Math.cos(raRad), -Math.sin(decRad) * Math.sin(raRad), Math.cos(decRad)];
+  const roll = (allSky.view.roll || 0) * Math.PI / 180;
+  const cosRoll = Math.cos(roll);
+  const sinRoll = Math.sin(roll);
+  return {
+    center,
+    east: east.map((value, index) => value * cosRoll + north[index] * sinRoll),
+    north: north.map((value, index) => value * cosRoll - east[index] * sinRoll)
+  };
+}
+
+function dot3(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function projectGlobePoint(ra, dec, basis, cx, cy, radius) {
+  const vector = skyUnitVector(ra, dec);
+  const facing = dot3(basis.center, vector);
+  if (facing <= 0.001) return null;
+  return { x: cx + dot3(basis.east, vector) * radius, y: cy - dot3(basis.north, vector) * radius, facing };
+}
+
+function globeSkyFromEvent(event) {
+  const canvas = el.skyMinimap;
+  const rect = canvas.getBoundingClientRect();
+  const width = canvas.width;
+  const height = canvas.height;
+  const x = (event.clientX - rect.left) / rect.width * width;
+  const y = (event.clientY - rect.top) / rect.height * height;
+  const radius = Math.min(width, height) / 2 - 6;
+  const cx = width / 2;
+  const cy = height / 2;
+  const nx = (x - cx) / (radius * allSky.view.zoom);
+  const ny = (cy - y) / (radius * allSky.view.zoom);
+  const rho2 = nx * nx + ny * ny;
+  if (rho2 > 1) return null;
+  const nz = Math.sqrt(1 - rho2);
+  const basis = globeBasis();
+  const vector = [0, 1, 2].map(index => basis.center[index] * nz + basis.east[index] * nx + basis.north[index] * ny);
+  return {
+    ra: normalizeRa(Math.atan2(vector[1], vector[0]) * 180 / Math.PI),
+    dec: Math.asin(Math.max(-1, Math.min(1, vector[2]))) * 180 / Math.PI
+  };
+}
+
+function strokeGlobePoints(context, points) {
+  let open = false;
+  context.beginPath();
+  for (const point of points) {
+    if (!point) {
+      if (open) { context.stroke(); context.beginPath(); open = false; }
+      continue;
+    }
+    if (open) context.lineTo(point.x, point.y);
+    else { context.moveTo(point.x, point.y); open = true; }
+  }
+  if (open) context.stroke();
+}
+
+function drawGlobe() {
+  const canvas = el.skyMinimap;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  const cx = width / 2;
+  const cy = height / 2;
+  const baseRadius = Math.min(width, height) / 2 - 6;
+  const radius = baseRadius * allSky.view.zoom;
+  const texture = allSky.texture;
+  const tw = allSky.textureWidth;
+  const th = allSky.textureHeight;
+  context.clearRect(0, 0, width, height);
+  const image = allSky.globeImage && allSky.globeImage.width === width && allSky.globeImage.height === height
+    ? allSky.globeImage
+    : (allSky.globeImage = context.createImageData(width, height));
+  image.data.fill(0);
+  const basis = globeBasis();
+  const data = image.data;
+  if (texture && tw && th) {
+    const source = texture.data;
+    for (let y = 0; y < height; y += 1) {
+      const ny = (cy - y - 0.5) / radius;
+      for (let x = 0; x < width; x += 1) {
+        const nx = (x + 0.5 - cx) / radius;
+        const rho2 = nx * nx + ny * ny;
+        if (rho2 > 1) continue;
+        const nz = Math.sqrt(1 - rho2);
+        const vx = basis.center[0] * nz + basis.east[0] * nx + basis.north[0] * ny;
+        const vy = basis.center[1] * nz + basis.east[1] * nx + basis.north[1] * ny;
+        const vz = basis.center[2] * nz + basis.east[2] * nx + basis.north[2] * ny;
+        const ra = normalizeRa(Math.atan2(vy, vx) * 180 / Math.PI);
+        const dec = Math.asin(Math.max(-1, Math.min(1, vz))) * 180 / Math.PI;
+        const sx = Math.min(tw - 1, Math.floor((((1 - ra / 360) % 1 + 1) % 1) * tw));
+        const sy = Math.min(th - 1, Math.max(0, Math.floor((0.5 - dec / 180) * th)));
+        const from = (sy * tw + sx) * 4;
+        const to = (y * width + x) * 4;
+        data[to] = source[from];
+        data[to + 1] = source[from + 1];
+        data[to + 2] = source[from + 2];
+        data[to + 3] = 255;
+      }
+    }
+  }
+  context.putImageData(image, 0, 0);
+
+  // Graticule and horizon, projected with the same camera as the texture.
+  context.lineWidth = 1;
+  context.strokeStyle = 'rgba(116, 151, 182, .28)';
+  for (let ra = 0; ra < 360; ra += 30) {
+    const points = [];
+    for (let dec = -85; dec <= 85; dec += 5) points.push(projectGlobePoint(ra, dec, basis, cx, cy, radius));
+    strokeGlobePoints(context, points);
+  }
+  for (let dec = -60; dec <= 60; dec += 30) {
+    const points = [];
+    for (let ra = 0; ra <= 360; ra += 5) points.push(projectGlobePoint(ra, dec, basis, cx, cy, radius));
+    strokeGlobePoints(context, points);
+  }
+  context.strokeStyle = 'rgba(242,187,109,.45)';
+  const equator = [];
+  for (let ra = 0; ra <= 360; ra += 5) equator.push(projectGlobePoint(ra, 0, basis, cx, cy, radius));
+  strokeGlobePoints(context, equator);
+  context.strokeStyle = 'rgba(113,212,216,.42)';
+  context.beginPath(); context.arc(cx, cy, radius, 0, Math.PI * 2); context.stroke();
+
+  // Targets that are on the visible hemisphere.
+  for (const [key, target] of Object.entries(targets)) {
+    if (key === 'custom' || !Number.isFinite(target.ra) || !Number.isFinite(target.dec)) continue;
+    const point = projectGlobePoint(target.ra, target.dec, basis, cx, cy, radius);
+    if (!point) continue;
+    const selected = el.target.value === key;
+    context.beginPath();
+    context.arc(point.x, point.y, selected ? 4 : 2.5, 0, Math.PI * 2);
+    context.fillStyle = selected ? '#f2bb6d' : 'rgba(160, 199, 228, .8)';
+    context.fill();
+    if (selected) {
+      context.fillStyle = '#f7e3c1';
+      context.font = '12px ui-monospace, SFMono-Regular, Menlo, monospace';
+      context.fillText(target.label.split(' · ')[0], Math.min(width - 72, point.x + 6), Math.max(13, point.y - 5));
+    }
+  }
+
+  const frame = frames[frameIndex];
+  if (frame) {
+    const center = currentSkyCenter();
+    const point = projectGlobePoint(center.ra, center.dec, basis, cx, cy, radius);
+    if (point) {
+      const fov = Number(frame.fov) || 0.3;
+      const ringRadius = Math.max(4, radius * fov / 180);
+      context.strokeStyle = '#f2bb6d';
+      context.lineWidth = 1.3;
+      context.beginPath(); context.arc(point.x, point.y, ringRadius, 0, Math.PI * 2); context.stroke();
+      context.beginPath(); context.moveTo(point.x - 8, point.y); context.lineTo(point.x + 8, point.y); context.stroke();
+      context.beginPath(); context.moveTo(point.x, point.y - 8); context.lineTo(point.x, point.y + 8); context.stroke();
+    }
+  }
+  el.minimapField.textContent = `RA ${allSky.view.ra.toFixed(2)} · Dec ${allSky.view.dec.toFixed(2)}`;
+}
+
 function drawMinimap() {
+  if (allSky.view.mode === 'globe') {
+    if (allSky.view.follow || !Number.isFinite(allSky.view.ra) || !Number.isFinite(allSky.view.dec)) {
+      const center = currentSkyCenter();
+      allSky.view.ra = center.ra;
+      allSky.view.dec = center.dec;
+    }
+    drawGlobe();
+    return;
+  }
+  drawFlatMinimap();
+}
+
+function drawFlatMinimap() {
   const canvas = el.skyMinimap;
   const context = canvas.getContext('2d');
   if (!context) return;
@@ -945,10 +1145,46 @@ function updateMapCenter() {
   el.mapCursor.textContent = `Centre ${formatRaHms(center.ra)} · ${formatDecDms(center.dec)}`;
 }
 
+function setMinimapZoom(value) {
+  const view = allSky.view;
+  view.zoom = Math.max(1, Math.min(4, value));
+  view.follow = false;
+  if (el.minimapZoomOut) el.minimapZoomOut.disabled = view.mode !== 'globe' || view.zoom <= 1.001;
+  if (el.minimapZoomIn) el.minimapZoomIn.disabled = view.mode !== 'globe' || view.zoom >= 3.999;
+  drawMinimap();
+}
+
+function setMinimapMode(mode) {
+  const view = allSky.view;
+  view.mode = mode === 'flat' ? 'flat' : 'globe';
+  view.zoom = 1;
+  view.roll = 0;
+  view.follow = true;
+  const globe = view.mode === 'globe';
+  if (el.minimapMode) {
+    el.minimapMode.textContent = globe ? '3D' : '2D';
+    el.minimapMode.title = globe ? 'Switch to flat all-sky map' : 'Switch to 3D sky globe';
+    el.minimapMode.setAttribute('aria-pressed', String(globe));
+  }
+  if (el.minimapTitle) el.minimapTitle.textContent = globe ? '3D SKY GLOBE' : 'ALL-SKY MAP';
+  if (el.minimapHint) {
+    el.minimapHint.textContent = globe
+      ? 'Drag to rotate · ⌘/Ctrl-drag to tilt · scroll to zoom · click to jump'
+      : 'Click or drag to move the field';
+  }
+  el.skyMinimap.setAttribute('aria-label', globe
+    ? '3D sky globe using the real NASA/JPL-Caltech SPHEREx 2025 mosaic. Drag to rotate, scroll to zoom, click to jump.'
+    : 'All-sky map using the real NASA/JPL-Caltech SPHEREx 2025 mosaic. Click or drag to move the field.');
+  if (el.minimapZoomIn) el.minimapZoomIn.disabled = !globe;
+  if (el.minimapZoomOut) el.minimapZoomOut.disabled = !globe;
+  drawMinimap();
+}
+
 function updateMapUI() {
   updateMapScale();
   updateCompass();
   updateMapCenter();
+  allSky.view.follow = true;
   drawMinimap();
 }
 
@@ -1511,6 +1747,7 @@ function maybePrunePartialFrames() {
   el.frameB.value = String(Math.min(1, frames.length - 1));
   el.sourceLabel.textContent = el.sourceLabel.textContent.replace(/^\d+ real visits/, `${frames.length} real visits`);
   buildFilmstrip();
+  updateVisitWindow();
   render();
   pruningFrames = false;
   notify(`Skipped a partial edge visit; ${frames.length} complete visits remain.`);
@@ -1565,13 +1802,57 @@ function setEmptyState(eyebrow, title, message) {
   el.emptyMessage.textContent = message;
 }
 
+function visitWindowSummary(list = []) {
+  const dates = [...new Set(list
+    .map(frame => String(frame.date || frame.iso || '').slice(0, 10))
+    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date)))]
+    .sort();
+  if (!dates.length) return '';
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  if (first === last) return first;
+  const days = Math.round((Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86400000);
+  return `${first} → ${last}${days > 0 ? ` · ${days} days` : ''}`;
+}
+
+function updateVisitWindow() {
+  if (!el.visitWindowBox) return;
+  const dated = frames.filter(frame => !frame.mosaic && (frame.date || frame.iso));
+  const range = visitWindowSummary(dated);
+  if (!range) {
+    el.visitWindowBox.hidden = true;
+    return;
+  }
+  el.visitWindowBox.hidden = false;
+  const count = dated.length;
+  el.visitWindowText.textContent = `${count} loaded visit${count === 1 ? '' : 's'} · ${range}`;
+  el.visitWindowDetail.textContent = frames.every(frame => frame.mirror)
+    ? `The bundled mirror is a real-data sample of ${count} verified visit${count === 1 ? '' : 's'} for this field and detector, not every SPHEREx observation. The window above is exactly those visits. It stops at its last selected visit and is not automatically extended as new data arrives; run the mirror ingestor to refresh it. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A live IRSA query can return more visits.`
+    : `IRSA returned these ${count} visit${count === 1 ? '' : 's'} for this query (the viewer asks for up to 24). The window above is exactly those visits. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A different field or release can have a different window.`;
+}
+
+function updateVisitNotice() {
+  if (!el.visitNotice) return;
+  const frame = frames[frameIndex];
+  const contextOnly = frames.length === 1 && Boolean(frame?.mosaic);
+  const checking = /checking IRSA/i.test(el.sourceLabel.textContent || '');
+  el.visitNotice.hidden = !contextOnly || loadingReal || checking;
+  if (!contextOnly) return;
+  const noCoverage = /no per-visit coverage|no coverage/i.test(el.sourceLabel.textContent || '');
+  el.visitNoticeRetry.hidden = noCoverage;
+  el.visitNoticeText.textContent = noCoverage
+    ? 'This is the 2025 30° all-sky mosaic context, not a visit. IRSA has no per-visit coverage for this exact patch, so there are no visits to play. Try another patch, or load the verified Leo field.'
+    : 'This is the 2025 30° all-sky mosaic context, not a visit or a time series. IRSA is not responding and this patch has no verified local visit frames. The verified Leo field stays available offline.';
+}
+
 function setLoading(isLoading) {
   loadingReal = isLoading;
   const current = frames[frameIndex];
   el.stageLoading.hidden = isLoading ? false : !(current?.real && !current.mosaic && !current.objectUrl && !current.loadError);
   el.loadReal.disabled = isLoading;
   el.emptyReal.disabled = isLoading;
-  el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Show this sky sequence';
+  el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Load real visits';
+  updateVisitNotice();
 }
 
 function updateAppLive(state = 'live') {
@@ -1601,14 +1882,19 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   }
   el.frameA.value = '0'; el.frameB.value = String(Math.min(1, frames.length - 1));
   const enabled = frames.length > 0;
-  for (const item of [el.timeline, el.previous, el.next, el.play, el.frameA, el.frameB, el.blink, el.showCompare, el.difference, el.speed]) {
+  for (const item of [el.timeline, el.previous, el.next, el.frameA, el.frameB]) {
     item.disabled = !enabled;
+  }
+  for (const item of [el.play, el.blink, el.showCompare, el.difference, el.speed]) {
+    item.disabled = frames.length < 2;
   }
   el.empty.hidden = enabled;
   el.stageBadge.hidden = !frames.some(f => f.real);
   el.stageBadge.textContent = realBadge;
   buildFilmstrip();
   resetView(); render();
+  updateVisitNotice();
+  updateVisitWindow();
 }
 
 async function loadPNGFiles(files) {
@@ -1722,9 +2008,10 @@ async function loadMirrorField(field, requestedDetector, requestedPalette, reque
       expectedSha256: frame.pngSha256
     });
   }
+  const mirrorRange = visitWindowSummary(mirrorFrames);
   return {
     frames: mirrorFrames,
-    source: `Local mirror · ${mirrorFrames.length} verified real visits · ${entry.detector}`,
+    source: `Local mirror sample · ${mirrorFrames.length} verified visits · ${entry.detector}${mirrorRange ? ` · ${mirrorRange}` : ''}`,
     field: { ra: entry.ra, dec: entry.dec, fov: entry.fov },
     sky: entry.sky || null
   };
@@ -2010,12 +2297,11 @@ async function loadRealFrames(options = {}) {
     const badge = /bundled|last known|fallback|last-good|cached/i.test(payload.source?.label || '')
       ? 'CACHED IRSA · REAL FITS'
       : 'LIVE IRSA · REAL FITS';
-    const span = payload.summary?.spanDays;
-    const spanText = Number.isFinite(span) && span > 0 ? ` across ${span.toFixed(1)} days` : '';
+    const range = visitWindowSummary(realFrames);
     archiveUnavailableUntil = 0;
     emptyDefaultFallback = false;
     el.emptyReal.textContent = 'Load this field';
-    loadFrames(realFrames, `${realFrames.length} real visits · ${payload.detector} detector${spanText}`, badge);
+    loadFrames(realFrames, `${realFrames.length} real visits · ${payload.detector}${range ? ` · ${range}` : ''}`, badge);
     const target = targets[el.target.value];
     el.viewerTitle.textContent = target?.label || 'Custom sky region';
     el.fieldConstellation.textContent = payload.sky?.constellation?.name
@@ -2478,11 +2764,45 @@ el.minimapToggle.addEventListener('click', () => {
 el.skyMinimap.addEventListener('pointerdown', event => {
   event.preventDefault();
   event.stopPropagation();
+  if (allSky.view.mode === 'globe') {
+    allSky.view.follow = false;
+    minimapGlobeGesture = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      ra: allSky.view.ra,
+      dec: allSky.view.dec,
+      roll: allSky.view.roll,
+      moved: false
+    };
+    try { el.skyMinimap.setPointerCapture(event.pointerId); } catch { /* synthetic events have no capture target */ }
+    return;
+  }
   minimapPointer = minimapSkyFromEvent(event);
   try { el.skyMinimap.setPointerCapture(event.pointerId); } catch { /* synthetic events have no capture target */ }
   drawMinimap();
 });
 el.skyMinimap.addEventListener('pointermove', event => {
+  if (allSky.view.mode === 'globe') {
+    const gesture = minimapGlobeGesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const dx = event.clientX - gesture.startX;
+    const dy = event.clientY - gesture.startY;
+    if (Math.hypot(dx, dy) > 2) gesture.moved = true;
+    const view = allSky.view;
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      view.roll = gesture.roll + dx * 0.45;
+    } else {
+      const rect = el.skyMinimap.getBoundingClientRect();
+      const degreesPerPixel = (180 / Math.PI) / Math.max(24, (rect.height / 2) * view.zoom);
+      const cosDec = Math.max(0.18, Math.cos((gesture.dec || 0) * Math.PI / 180));
+      view.ra = normalizeRa(gesture.ra - dx * degreesPerPixel / cosDec);
+      view.dec = Math.max(-85, Math.min(85, gesture.dec + dy * degreesPerPixel));
+    }
+    drawMinimap();
+    return;
+  }
   if (!minimapPointer) return;
   event.preventDefault();
   minimapPointer = minimapSkyFromEvent(event);
@@ -2490,13 +2810,36 @@ el.skyMinimap.addEventListener('pointermove', event => {
   drawMinimap();
 });
 el.skyMinimap.addEventListener('pointerup', event => {
+  if (allSky.view.mode === 'globe') {
+    const gesture = minimapGlobeGesture;
+    minimapGlobeGesture = null;
+    try { el.skyMinimap.releasePointerCapture(event.pointerId); } catch { /* pointer was not captured */ }
+    if (!gesture) return;
+    if (!gesture.moved) {
+      const point = globeSkyFromEvent(event);
+      if (point) navigateToSky(point, '3D sky-globe navigation');
+    } else {
+      drawMinimap();
+    }
+    return;
+  }
   if (!minimapPointer) return;
   const point = minimapSkyFromEvent(event);
   minimapPointer = null;
   drawMinimap();
   navigateToSky(point, 'Sky-map navigation');
 });
-el.skyMinimap.addEventListener('pointercancel', () => { minimapPointer = null; drawMinimap(); });
+el.skyMinimap.addEventListener('pointercancel', () => { minimapPointer = null; minimapGlobeGesture = null; drawMinimap(); });
+el.skyMinimap.addEventListener('wheel', event => {
+  if (allSky.view.mode !== 'globe') return;
+  event.preventDefault();
+  setMinimapZoom(allSky.view.zoom * Math.exp(-event.deltaY * 0.0015));
+}, { passive: false });
+el.minimapMode?.addEventListener('click', () => setMinimapMode(allSky.view.mode === 'globe' ? 'flat' : 'globe'));
+el.minimapZoomIn?.addEventListener('click', () => setMinimapZoom(allSky.view.zoom * 1.35));
+el.minimapZoomOut?.addEventListener('click', () => setMinimapZoom(allSky.view.zoom / 1.35));
+el.visitNoticeRetry?.addEventListener('click', () => loadRealFrames());
+el.visitNoticeAction?.addEventListener('click', () => setTarget('spherex', true));
 el.copyLink.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(window.location.href);
