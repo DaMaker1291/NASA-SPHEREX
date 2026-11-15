@@ -46,6 +46,8 @@ const state = {
 };
 
 const imageCache = new Map();
+const pointerStarts = new Map();
+let lastPointerGuess = 0;
 
 function randomInt(max) {
   return Math.floor(Math.random() * max);
@@ -468,6 +470,33 @@ async function newRound() {
   }
 }
 
+function handlePointerDown(event) {
+  if (event.button !== undefined && event.button !== 0) return;
+  pointerStarts.set(event.currentTarget, {
+    x: event.clientX,
+    y: event.clientY,
+    pointerId: event.pointerId,
+  });
+}
+
+function handlePointerCancel(event) {
+  pointerStarts.delete(event.currentTarget);
+}
+
+function handlePointerUp(event) {
+  const start = pointerStarts.get(event.currentTarget);
+  pointerStarts.delete(event.currentTarget);
+  if (!start || start.pointerId !== event.pointerId) return;
+  if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 18) return;
+  lastPointerGuess = performance.now();
+  handleGuess(event);
+}
+
+function handleClick(event) {
+  if (performance.now() - lastPointerGuess < 800) return;
+  handleGuess(event);
+}
+
 function handleGuess(event) {
   if (state.busy || !state.candidates.length || state.revealed) return;
   const canvas = event.currentTarget;
@@ -560,8 +589,12 @@ function reveal() {
 }
 
 function boot() {
-  el.canvasA.addEventListener('click', handleGuess);
-  el.canvasB.addEventListener('click', handleGuess);
+  for (const canvas of [el.canvasA, el.canvasB]) {
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    canvas.addEventListener('pointercancel', handlePointerCancel);
+    canvas.addEventListener('click', handleClick);
+  }
   el.hint.addEventListener('click', showHint);
   el.reveal.addEventListener('click', reveal);
   el.next.addEventListener('click', newRound);
