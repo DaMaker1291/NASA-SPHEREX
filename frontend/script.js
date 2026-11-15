@@ -28,6 +28,7 @@ const el = {
   constellationRefresh: $('constellationRefresh'), constellationSource: $('constellationSource'),
   verificationScore: $('verificationScore'), verificationList: $('verificationList'), verificationSources: $('verificationSources'),
   verifySourceSia: $('verifySourceSia'), verifySourceFits: $('verifySourceFits'), verifySiaDetail: $('verifySiaDetail'), verifyFitsDetail: $('verifyFitsDetail'),
+  verifyGaia: $('verifyGaia'), verifyGaiaDetail: $('verifyGaiaDetail'), receiptDownload: $('receiptDownload'),
   checksumValue: $('checksumValue'),
   previous: $('previous'), next: $('next'), play: $('playPause'), timeline: $('timeline'),
   frameLabel: $('frameLabel'), frameCount: $('frameCount'),
@@ -310,7 +311,7 @@ function updateDetails(frame) {
     formatSky();
     return;
   }
-  const analysis = frame.analysis;
+  const analysis = activeFrameAnalysis();
   const measurementFailed = Boolean(frame.measurementError);
   const measurementPending = frame.real && !analysis && !measurementFailed;
   const unavailable = measurementFailed ? 'Unavailable (measurement failed)' : '—';
@@ -319,14 +320,14 @@ function updateDetails(frame) {
   el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
   const displayWidth = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
   const displayHeight = hdMode && frame.hdHeight ? frame.hdHeight : frame.height;
-  el.detailSize.textContent = displayWidth && displayHeight ? `${displayWidth} × ${displayHeight} px${hdMode && frame.hdWidth ? ' · HD' : ''}` : 'Loading real pixels…';
+  el.detailSize.textContent = displayWidth && displayHeight ? `${displayWidth} × ${displayHeight} px${hdMode && frame.hdWidth ? ' · wide 0.90°' : ''}` : 'Loading real pixels…';
   el.detailDateBig.textContent = frame.date || frame.label;
   const frameRa = Number.isFinite(analysis?.ra) ? analysis.ra : frame.ra;
   const frameDec = Number.isFinite(analysis?.dec) ? analysis.dec : frame.dec;
   if (frame.real && Number.isFinite(frameRa) && Number.isFinite(frameDec)) {
     el.detailRA.textContent = `${frameRa.toFixed(3)}°`;
     el.detailDec.textContent = `${frameDec > 0 ? '+' : ''}${frameDec.toFixed(3)}°`;
-    el.fieldMeta.textContent = `${coordinateText(frameRa, frameDec)} · ${frame.fov ?? Number(el.fov.value).toFixed(2)}° field`;
+    el.fieldMeta.textContent = `${coordinateText(frameRa, frameDec)} · ${hdMode && frame.hdObjectUrl ? 'wide 0.90° window' : `${frame.fov ?? Number(el.fov.value).toFixed(2)}° field`}`;
   } else {
     el.detailRA.textContent = '—';
     el.detailDec.textContent = '—';
@@ -838,14 +839,84 @@ function verificationRow(check) {
   return item;
 }
 
+const gaiaVerificationCache = new Map();
+
+function nearestGaiaSource(sources, ra, dec) {
+  let nearest = null;
+  for (const source of sources || []) {
+    const separation = angularSeparation(ra, dec, Number(source.ra), Number(source.dec));
+    if (separation === null) continue;
+    if (!nearest || separation < nearest.separation) nearest = { ...source, separation };
+  }
+  return nearest;
+}
+
+function setVerificationGaia(state, detail, context = null) {
+  el.verifyGaia.textContent = `Gaia DR3 · ${state}`;
+  el.verifyGaiaDetail.textContent = detail;
+  labState.verifyGaia = context;
+}
+
+function loadVerificationGaia(frame, analysis) {
+  const ra = Number(analysis?.ra ?? frame?.ra);
+  const dec = Number(analysis?.dec ?? frame?.dec);
+  if (!Number.isFinite(ra) || !Number.isFinite(dec)) {
+    setVerificationGaia('waiting', 'Waiting for a real cutout centre.');
+    return;
+  }
+  const key = `${frame.obsid || frame.label}|${ra.toFixed(4)}|${dec.toFixed(4)}`;
+  if (labState.verifyGaiaKey === key) return;
+  labState.verifyGaiaKey = key;
+  setVerificationGaia('querying', 'Independent Gaia DR3 catalogue query at the field centre…');
+
+  const settle = (payload) => {
+    if (labState.verifyGaiaKey !== key) return;
+    const count = Number(payload?.count) || 0;
+    const nearest = nearestGaiaSource(payload?.sources, ra, dec);
+    const context = { key, ra, dec, count, nearest };
+    if (!count) {
+      setVerificationGaia('no sources', 'No Gaia DR3 source within 1.2′. This is catalogue coverage, not evidence of a detection.', context);
+      if (frames[frameIndex] === frame) updateVerification();
+      return;
+    }
+    const nearestText = nearest
+      ? ` · nearest G ${nearest.mag === null || !Number.isFinite(Number(nearest.mag)) ? '—' : Number(nearest.mag).toFixed(1)} at ${(nearest.separation * 3600).toFixed(1)}″`
+      : '';
+    setVerificationGaia(`${count} source${count === 1 ? '' : 's'}`, `${count} Gaia DR3 source${count === 1 ? '' : 's'} within 1.2′${nearestText}. Catalogue context, not a variability confirmation.`, context);
+    if (frames[frameIndex] === frame) updateVerification();
+  };
+
+  const cached = gaiaVerificationCache.get(key);
+  if (cached) { settle(cached); return; }
+  const url = new URL('/api/catalog', window.location.href);
+  url.searchParams.set('survey', 'gaia');
+  url.searchParams.set('ra', ra.toFixed(6));
+  url.searchParams.set('dec', dec.toFixed(6));
+  url.searchParams.set('radius', '0.02');
+  fetchWithTimeout(url.toString(), { headers: { Accept: 'application/json' } }, 30_000)
+    .then(async response => {
+      if (!response.ok) throw new Error(`Gaia catalogue returned ${response.status}.`);
+      const payload = await response.json();
+      gaiaVerificationCache.set(key, payload);
+      settle(payload);
+    })
+    .catch(error => {
+      if (labState.verifyGaiaKey === key) {
+        setVerificationGaia('unavailable', `Gaia DR3 could not be reached (${error.message}). Not counted as an agreement.`);
+      }
+    });
+}
+
 function updateVerification() {
   const frame = frames[frameIndex];
-  const analysis = frame?.analysis || frame?.displayAnalysis;
+  const analysis = activeFrameAnalysis();
   el.verificationList.replaceChildren();
   if (!frame?.real) {
     el.verificationScore.textContent = 'Waiting for data';
     el.verificationList.append(verificationRow({ state: 'pending', title: 'No real frame loaded', detail: 'Load a real SPHEREx field to run the cross-source checks.' }));
     el.checksumValue.textContent = 'A SHA-256 checksum appears after the first real frame loads.';
+    labState.verifyGaiaKey = '';
+    setVerificationGaia('idle', 'Load a real frame to query the Gaia DR3 catalogue.');
     return;
   }
   const checks = [];
@@ -905,16 +976,92 @@ function updateVerification() {
   });
   const verified = checks.filter(check => check.state === 'verified').length;
   const available = checks.filter(check => check.state === 'verified' || check.state === 'note').length;
+  const gaiaKey = `${frame.obsid || frame.label}|${Number(analysis?.ra ?? frame.ra).toFixed(4)}|${Number(analysis?.dec ?? frame.dec).toFixed(4)}`;
+  if (labState.verifyGaia?.key === gaiaKey) {
+    const context = labState.verifyGaia;
+    const nearest = context.nearest;
+    checks.push({
+      state: 'receipt',
+      title: 'Gaia DR3 catalogue context attached',
+      detail: `${context.count} source${context.count === 1 ? '' : 's'} within 1.2′${nearest && Number.isFinite(Number(nearest.mag)) ? ` · nearest G ${Number(nearest.mag).toFixed(1)} at ${(nearest.separation * 3600).toFixed(1)}″` : ''}. Context, not a confirmation.`
+    });
+  }
+  labState.lastChecks = checks.map(check => ({ state: check.state, title: check.title, detail: check.detail }));
   el.verificationScore.textContent = `${verified} / ${available} checks agree`;
   el.verificationScore.className = `verify-score ${verified === available && available ? 'good' : available ? 'mixed' : ''}`;
   for (const check of checks) el.verificationList.append(verificationRow(check));
   el.verifySourceSia.textContent = frame.sourceLabel || 'IRSA SIA2 · SPHEREx DR1';
   el.verifySiaDetail.textContent = `${frame.date || '—'} · ${frame.detector} · ${frame.obsid || 'OBSID pending'}`;
   el.verifySourceFits.textContent = analysis ? 'IRSA FITS cutout' : 'IRSA FITS cutout · pending';
+  const activeWidth = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
+  const activeHeight = hdMode && frame.hdHeight ? frame.hdHeight : frame.height;
   el.verifyFitsDetail.textContent = analysis
-    ? `${frame.width || '—'} × ${frame.height || '—'} px · ${frame.uri?.split('/').pop() || 'product URI'}`
+    ? `${activeWidth || '—'} × ${activeHeight || '—'} px · ${frame.uri?.split('/').pop() || 'product URI'}`
     : 'IMAGE, WCS, WCS-WAVE and detector headers.';
   el.checksumValue.textContent = frame.sha256 || 'Waiting for the real PNG payload.';
+  loadVerificationGaia(frame, analysis);
+}
+
+function buildVerificationReceipt() {
+  const frame = frames[frameIndex];
+  if (!frame?.real) return null;
+  const analysis = activeFrameAnalysis();
+  const gaia = labState.verifyGaia;
+  return {
+    schema: 'spherex-explorer/receipt/v1',
+    generatedAt: new Date().toISOString(),
+    frame: {
+      label: frame.label,
+      date: frame.date || null,
+      detector: frame.detector || null,
+      band: frame.band || null,
+      obsid: frame.obsid || null,
+      uri: frame.uri || null,
+      sha256: frame.sha256 || null,
+      requested: { ra: Number(frame.ra), dec: Number(frame.dec), fov: Number(frame.fov) },
+      measured: analysis ? { ra: analysis.ra, dec: analysis.dec, width: analysis.width ?? null, height: analysis.height ?? null } : null
+    },
+    wcs: analysis ? { corners: analysis.wcsCorners || null, pixelScale: analysis.pixelScale ?? null } : null,
+    measurements: analysis ? {
+      median: analysis.median ?? null,
+      low: analysis.low ?? null,
+      high: analysis.high ?? null,
+      min: analysis.min ?? null,
+      max: analysis.max ?? null,
+      mean: analysis.mean ?? null,
+      waveMin: analysis.waveMin ?? null,
+      waveMax: analysis.waveMax ?? null,
+      bandwidth: Number.isFinite(analysis.waveBwMin) && Number.isFinite(analysis.waveBwMax) ? analysis.waveBwMax - analysis.waveBwMin : null,
+      exposure: analysis.exposure ?? null,
+      cutoutSize: analysis.cutoutSize || null,
+      palette: analysis.palette || null,
+      stretch: analysis.stretch || null,
+      constellation: analysis.constellation || null
+    } : null,
+    sources: {
+      sia2: { label: frame.sourceLabel || 'IRSA SIA2 · SPHEREx DR1', detail: `${frame.date || '—'} · ${frame.detector || '—'} · ${frame.obsid || '—'}` },
+      fits: { label: 'IRSA FITS cutout', detail: `${frame.uri || '—'}` },
+      iau: { label: 'IAU constellation engine', detail: 'Independent J2000 geometry at the cutout centre.' },
+      gaia: gaia ? { label: 'Gaia DR3 · ESA Gaia Archive TAP', query: { ra: gaia.ra, dec: gaia.dec, radiusDeg: 0.02 }, count: gaia.count, nearest: gaia.nearest ? { ra: gaia.nearest.ra, dec: gaia.nearest.dec, mag: gaia.nearest.mag, separationArcsec: gaia.nearest.separation * 3600 } : null } : null
+    },
+    checks: labState.lastChecks
+  };
+}
+
+function downloadVerificationReceipt() {
+  const receipt = buildVerificationReceipt();
+  if (!receipt) { notify('Load a real frame before exporting a receipt.'); return; }
+  const blob = new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  const safeId = String(receipt.frame.obsid || receipt.frame.label || 'frame').replace(/[^a-z0-9._-]+/gi, '-').slice(0, 60);
+  anchor.href = url;
+  anchor.download = `spherex-receipt-${safeId}.json`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  notify('Data receipt downloaded: frame, WCS, checks, sources and SHA-256.');
 }
 
 function parseWcsCorners(value) {
@@ -1278,7 +1425,8 @@ async function loadRealFrames(options = {}) {
 function hdUrlFor(frame) {
   if (!frame?.remoteSrc) return '';
   const url = new URL(frame.remoteSrc, window.location.href);
-  url.searchParams.set('pixels', '1024');
+  url.searchParams.delete('pixels');
+  url.searchParams.set('fov', '0.9');
   return url.toString();
 }
 
@@ -1287,7 +1435,7 @@ async function loadHDFrame(frame) {
   const url = hdUrlFor(frame);
   if (!url) return;
   frame.hdLoading = true;
-  el.stageResolution.textContent = 'FETCHING 1024 PX…';
+  el.stageResolution.textContent = 'FETCHING 0.90° WIDE…';
   try {
     let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1295,7 +1443,7 @@ async function loadHDFrame(frame) {
       if (response.ok || ![429, 503, 504].includes(response.status) || attempt === 2) break;
       await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
     }
-    if (!response?.ok) throw new Error(`HD cutout returned ${response?.status ?? 'no response'}.`);
+    if (!response?.ok) throw new Error(`Wide cutout returned ${response?.status ?? 'no response'}.`);
     const bytes = await response.arrayBuffer();
     const blob = new Blob([bytes], { type: 'image/png' });
     const objectUrl = URL.createObjectURL(blob);
@@ -1303,13 +1451,13 @@ async function loadHDFrame(frame) {
     const headerWidth = Number(response.headers.get('X-Frame-Width'));
     const headerHeight = Number(response.headers.get('X-Frame-Height'));
     frame.hdObjectUrl = objectUrl;
-    frame.hdWidth = Number.isFinite(headerWidth) ? headerWidth : 1024;
-    frame.hdHeight = Number.isFinite(headerHeight) ? headerHeight : 883;
+    frame.hdWidth = Number.isFinite(headerWidth) ? headerWidth : 490;
+    frame.hdHeight = Number.isFinite(headerHeight) ? headerHeight : 354;
     frame.hdAnalysis = readFrameHeaders(response);
     if (frames[frameIndex] === frame && hdMode) render();
-    notify(`HD window loaded from a ${frame.hdWidth} × ${frame.hdHeight} native-scale IRSA cutout.`);
+    notify(`Wide 0.90° window loaded from a ${frame.hdWidth} × ${frame.hdHeight} native-scale IRSA cutout. Coverage may be clipped by the detector footprint.`);
   } catch (error) {
-    notify(`HD cutout failed: ${error.message}`);
+    notify(`Wide cutout failed: ${error.message}`);
     hdMode = false;
     updateHDControls();
     render();
@@ -1325,14 +1473,14 @@ function updateHDControls() {
   for (const button of [el.hdToggle, el.hdToggleLab]) {
     if (!button) continue;
     button.disabled = !enabled;
-    button.textContent = hdMode ? 'Standard window' : 'HD 1024 px window';
+    button.textContent = hdMode ? 'Standard window' : 'Wide 0.90° window';
     button.classList.toggle('active', hdMode);
   }
 }
 
 function toggleHD() {
   const current = frames[frameIndex];
-  if (!current?.real) { notify('Load a real IRSA frame before opening the HD window.'); return; }
+  if (!current?.real) { notify('Load a real IRSA frame before opening the wide window.'); return; }
   hdMode = !hdMode;
   updateHDControls();
   if (hdMode) loadHDFrame(current);
@@ -1360,8 +1508,8 @@ function render() {
   if (hdMode && f.real && !f.hdObjectUrl && !f.hdLoading) loadHDFrame(f);
   if (!f.width) el.stageLoading.hidden = Boolean(f.loadError);
   el.stageResolution.textContent = useHd
-    ? `HD ${f.hdWidth || 1024} PX`
-    : hdMode && f.hdLoading ? 'FETCHING HD…'
+    ? `WIDE ${f.hdWidth || 490} PX`
+    : hdMode && f.hdLoading ? 'FETCHING WIDE…'
       : f.width ? `${f.width} PX NATIVE` : 'NATIVE CUTOUT';
   el.image.classList.toggle('pixelated', Boolean(el.sharpPixels?.checked) && zoom > 1.05);
   updateHDControls();
@@ -1575,6 +1723,7 @@ for (const preset of document.querySelectorAll('[data-target]')) {
 }
 el.loadReal.addEventListener('click', loadRealFrames);
 el.emptyReal.addEventListener('click', loadRealFrames);
+el.receiptDownload?.addEventListener('click', downloadVerificationReceipt);
 el.detector.addEventListener('change', () => setBand(el.detector.value, true));
 for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
   chip.addEventListener('click', () => setBand(chip.dataset.band, true));
@@ -1838,7 +1987,10 @@ const labState = {
   candidates: [],
   lightPoints: [],
   discoveryToken: 0,
-  scanning: false
+  scanning: false,
+  verifyGaiaKey: '',
+  verifyGaia: null,
+  lastChecks: []
 };
 
 function shuffle(values) {

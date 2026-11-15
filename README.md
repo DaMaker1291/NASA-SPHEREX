@@ -221,10 +221,10 @@ does not jump in shape. **Blink A/B** toggles two visits; **Difference**
 subtracts their PNG rasters in the browser. The workspace below the viewer has
 separate Wavelength, Constellations, Data verification, Learning lab, Sky games
 and Mail sections. Wavelength uses the six real detector bands and server-side
-palette/stretch filters; the HD button requests a larger native-scale cutout;
+palette/stretch filters; the wide button requests a larger native-scale cutout;
 constellation membership and neighbourhoods come from IAU geometry; and the
-verification panel cross-checks SIA2 metadata, FITS headers and a SHA-256
-payload receipt.
+verification panel cross-checks SIA2 metadata, FITS headers, IAU geometry,
+Gaia DR3 catalogue context and a SHA-256 payload receipt.
 
 Regression checks used during development loaded all five named targets from
 the local Worker, measured their first real cutout, and exercised playback,
@@ -304,15 +304,16 @@ Palette (`iridescent`, `gold`, `ice`, `mono`) and intensity stretch (`asinh`,
 `linear`, `log`) are real server-side raster controls (`/api/spherex/png`).
 They change presentation only; the underlying FITS pixels are unchanged.
 
-### Native-scale HD window
+### Native-scale wide window
 
-`GET /api/spherex/png?...&pixels=1024` requests a genuine larger IRSA cutout at
-native detector sampling. The normal 0.30° view is about 176 px because SPHEREx
-sampling is about 6.15″/pixel; the HD request uses the archive's pixel-size
-cutout mode and can return roughly 700–1024 px depending on detector coverage.
-This is not synthetic upscaling. Resolution is still archive-limited, and the
-UI labels any shortfall rather than claiming invented detail. The viewer also
-supports 8× zoom, pan, native-pixel sharpening and browser full screen.
+The normal 0.30° view is about 176 px because SPHEREx sampling is about
+6.15″/pixel. The wide button requests a 0.90° cutout at that same native
+sampling, which returns roughly 490 × 354 px for R Draconis. This is a wider
+field, not synthetic upscaling. Near a detector edge IRSA can clip the
+window and shift its measured centre; the verification panel reports that
+shift rather than hiding it. Pixel detail remains archive-limited. The viewer
+also supports 12× zoom, pan, 1:1 native-pixel view, optional sharpening and
+browser full screen.
 
 ## Constellations and verification
 
@@ -327,17 +328,21 @@ screen:
 1. IRSA SIA2 discovery row: date, detector, observation ID, product URI.
 2. IRSA FITS cutout headers: DATE-AVG, DETECTOR, OBSID, WCS centre, WCS-WAVE.
 3. IAU constellation membership computed independently from J2000 geometry.
-4. SHA-256 receipt of the actual PNG payload.
+4. Gaia DR3 catalogue context queried at the cutout centre.
+5. SHA-256 receipt of the actual PNG payload.
 
 Green checks mean the two sources agree; amber checks state a real mismatch or
-unavailable value; the receipt is shown separately and is not counted as an
-agreement check.
+unavailable value. The Gaia and SHA-256 rows are receipts, not agreement checks,
+and are not counted in the score. **Download full JSON receipt** exports the
+frame identity, requested and measured centres, WCS corners, pixel scale,
+measurements, all check details, the Gaia query result and the SHA-256 in one
+portable file.
 
 ## Source map
 
 ```
 frontend/index.html         Public Render viewer, workspace, learning/game panels
-frontend/script.js          Real-frame viewer, bands, HD window, verification
+frontend/script.js          Real-frame viewer, bands, wide window, verification receipt
 frontend/style.css          Responsive public viewer and workspace
 src/worker/index.ts          Hono routes: find, cutout, png, spectrum, sky context, catalog
 src/worker/sky.ts            IAU constellation + galactic/ecliptic coordinates

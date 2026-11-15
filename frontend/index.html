@@ -7,7 +7,7 @@
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
   <link rel="stylesheet" href="style.css?v=next-19">
-  <script defer src="script.js?v=next-34"></script>
+  <script defer src="script.js?v=next-37"></script>
 </head>
 <body>
   <header class="site-header">
@@ -119,7 +119,7 @@
             <button id="resetView" class="text-button" type="button">Reset</button>
             <button id="zoomNative" class="text-button" type="button" title="Show one image pixel per screen pixel">1:1</button>
             <button id="copyLink" class="text-button" type="button">Copy link</button>
-            <button id="hdToggle" class="text-button" type="button" disabled>HD window</button>
+            <button id="hdToggle" class="text-button" type="button" disabled>Wide 0.90°</button>
             <button id="fullscreen" class="text-button" type="button">Full screen</button>
             <a class="jump-query" href="#queryPanel">Coordinates ↓</a>
             <label class="marker-toggle" for="showCrosshair"><input id="showCrosshair" type="checkbox" checked> Centre marker</label>
@@ -317,8 +317,8 @@
             <p class="desk-copy">Palette and stretch change how the same measured pixels are drawn. They never change the underlying FITS values.</p>
             <div class="field"><label for="paletteSelect">Palette</label><select id="paletteSelect"><option value="iridescent">Iridescent · default</option><option value="gold">Warm gold</option><option value="ice">Ice blue</option><option value="mono">Monochrome</option></select></div>
             <div class="field"><label for="stretchSelect">Intensity stretch</label><select id="stretchSelect"><option value="asinh">Asinh · balanced</option><option value="linear">Linear · direct</option><option value="log">Log · faint detail</option></select></div>
-            <button id="hdToggleLab" class="button secondary full" type="button" disabled>Load 1024 px HD window</button>
-            <p class="field-hint">HD requests a larger native-scale IRSA cutout around the same centre. Resolution is archive-limited by SPHEREx's detector sampling.</p>
+            <button id="hdToggleLab" class="button secondary full" type="button" disabled>Load 0.90° wide window</button>
+            <p class="field-hint">Loads a native-scale 0.90° cutout for a wider sky view. Near a detector edge IRSA may clip the window and shift its actual centre; the verification panel reports the measured WCS centre. Pixel detail is archive-limited by SPHEREx sampling, not invented by upscaling.</p>
             <label class="marker-toggle sharp-toggle" for="sharpPixels"><input id="sharpPixels" type="checkbox"> Sharpen native pixels when zoomed</label>
           </div>
         </div>
@@ -357,8 +357,9 @@
           <div class="source-box"><span class="kicker">SOURCE 1 · DISCOVERY</span><strong id="verifySourceSia">IRSA SIA2</strong><p id="verifySiaDetail">Visit row, date, observation ID and product URI.</p></div>
           <div class="source-box"><span class="kicker">SOURCE 2 · PIXELS</span><strong id="verifySourceFits">IRSA FITS cutout</strong><p id="verifyFitsDetail">IMAGE, WCS, WCS-WAVE and detector headers.</p></div>
           <div class="source-box"><span class="kicker">SOURCE 3 · GEOMETRY</span><strong>IAU constellation engine</strong><p>Constellation membership computed from J2000 coordinates, not copied from IRSA.</p></div>
+          <div class="source-box"><span class="kicker">SOURCE 4 · CATALOGUE</span><strong id="verifyGaia">Gaia DR3 · ESA TAP</strong><p id="verifyGaiaDetail">Independent catalogue context for the field centre.</p></div>
         </div>
-        <details class="checksum-box"><summary>Cutout integrity receipt</summary><code id="checksumValue">A SHA-256 checksum appears after the first real frame loads.</code></details>
+        <details class="checksum-box"><summary>Cutout integrity receipt</summary><code id="checksumValue">A SHA-256 checksum appears after the first real frame loads.</code><div class="receipt-actions"><button id="receiptDownload" class="text-button" type="button">Download full JSON receipt</button><span>Frame, WCS corners, checks, catalogue context and SHA-256.</span></div></details>
       </div>
 
       <div class="lab-content" id="labDiscover" role="tabpanel" hidden>
