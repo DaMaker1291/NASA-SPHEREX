@@ -325,7 +325,11 @@ async function fetchSiaRows(ra: number, dec: number): Promise<Array<Record<strin
     )
     await assertUpstreamOk(response, 'IRSA SIA2')
     const text = await readTextLimited(response, MAX_SIA_BYTES)
-    if (!/^\s*</.test(text)) return parseCsv(text)
+    if (!/^\s*</.test(text)) {
+      const rows = parseCsv(text)
+      if (rows.length) return rows
+      throw new Error('IRSA SIA2 CSV had no rows.')
+    }
     return parseSiaHtml(text)
   } catch (error) {
     csvError = error
@@ -353,6 +357,9 @@ async function fetchSiaRows(ra: number, dec: number): Promise<Array<Record<strin
 
 async function querySia(ra: number, dec: number, fov: number, cacheKey: string): Promise<IrsaFind> {
     const rows = await fetchSiaRows(ra, dec)
+    if (!rows.length) {
+      throw new ApiError(502, 'IRSA returned no SIA2 products for that field.', 'NO_ROWS')
+    }
 
     const byTime = new Map<string, IrsaObservation>()
     for (const row of rows) {

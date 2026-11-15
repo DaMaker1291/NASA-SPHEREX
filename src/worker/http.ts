@@ -325,6 +325,9 @@ async function readStreamLimited(response: Response, maxBytes: number, timeoutMs
       }
       chunks.push(value)
     }
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError(502, 'The upstream archive stream failed.', 'UPSTREAM_UNAVAILABLE')
   } finally {
     if (timer !== undefined) clearTimeout(timer)
     if (timedOut) await reader.cancel().catch(() => {})
