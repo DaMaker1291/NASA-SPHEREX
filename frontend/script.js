@@ -945,10 +945,13 @@ function updateVerification() {
     detail: analysis?.obsid ? `SIA2 ${frame.obsid || '—'} · FITS ${analysis.obsid}` : 'FITS OBSID header not available.'
   });
   const separation = angularSeparation(Number(frame.ra), Number(frame.dec), analysis?.ra, analysis?.dec);
+  const wideActive = hdMode && Boolean(frame.hdObjectUrl);
   checks.push({
     state: separation === null ? 'pending' : separation < 0.02 ? 'verified' : 'note',
-    title: 'WCS centre is inside the requested field',
-    detail: separation === null ? 'Waiting for the cutout WCS centre.' : `${separation.toFixed(3)}° from the requested centre.`
+    title: wideActive && separation !== null && separation >= 0.02 ? 'Wide-window centre differs from the request' : 'WCS centre is inside the requested field',
+    detail: separation === null
+      ? 'Waiting for the cutout WCS centre.'
+      : `${separation.toFixed(3)}° from the requested centre${wideActive && separation >= 0.02 ? ' · the 0.90° window was clipped by coverage' : ''}.`
   });
   const band = BAND_INFO[frame.detector];
   const waveInside = analysis && Number.isFinite(analysis.waveMin) && band
