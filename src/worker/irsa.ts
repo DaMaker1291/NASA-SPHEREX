@@ -158,14 +158,29 @@ function releaseFromUri(uri: string) {
 }
 
 const SIA_COOLDOWN_MS = 30_000
+const UPSTREAM_COOLDOWN_MS = 8_000
 const LAST_GOOD_MS = 86_400_000
 const searchCache = new TtlCache<string, IrsaFind>(300_000, 64)
 const searchFlights = new SingleFlight<string, IrsaFind>(32)
 const lastGoodSearch = new Map<string, { data: IrsaFind; at: number }>()
-let siaCooldownUntil = 0
+const siaCooldowns = new Map<string, number>()
+let siaUnavailableUntil = 0
 const catalogCache = new TtlCache<string, Awaited<ReturnType<typeof queryCatalog>>>(1_800_000, 64)
 const catalogFlights = new SingleFlight<string, Awaited<ReturnType<typeof queryCatalog>>>(32)
-const catalogCooldownUntil: Record<'gaia' | 'wise', number> = { gaia: 0, wise: 0 }
+const catalogCooldowns = new Map<string, number>()
+const catalogUnavailableUntil: Record<'gaia' | 'wise', number> = { gaia: 0, wise: 0 }
+
+function isInfrastructureFailure(error: unknown) {
+  return error instanceof ApiError && (error.status === 503 || error.status === 504 || error.code === 'UPSTREAM_UNAVAILABLE')
+}
+
+function rememberCooldown(store: Map<string, number>, key: string, until: number) {
+  if (store.size > 200) {
+    const now = Date.now()
+    for (const [entry, expiry] of store) if (expiry <= now) store.delete(entry)
+  }
+  store.set(key, until)
+}
 const cutoutFlights = new SingleFlight<string, ArrayBuffer>(32)
 const cutoutCache = new Map<string, { buffer: ArrayBuffer; at: number; bytes: number }>()
 let cutoutCacheBytes = 0
@@ -236,7 +251,8 @@ export async function findSpherex(ra: number, dec: number, fov: number): Promise
   const cacheKey = `${ra.toFixed(4)}|${dec.toFixed(4)}|${fov.toFixed(2)}`
   const cached = searchCache.get(cacheKey)
   if (cached) return cached
-  if (Date.now() < siaCooldownUntil) {
+  const keyCooldown = siaCooldowns.get(cacheKey) ?? 0
+  if (Date.now() < keyCooldown || Date.now() < siaUnavailableUntil) {
     const stale = await lastGoodResult(cacheKey)
     if (stale) return stale
     throw new ApiError(503, 'IRSA SIA2 is cooling down after a failed request; retry shortly.', 'UPSTREAM_BUSY')
@@ -244,9 +260,13 @@ export async function findSpherex(ra: number, dec: number, fov: number): Promise
 
   return searchFlights.run(cacheKey, async () => {
     try {
-      return await querySia(ra, dec, fov, cacheKey)
+      const result = await querySia(ra, dec, fov, cacheKey)
+      siaCooldowns.delete(cacheKey)
+      siaUnavailableUntil = 0
+      return result
     } catch (error) {
-      siaCooldownUntil = Date.now() + SIA_COOLDOWN_MS
+      rememberCooldown(siaCooldowns, cacheKey, Date.now() + SIA_COOLDOWN_MS)
+      if (isInfrastructureFailure(error)) siaUnavailableUntil = Date.now() + UPSTREAM_COOLDOWN_MS
       const stale = await lastGoodResult(cacheKey)
       if (stale) return stale
       throw error
@@ -383,7 +403,8 @@ async function querySia(ra: number, dec: number, fov: number, cacheKey: string):
     }
     searchCache.set(cacheKey, data)
     rememberLastGood(cacheKey, data)
-    siaCooldownUntil = 0
+    siaCooldowns.delete(cacheKey)
+    siaUnavailableUntil = 0
     return data
 }
 
@@ -904,7 +925,8 @@ export async function getCatalog(survey: 'gaia' | 'wise', ra: number, dec: numbe
   const cacheKey = `${survey}|${ra.toFixed(4)}|${dec.toFixed(4)}|${radius.toFixed(4)}`
   const cached = catalogCache.get(cacheKey)
   if (cached) return cached
-  if (Date.now() < catalogCooldownUntil[survey]) {
+  const keyCooldown = catalogCooldowns.get(cacheKey) ?? 0
+  if (Date.now() < keyCooldown || Date.now() < catalogUnavailableUntil[survey]) {
     throw new ApiError(503, `${survey} TAP is cooling down after a failed request; retry shortly.`, 'UPSTREAM_BUSY')
   }
 
@@ -912,10 +934,12 @@ export async function getCatalog(survey: 'gaia' | 'wise', ra: number, dec: numbe
     try {
       const data = await queryCatalog(survey, ra, dec, radius)
       catalogCache.set(cacheKey, data)
-      catalogCooldownUntil[survey] = 0
+      catalogCooldowns.delete(cacheKey)
+      catalogUnavailableUntil[survey] = 0
       return data
     } catch (error) {
-      catalogCooldownUntil[survey] = Date.now() + 30_000
+      rememberCooldown(catalogCooldowns, cacheKey, Date.now() + SIA_COOLDOWN_MS)
+      if (isInfrastructureFailure(error)) catalogUnavailableUntil[survey] = Date.now() + UPSTREAM_COOLDOWN_MS
       throw error
     }
   })

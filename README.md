@@ -102,24 +102,35 @@ does not generate demo pixels.
   `irsa.ipac.caltech.edu/ibe/data/spherex/...fits` products. Userinfo, ports,
   fragments and path traversal are rejected.
 - **Bounded upstream work** — transient `408`/`429`/5xx responses retry with
-  exponential backoff and `Retry-After` support. SIA2 has a 50 s total budget;
-  cutouts and TAP queries have 45 s budgets. Responses are size-limited.
+  exponential backoff and `Retry-After` support. SIA2 has a 28 s discovery
+  budget (12 s CSV plus 16 s HTML fallback); cutouts and TAP queries have
+  45 s budgets. Responses are size-limited.
 - **Caching** — SIA2, catalogue and spectrum results use bounded TTL caches.
-  Successful GETs are also stored in the `drift-api-v7` Cache API namespace and
-  report `X-Cache: HIT` or `MISS`. Identical concurrent requests are coalesced.
+  Successful GETs are also stored in the `drift-api-v8` Cache API namespace and
+  report `X-Cache: HIT` or `MISS`. Query parameters are canonicalised before
+  use as cache keys, and the stored timestamp is checked against the response
+  `Cache-Control` TTL so a Cache API entry cannot be served stale forever.
+  Identical concurrent requests are coalesced. `/api/health` exposes per-isolate
+  edge-cache hit/miss counters.
   Inside the Worker, real cutout FITS buffers are kept in a bounded 96 MB,
   10-minute cache (`X-Cutout-Cache`), rendered PNGs in a bounded raster cache
   (`X-Raster-Cache`), and cutout summaries in a 64-entry cache
   (`X-Summary-Cache`). This avoids repeatedly downloading and reparsing the
   same IRSA product for the PNG, summary and spectrum paths.
-- **Failure handling** — SIA2 and catalogue services enter a 30 s cooldown
-  after a failed request, returning `503` with `Retry-After` instead of
-  hammering a degraded archive. The default field falls back to the bundled
-  real IRSA index with `X-Data-Fallback: bundled`; the badge labels it as
-  cached.
+- **Failure handling** — a failed field enters a 30 s per-key cooldown, while
+  infrastructure failures add a short 8 s service-wide circuit breaker. One bad
+  field therefore cannot poison unrelated SIA2 or catalogue searches.
+  Degraded requests return `503` with `Retry-After`; last-known-good SIA2 data
+  is preferred when available. The default field falls back to the bundled real
+  IRSA index with `X-Data-Fallback: bundled`; the badge labels it as cached.
 - **Limits** — spectra accept at most six detector products, fetched three at a
 time. A cutout response is capped at 40 MB and a spectrum strip is capped at
-40 MB. `GET /api/health` is the lightweight liveness route.
+40 MB. `GET /api/health` is the lightweight liveness route and reports the API
+version, isolate uptime and edge-cache counters.
+- **Observability and headers** — every API response carries `X-Request-Id`,
+  `X-API-Version` and a `Server-Timing: app;dur=…` measurement. Static assets
+  carry `X-Content-Type-Options`, `Referrer-Policy` and
+  `Cross-Origin-Resource-Policy`.
 - **Hard timeouts** — every upstream attempt is raced against a real timer, so a
   stalled archive connection cannot pin a Worker request open even if the
   platform fetch ignores an abort. SIA2 has a 12 s discovery budget before the

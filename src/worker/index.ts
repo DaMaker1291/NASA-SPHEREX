@@ -32,22 +32,55 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 const MAX_SPECTRUM_DETECTORS = 6
 const SPECTRUM_CONCURRENCY = 3
-const CACHE_NAME = 'drift-api-v7'
+const CACHE_NAME = 'drift-api-v8'
+const CACHE_STORED_AT = 'x-edge-stored-at'
+const API_VERSION = '2026-11-15'
 const DEFAULT_FIELD = { ra: 150, dec: 19.5, fov: 0.3 }
 const summaryCache = new TtlCache<string, ReturnType<typeof summarizeCutout>>(600_000, 64)
+const bootedAt = Date.now()
+let edgeHits = 0
+let edgeMisses = 0
 
 function asciiHeader(value: string) {
   return value.replace(/[^\x20-\x7E]/g, '-')
 }
 
 function withCacheState(response: Response, state: 'HIT' | 'MISS') {
+  if (state === 'HIT') edgeHits += 1
+  else edgeMisses += 1
   const headers = new Headers(response.headers)
   headers.set('X-Cache', state)
+  headers.set('X-API-Version', API_VERSION)
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   })
+}
+
+function cacheKey(request: Request): Request | null {
+  if (request.method !== 'GET') return null
+  const url = new URL(request.url)
+  // Query order is not significant. Canonicalising it prevents the same
+  // real request from filling several edge-cache slots.
+  url.searchParams.sort()
+  url.hash = ''
+  return new Request(url.toString(), { method: 'GET' })
+}
+
+function cacheMaxAgeMs(response: Response) {
+  const control = response.headers.get('cache-control') ?? ''
+  const match = /(?:s-maxage|max-age)=(\d+)/i.exec(control)
+  if (!match) return null
+  const seconds = Number(match[1])
+  return Number.isFinite(seconds) ? seconds * 1000 : null
+}
+
+function cacheExpired(response: Response) {
+  const maxAge = cacheMaxAgeMs(response)
+  if (maxAge === null) return false
+  const date = Date.parse(response.headers.get('date') ?? '')
+  return Number.isFinite(date) && Date.now() - date > maxAge
 }
 
 async function bundledFind(c: AppContext): Promise<IrsaFind | null> {
@@ -70,21 +103,51 @@ async function bundledFind(c: AppContext): Promise<IrsaFind | null> {
 }
 
 async function edgeMatch(request: Request) {
+  const key = cacheKey(request)
+  if (!key) return null
   try {
     const cache = await caches.open(CACHE_NAME)
-    return (await cache.match(request)) ?? null
+    const cached = await cache.match(key)
+    if (!cached) return null
+    const storedAt = Number(cached.headers.get(CACHE_STORED_AT))
+    const maxAge = cacheMaxAgeMs(cached)
+    const tooOld = Number.isFinite(storedAt) && maxAge !== null && Date.now() - storedAt > maxAge
+    if (tooOld || (cacheExpired(cached) && !Number.isFinite(storedAt))) {
+      // Cache API entries are not guaranteed to expire on their own. Enforce
+      // the response TTL explicitly instead of serving stale JSON forever.
+      cache.delete(key).catch(() => {})
+      return null
+    }
+    const headers = new Headers(cached.headers)
+    headers.delete(CACHE_STORED_AT)
+    return new Response(cached.body, {
+      status: cached.status,
+      statusText: cached.statusText,
+      headers,
+    })
   } catch {
     return null
   }
 }
 
 function edgeStore(c: AppContext, response: Response) {
+  const key = cacheKey(c.req.raw)
+  if (!key || !response.ok) return
+  const control = response.headers.get('cache-control') ?? ''
+  if (/no-store|private/i.test(control)) return
   try {
-    const cacheCopy = response.clone()
+    const copy = response.clone()
+    const headers = new Headers(copy.headers)
+    headers.set(CACHE_STORED_AT, String(Date.now()))
+    const cacheCopy = new Response(copy.body, {
+      status: copy.status,
+      statusText: copy.statusText,
+      headers,
+    })
     c.executionCtx.waitUntil(
       caches
         .open(CACHE_NAME)
-        .then((cache) => cache.put(c.req.raw, cacheCopy))
+        .then((cache) => cache.put(key, cacheCopy))
         .catch(() => {}),
     )
   } catch {
@@ -125,14 +188,18 @@ function apiError(c: AppContext, error: unknown) {
 }
 
 app.use('/api/*', async (c, next) => {
+  const startedAt = Date.now()
   const requestId = (c.req.header('cf-ray') ?? crypto.randomUUID()).slice(0, 64)
   c.set('requestId', requestId)
   c.header('X-Request-Id', requestId)
+  c.header('X-API-Version', API_VERSION)
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('Referrer-Policy', 'no-referrer')
   c.header('Cross-Origin-Resource-Policy', 'same-origin')
   await next()
   c.header('X-Request-Id', requestId)
+  c.header('X-API-Version', API_VERSION)
+  c.header('Server-Timing', `app;dur=${Math.max(0, Date.now() - startedAt)}`)
 })
 
 app.get('/api/health', (c) => {
@@ -141,6 +208,9 @@ app.get('/api/health', (c) => {
     ok: true,
     service: 'drift',
     source: 'IRSA SPHEREx DR1',
+    apiVersion: API_VERSION,
+    uptimeSeconds: Math.floor((Date.now() - bootedAt) / 1000),
+    edgeCache: { name: CACHE_NAME, hits: edgeHits, misses: edgeMisses },
     time: new Date().toISOString(),
   })
 })
@@ -599,7 +669,18 @@ app.get('/api/catalog', async (c) => {
 
 app.all('/api/*', (c) => apiError(c, new ApiError(404, 'API route not found.', 'NOT_FOUND')))
 
-app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw))
+app.all('*', async (c) => {
+  const response = await c.env.ASSETS.fetch(c.req.raw)
+  const headers = new Headers(response.headers)
+  headers.set('X-Content-Type-Options', 'nosniff')
+  headers.set('Referrer-Policy', 'no-referrer')
+  headers.set('Cross-Origin-Resource-Policy', 'same-origin')
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+})
 
 app.onError((error, c) => {
   if (c.req.path.startsWith('/api/')) return apiError(c, error)

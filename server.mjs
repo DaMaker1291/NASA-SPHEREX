@@ -33,6 +33,8 @@ async function readAsset(request) {
         'Content-Type': contentTypes[extname(assetUrl.pathname).toLowerCase()] ?? 'application/octet-stream',
         'Cache-Control': /^(index\.html|.*\.(?:js|css))$/.test(relative) ? 'no-cache' : 'public, max-age=3600',
         'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+        'Cross-Origin-Resource-Policy': 'same-origin',
       })
       return new Response(request.method === 'HEAD' ? null : body, { headers })
     } catch {
@@ -47,6 +49,8 @@ async function readAsset(request) {
       'Content-Type': contentTypes['.html'],
       'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Cross-Origin-Resource-Policy': 'same-origin',
     },
   })
 }

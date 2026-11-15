@@ -262,6 +262,9 @@ export async function fetchWithRetry(
   if (lastError instanceof DOMException && lastError.name === 'AbortError') {
     throw new ApiError(504, 'The upstream archive timed out.', 'UPSTREAM_TIMEOUT')
   }
+  if (lastError instanceof ApiError && (lastError.status === 504 || lastError.code === 'UPSTREAM_TIMEOUT')) {
+    throw lastError
+  }
   if (totalTimeoutMs !== null && remaining() <= 0) {
     throw new ApiError(504, 'The upstream archive took too long to respond.', 'UPSTREAM_TIMEOUT')
   }
@@ -273,6 +276,9 @@ export async function assertUpstreamOk(response: Response, label: string) {
   await response.body?.cancel().catch(() => {})
   if (response.status === 429 || response.status === 503) {
     throw new ApiError(503, `${label} is busy; please retry in a moment.`, 'UPSTREAM_BUSY')
+  }
+  if (response.status === 504) {
+    throw new ApiError(504, `${label} did not respond in time.`, 'UPSTREAM_TIMEOUT')
   }
   if (response.status >= 500) {
     throw new ApiError(502, `${label} is temporarily unavailable (${response.status}).`, 'UPSTREAM_UNAVAILABLE')
