@@ -13,6 +13,7 @@
     "mirror:default": "node scripts/mirror-spherex.mjs",
     "mirror:verify": "node scripts/mirror-spherex.mjs --verify",
     "index:s3": "node scripts/build-s3-index.mjs",
+    "index:s3:full": "node scripts/build-s3-index-full.mjs",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

@@ -3,7 +3,6 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status'
 
 import {
   briefFromFind,
-  briefSpherex,
   findSpherex,
   getCatalog,
   getCutout,
@@ -15,6 +14,7 @@ import {
 } from './irsa'
 import { ApiError, TtlCache, queryEnum, queryNumber, validateIrsaProductUri } from './http'
 import { rasterizeCutoutCached } from './imaging'
+import { findSpherexInS3Index } from './s3-index'
 import { skyContext, skyNeighborhood } from './sky'
 import { getSourceHealth } from './sources'
 
@@ -32,7 +32,7 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 const MAX_SPECTRUM_DETECTORS = 6
 const SPECTRUM_CONCURRENCY = 3
-const CACHE_NAME = 'drift-api-v8'
+const CACHE_NAME = 'drift-api-v9'
 const CACHE_STORED_AT = 'x-edge-stored-at'
 const API_VERSION = '2026-11-15'
 const DEFAULT_FIELD = { ra: 150, dec: 19.5, fov: 0.3 }
@@ -81,6 +81,11 @@ function cacheExpired(response: Response) {
   if (maxAge === null) return false
   const date = Date.parse(response.headers.get('date') ?? '')
   return Number.isFinite(date) && Date.now() - date > maxAge
+}
+
+async function discover(c: AppContext, ra: number, dec: number, fov: number): Promise<IrsaFind> {
+  const indexed = await findSpherexInS3Index(c.env.ASSETS, new URL(c.req.url).origin, ra, dec, fov)
+  return indexed ?? findSpherex(ra, dec, fov)
 }
 
 async function bundledFind(c: AppContext): Promise<IrsaFind | null> {
@@ -236,8 +241,9 @@ app.get('/api/spherex/find', async (c) => {
     const cached = await edgeMatch(c.req.raw)
     if (cached) return withCacheState(cached, 'HIT')
 
-    const data = await findSpherex(ra, dec, fov)
+    const data = await discover(c, ra, dec, fov)
     c.header('X-Data-Source', asciiHeader(data.source.label))
+    if (data.source.label.includes('S3 index')) c.header('X-Data-Fallback', 's3-index')
     if (data.cachedAt) {
       c.header('Cache-Control', 'public, max-age=60, s-maxage=60, stale-while-revalidate=60')
       c.header('X-Data-Fallback', 'last-good')
@@ -282,7 +288,7 @@ app.get('/api/spherex/brief', async (c) => {
 
     let data
     try {
-      data = await briefSpherex(ra, dec, fov)
+      data = briefFromFind(await discover(c, ra, dec, fov))
     } catch (error) {
       const fallback =
         Math.abs(ra - DEFAULT_FIELD.ra) < 1e-9 &&
@@ -330,7 +336,7 @@ app.get('/api/spherex/frames', async (c) => {
 
     let data: IrsaFind
     try {
-      data = await findSpherex(ra, dec, fov)
+      data = await discover(c, ra, dec, fov)
     } catch (error) {
       const fallback =
         Math.abs(ra - DEFAULT_FIELD.ra) < 1e-9 &&
@@ -396,19 +402,24 @@ app.get('/api/spherex/frames', async (c) => {
       throw new ApiError(502, `No ${detector} products were returned for this field.`, 'NO_PRODUCTS')
     }
 
-    const picked = frames.length <= limit
+    // S3 range-cutouts are slower than the IRSA cutout service. Keep indexed
+    // fields responsive while still sampling the full visit range.
+    const frameLimit = data.source.label.includes('S3 index') ? Math.min(limit, 12) : limit
+    const picked = frames.length <= frameLimit
       ? frames
-      : Array.from(new Set(Array.from({ length: limit }, (_, index) => Math.round((index * (frames.length - 1)) / (limit - 1))))).map(
+      : Array.from(new Set(Array.from({ length: frameLimit }, (_, index) => Math.round((index * (frames.length - 1)) / (frameLimit - 1))))).map(
           (index) => frames[index],
         )
+    const indexed = data.source.label.includes('S3 index')
     const query = (uri: string) =>
       `/api/spherex/png?${new URLSearchParams({
         uri, ra: String(ra), dec: String(dec), fov: String(fov),
-        palette, stretch, v: '7',
+        palette, stretch, v: '7', ...(indexed ? { preferS3: '1' } : {}),
       }).toString()}`
 
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
     c.header('X-Data-Source', asciiHeader(data.source.label))
+    if (data.source.label.includes('S3 index')) c.header('X-Data-Fallback', 's3-index')
     if (data.cachedAt) c.header('X-Data-Fallback', 'last-good')
     const response = c.json({
       source: data.source,
@@ -457,7 +468,8 @@ app.get('/api/spherex/png', async (c) => {
     const cached = await edgeMatch(c.req.raw)
     if (cached) return withCacheState(cached, 'HIT')
 
-    const cutout = await getCutout(uri, ra, dec, fov, sizeOverride)
+    const preferS3 = c.req.query('preferS3') === '1'
+    const cutout = await getCutout(uri, ra, dec, fov, sizeOverride, preferS3)
     let rasterResult
     try {
       rasterResult = await rasterizeCutoutCached(

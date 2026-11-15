@@ -2019,7 +2019,7 @@ function setLoading(isLoading) {
 
 function updateAppLive(state = 'live') {
   if (!el.appLive) return;
-  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', offline: 'IRSA QUERY FAILED', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
+  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', s3: 'S3 INDEX', offline: 'IRSA QUERY FAILED', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
   if (el.appLiveText) el.appLiveText.textContent = labels[state] || labels.live;
   el.appLive.dataset.state = state;
 }
@@ -2031,7 +2031,7 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   const localOnly = newFrames.length > 0 && newFrames.every(frame => !frame.real);
   const mirrorOnly = newFrames.length > 0 && newFrames.every(frame => frame.mirror);
   const mosaicOnly = newFrames.length > 0 && newFrames.every(frame => frame.mosaic);
-  updateAppLive(localOnly ? 'local' : mosaicOnly ? 'mosaic' : mirrorOnly ? 'mirror' : /bundled|last known|fallback|last-good|cached/i.test(badge) ? 'cached' : 'live');
+  updateAppLive(localOnly ? 'local' : mosaicOnly ? 'mosaic' : mirrorOnly ? 'mirror' : /S3 index/i.test(badge) ? 's3' : /bundled|last known|fallback|last-good|cached/i.test(badge) ? 'cached' : 'live');
   hdMode = false; updateHDControls();
   el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side';
   el.sourceLabel.textContent = source;
@@ -2423,10 +2423,10 @@ async function loadRealFrames(options = {}) {
       if (mosaicShown) {
         updateAppLive('mosaic');
         el.sourceLabel.classList.remove('error');
-        el.sourceLabel.textContent = 'NASA/JPL-Caltech all-sky mosaic · local · no per-visit coverage for this field';
+        el.sourceLabel.textContent = payload.source?.label || 'NASA/JPL-Caltech all-sky mosaic · local · no per-visit coverage';
         el.stageBadge.hidden = false;
         el.stageBadge.textContent = 'LOCAL MOSAIC · REAL NASA IMAGE';
-        notify('No SPHEREx visits cover this exact patch; the local all-sky mosaic remains visible.');
+        notify(payload.coverage?.message || 'No SPHEREx visits cover this exact patch; the local all-sky mosaic remains visible.');
         return;
       }
       showNoCoverage(payload, field, targets[el.target.value]);
@@ -2458,9 +2458,11 @@ async function loadRealFrames(options = {}) {
       real: true
     }));
     sky = payload.sky || null;
-    const badge = /bundled|last known|fallback|last-good|cached/i.test(payload.source?.label || '')
-      ? 'CACHED IRSA · REAL FITS'
-      : 'LIVE IRSA · REAL FITS';
+    const badge = /S3 index/i.test(payload.source?.label || '')
+      ? 'S3 INDEX · REAL FITS'
+      : /bundled|last known|fallback|last-good|cached/i.test(payload.source?.label || '')
+        ? 'CACHED IRSA · REAL FITS'
+        : 'LIVE IRSA · REAL FITS';
     const range = visitWindowSummary(realFrames);
     archiveUnavailableUntil = 0;
     emptyDefaultFallback = false;

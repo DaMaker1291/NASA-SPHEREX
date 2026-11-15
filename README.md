@@ -83,6 +83,23 @@ The Data sources section also loads the current field's IRSA SPHEREx DR1 HiPS PN
 npm run index:s3 -- --limit 250 --concurrency 4 --prefix dr1/level2/
 ```
 
+`scripts/build-s3-index-full.mjs` builds the production spatial index used when
+IRSA's SIA2/TAP search endpoints are unavailable. It lists the real
+`dr1/level2/` bucket, reads one 32 KB header window per observation, and writes
+10-degree sky-cell shards under `public/data/spherex/s3-index/`. The app reads
+only the cells around a requested coordinate, resolves real S3 product keys,
+and fetches cutouts with S3 byte ranges. It does not mirror the 190 TB archive
+and it does not ask SIA2 for an indexed field:
+
+```sh
+npm run index:s3:full -- --concurrency 32
+```
+
+The checked-in index is the fallback when SIA2 is down. The weekly
+`.github/workflows/s3-index.yml` job rebuilds it from the public bucket without
+a local machine. The manifest records whether the crawl was complete and how
+many pointings it indexed; partial indexes are labelled as partial in the UI.
+
 `GET /api/spherex/brief` returns a compact field briefing computed from the same
 SIA2 rows: visit count, detector products, bands, date span, cadence and an
 estimated full-frame download size. `GET /api/spherex/summary` fetches one real

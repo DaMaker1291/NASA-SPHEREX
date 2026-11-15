@@ -1,0 +1,46 @@
+name: Refresh SPHEREx S3 index
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, after the normal IRSA ingestion window.
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: spherex-s3-index
+  cancel-in-progress: false
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build S3 spatial index
+        run: npm run index:s3:full -- --concurrency 32
+        continue-on-error: true
+
+      - name: Commit refreshed index
+        run: |
+          if git diff --quiet -- public/data/spherex/s3-index; then
+            echo "No index changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/spherex/s3-index
+          git commit -m "Refresh SPHEREx S3 spatial index"
+          git push

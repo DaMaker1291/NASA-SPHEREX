@@ -792,7 +792,30 @@ function storeCutoutCache(key: string, buffer: ArrayBuffer, source: string) {
   cutoutCacheBytes += bytes
 }
 
-async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, size: string): Promise<CutoutBuffer> {
+async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, size: string, preferS3 = false): Promise<CutoutBuffer> {
+  if (preferS3) {
+    try {
+      const direct = await fetchS3Cutout(uri, ra, dec, size)
+      return { buffer: direct.buffer, source: `NASA IRSA S3 · direct ${direct.key.split('/')[0].toUpperCase()} product` }
+    } catch (s3Error) {
+      // The S3 index can point at a product whose sibling bytes are missing.
+      // Fall back to the cutout service, but do not make S3-first wait on IRSA
+      // when S3 itself answered.
+      try {
+        const buffer = await fetchCutout(uri, ra, dec, size)
+        return { buffer, source: 'IRSA SPHEREx cutout service' }
+      } catch (primaryError) {
+        const s3Detail = s3Error instanceof Error ? s3Error.message : 'S3 product failed.'
+        const primaryDetail = primaryError instanceof Error ? primaryError.message : 'IRSA cutout failed.'
+        throw new ApiError(
+          502,
+          `Both real cutout sources failed. S3: ${s3Detail} IRSA: ${primaryDetail}`,
+          'UPSTREAM_UNAVAILABLE',
+        )
+      }
+    }
+  }
+
   let primaryError: unknown = null
   if (Date.now() >= cutoutPrimaryUnavailableUntil) {
     try {
@@ -823,25 +846,25 @@ async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, siz
   }
 }
 
-async function getCutoutBuffer(uri: string, ra: number, dec: number, size: string) {
-  const key = `${uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${size}`
+async function getCutoutBuffer(uri: string, ra: number, dec: number, size: string, preferS3 = false) {
+  const key = `${uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${size}|${preferS3 ? 's3' : 'auto'}`
   const cached = readCutoutCache(key)
   if (cached) return { ...cached, cached: true }
   const result = await cutoutFlights.run(key, async () => {
-    const fresh = await fetchCutoutWithFallback(uri, ra, dec, size)
+    const fresh = await fetchCutoutWithFallback(uri, ra, dec, size, preferS3)
     storeCutoutCache(key, fresh.buffer, fresh.source)
     return fresh
   })
   return { ...result, cached: false }
 }
 
-export async function getCutout(uri: string, ra: number, dec: number, fov: number, sizeOverride?: string) {
+export async function getCutout(uri: string, ra: number, dec: number, fov: number, sizeOverride?: string, preferS3 = false) {
   const safeUri = validateIrsaProductUri(uri)
   if (!finite(ra) || ra < 0 || ra > 360 || !finite(dec) || dec < -90 || dec > 90) {
     throw new ApiError(400, 'Invalid cutout center.', 'OUT_OF_RANGE')
   }
   const size = clamp(fov, 0.02, 0.9).toFixed(3)
-  const result = await getCutoutBuffer(safeUri, ra, dec, sizeOverride ?? `${size}d`)
+  const result = await getCutoutBuffer(safeUri, ra, dec, sizeOverride ?? `${size}d`, preferS3)
   return {
     buffer: result.buffer,
     size: Number(size),

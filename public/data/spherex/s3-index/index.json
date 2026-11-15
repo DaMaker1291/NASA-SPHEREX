@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-15T22:46:27.469Z",
+  "bucket": "https://nasa-irsa-spherex.s3.us-east-1.amazonaws.com",
+  "prefix": "dr1/level2/",
+  "detector": "D2",
+  "cellDegrees": 10,
+  "xCells": 36,
+  "yCells": 18,
+  "pagesListed": 1180,
+  "objectsScanned": 71319,
+  "pointings": 71319,
+  "complete": true,
+  "failures": [],
+  "source": "NASA/IPAC Infrared Science Archive (IRSA) SPHEREx DR1 public S3 bucket"
+}
