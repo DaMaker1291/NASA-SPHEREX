@@ -1,0 +1,236 @@
+﻿SPHEREx Viewer Research, Document 4
+Research notes for the Drift SPHEREx viewer
+Prepared by Shaurjesh Basu
+14 November 2026
+
+
+WHAT THIS DOCUMENT IS ABOUT
+
+
+The front end has one hard job: make a real detector frame legible without hiding what it is.
+
+
+That sounds simple until you look at the data. A SPHEREx Level-2 frame is a 2,040 by 2,040 spectral image with a non-standard spectral WCS, a flag bitmask, a variance plane, a zodiacal model, and a PSF product. It is not a JPEG, and it is not a north-up sky map. The viewer has to draw it in a way that a person can read, while keeping every promise about what the pixels mean.
+
+
+This document covers the viewer choices (Akeson et al. 2026a, 2026b; Calabretta & Greisen 2002; Greisen et al. 2006), the time-series and spectrum interface, the stretch and colour decisions, the validation targets, and the operational behaviour that keeps the tool honest when the archive is unavailable.
+
+
+THE FRONT-END STACK
+
+
+The client is React 19 with TypeScript, Vite, and Tailwind CSS. The Worker is Hono. The app uses a small set of dependencies: lucide-react for icons, motion for a few transitions, and react-router for the guide and tool pages. There is no charting library, no mapping library, and no general-purpose FITS viewer embedded in the page.
+
+
+That was deliberate. The core view is a single FITS cutout, not a multi-survey sky atlas. A tool such as Aladin Lite is excellent at HiPS surveys, catalogue overlays, footprints, and coordinate grids. It would be the right choice for a browse-the-sky product. It is not the right choice for a native detector frame whose pixel coordinates map to wavelength through a FITS lookup table. I evaluated Aladin Lite and kept it as an external cross-check link rather than embedding it.
+
+
+The custom canvas gives me direct control over the exact FITS plane being drawn, the pixel-to-sky and pixel-to-wavelength mapping, the flag-bit colour mapping, the catalogue projection onto the detector WCS, the provenance badge, and the error states. It also keeps the bundle small and the interaction immediate.
+
+
+THE VIEWER
+
+
+The browser parses the FITS file (Hanisch et al. 2001; Calabretta & Greisen 2002) with a dependency-free reader. It reads the primary header, the image blocks, the binary tables, the WCS-WAVE table, and the FITS statistics. It supports 2D images, 3D PSF planes, FLAGS, and WCS-WAVE. It does not decode Rice-compressed products, and it caps local files at 512 MB so a user cannot accidentally freeze the tab.
+
+
+The main canvas draws the selected plane. The default is IMAGE, but the user can switch to VARIANCE, FLAGS, or ZODI. Each layer has its own normalization:
+
+
+- IMAGE uses a fixed iridescent lookup table with a sampled minimum and maximum stretch.
+- VARIANCE uses a violet-to-cyan scale.
+- FLAGS maps the lowest set bit to a hue and leaves zero as near-black.
+- ZODI uses a blue-to-cyan scale.
+
+
+The viewer does not invent a ghost or stray-light layer. The FLAGS view shows the raw bits. The status line counts the bits and shows the first few counts. If the archive flags a pixel, the viewer shows the flag. It does not reinterpret it.
+
+
+The canvas also handles the pixel probe. Moving the pointer converts the canvas position to a detector pixel, then to sky coordinates through the FITS WCS, and to wavelength through WCS-WAVE. The readout shows RA and Dec, wavelength, bandwidth, the current layer value, and the pixel scale. Clicking sets the spectrum target.
+
+
+The provenance badge is always in the top-right of the frame. It links to the exact IRSA product, names the release and detector, shows the observation time, and marks a cached cutout. That badge is not decoration. It is the audit trail.
+
+
+The viewer has explicit empty and error states. If IRSA does not return a cutout, the frame says so and offers a retry. It does not draw a placeholder sky. If the cutout is cached, it says cached IRSA cutout rather than pretending it is live.
+
+
+THE PIXEL PROBE
+
+
+The pixel probe is the most important interaction in the app, and it is worth explaining what it actually checks. A click becomes a detector coordinate. The WCS turns that into RA and Dec. The inverse WCS turns those coordinates back into a pixel. If the forward and inverse transforms disagree by more than a fraction of a pixel, the probe shows a warning. That catches a bad SIP coefficient or a header that does not match the data.
+
+
+The probe does not interpolate. It reports the nearest pixel and says so. For an undersampled PSF, interpolation would create a smooth value that the data do not support. The probe also reports the FLAGS bits at that pixel and the ZODI value, so the measurement is attached to the same pixel the image is showing.
+
+
+The round-trip check is not a substitute for a full astrometric solution. It is a consistency check on the header and the transform. A real validation would compare the WCS against Gaia sources across the field, which is a separate and more expensive test.
+
+
+TIME SERIES IS A SCRUBBER, NOT A MOVIE
+
+
+The time-series interface is a visit scrubber. The user can step through the real exposure groups returned by SIA2 or drag a range slider. The frame updates to the selected visit and detector. The URL records the visit ID so a link can reopen the same frame.
+
+
+That is enough to inspect variability and cadence, but it is not a movie. I did not build playback, ping-pong, or a difference mode. Those are useful features, but they imply a level of temporal alignment and artifact handling that the current data path does not provide. A difference toggle on a single visit would be misleading.
+
+
+If I add playback, it should render from a preflighted sequence: same field, same detector, same WCS, same stretch, and a clear timestamp overlay. It should also state the cadence gaps. A smooth 30 fps video would hide the fact that the visits are months apart. The point of the scrubber is to show the real sampling, not to make it feel continuous.
+
+
+THE SPECTRUM IS DELIBERATELY UGLY
+
+
+The spectrum panel is a hand-drawn SVG, not Plotly or uPlot (Greisen et al. 2006; Akeson et al. 2026a). The x-axis is logarithmic in wavelength. The y-axis is a percentile stretch of the measured aperture flux. Each detector segment gets its own line and colour. Flagged samples are pink dots. The panel reports the number of samples, the detector segments, and the flagged count.
+
+
+The server extracts the spectrum from a 24 by 2,040 pixel strip (Greisen et al. 2006; Akeson et al. 2026a). It averages five pixels across the aperture row by row, reads the wavelength and bandwidth from WCS-WAVE, and returns only finite samples. It does not interpolate across gaps. It does not merge the six arrays into one continuous curve.
+
+
+That choice keeps the chart honest but less pretty. A continuous 0.75 to 5 micron curve would require interpolation and gap filling. The app would then have to label which parts were measured and which were inferred. I preferred the segmented chart with visible gaps. It is the difference between a measurement and an illustration.
+
+
+The chart is linked to the image in a simple way: clicking the image sets the spectrum target, and the readout shows the wavelength under the cursor. It is not full linked brushing across every band and epoch. That would be a larger state model, and it would need a real cube.
+
+
+STRETCHING AND COLOUR
+
+
+The local FITS lab exposes three stretches: asinh, linear, and log. Asinh is the default because it handles the high dynamic range of infrared images without crushing the faint structure. The main viewer uses a fixed perceptual lookup table rather than a user-selected stretch. The goal there is a consistent, readable false-colour image, not a photometric display.
+
+
+I did not build an RGB compositor. Mapping 102 bands to RGB is a science-visualization project of its own. A fixed blue, green, and red channel integration would imply a colour truth that the data do not have. The BandExplorer shows the nominal band colours and wavelengths. It is a planning view, not a rendered composite.
+
+
+If I add RGB, it should let the user choose three bands or three wavelength windows, show the exact ranges, and preserve the per-channel stretch. It should not default to a misleading true-colour label.
+
+
+VALIDATION: FOUR OBJECTS, FOUR HARD TRUTHS
+
+
+The research plan named four useful archetypes. I used them as validation thinking, not as claims that the current viewer detects them.
+
+
+Barnard's Star has a proper motion of about 10.3 arcsec per year (Barnard 1916). Over a two-year baseline that is roughly 20 arcsec, or about three SPHEREx pixels. The visit series can show the field at different epochs, but the current viewer does not shift-and-stack or measure a proper motion.
+
+
+WISE 0855 is a very faint Y dwarf with a large proper motion (Luhman 2014). It is a stacking and sensitivity test, not a single-epoch detection guarantee. The tool can show the real cutout and flags. It does not claim a detection.
+
+
+Epsilon Indi B is a brown-dwarf pair separated by roughly 0.7 to 1.5 arcsec. The pair is unresolved at 6.15 arcsec pixels. The tool can show a blended PSF and variability, not a resolved binary.
+
+
+RW Aur and R Dra are variables with timescales that can alias a six-month cadence. The visit scrubber shows the sampling. It cannot recover a period the cadence does not support.
+
+
+The point of these examples is to keep the claims aligned with the data. A viewer that shows real frames is useful even when it cannot solve the science case. Pretending otherwise would be the failure mode. It is also the fastest way to make a tool that looks clever and teaches the wrong thing.
+
+
+TESTING AND CI
+
+
+The current verification is:
+
+
+- npm run typecheck
+- npm run build
+- A manual check that the default field loads the cached SIA index and D2 cutout.
+- A manual check that the live find and cutout routes return real data when IRSA is healthy.
+
+
+I did not add automated tests. That is a gap, not a virtue. The tests I would add first are:
+
+
+1. A FITS fixture test. Parse a small real cutout and assert the block names, dimensions, WCS keywords, and WCS-WAVE values.
+2. A grouping test. Feed a fixed SIA CSV and assert the visit groups, detector lists, and time ordering.
+3. An allowlist test. Assert that a non-IRSA host, a non-SPHEREx path, a port, user information, and traversal are rejected.
+4. A golden image test. Render a known cutout with a fixed stretch and compare a small PNG hash.
+5. An astrometry test. Solve a cutout with Astrometry.net and assert the residual is below 0.1 pixel.
+
+
+The last one is the most valuable and the most expensive (Lang et al. 2010; Astropy Collaboration 2022). It needs a local solve and a stable reference. It is the right test for a tool that claims to preserve the WCS.
+
+
+DOCUMENTATION AND CITATION
+
+
+The README documents the real pipeline, the backend behaviour, the cached default data, and the limits. The in-app guide repeats the important parts for users who never open the repository. It says what is real, what is not claimed, and how the URL state works.
+
+
+The data citation is separate from the app citation (Akeson et al. 2026a, 2026b; Crill et al. 2020; Bock et al. 2026). IRSA asks users to cite the DR1 spectral images (DOI 10.26131/IRSA678) and the all-sky cube (DOI 10.26131/IRSA679), and to include the SPHEREx acknowledgment:
+
+
+"This publication makes use of data products from the Spectro-Photometer for the History of the Universe, Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration."
+
+
+The app itself is not an official NASA, IPAC, or SPHEREx product. That disclaimer is in the README and should stay in any public deployment.
+
+
+I did not mint a DOI for the app. If it is released as a citable tool, Zenodo is the obvious route: tag a release, archive the source, and put the DOI in the README and the guide.
+
+
+OPERATIONS
+
+
+The operational model is simple:
+
+
+- /api/health reports liveness without touching IRSA.
+- Successful responses carry cache headers and a data-source header.
+- Upstream failures return a JSON error with a request ID.
+- SIA2 and catalogue failures trigger a 30-second cooldown.
+- The default field falls back to the bundled real SIA result and cutout.
+- The viewer shows an error and a retry button. It never substitutes a synthetic frame.
+
+
+The IRSA outage during the build was a useful test of that model. SIA2 and TAP were returning 502s while the cutout service and S3 were healthy. The default field still loaded from the bundled data. The northern and southern presets could not resolve visits because they had no cached index. The app reported the failure instead of drawing a model sky.
+
+
+That is the right behaviour for an archive tool. It is also a reminder that available is a dependency, not a property of the app. A status badge that only says the page loaded is not telling you very much.
+
+
+WHAT I WOULD DO NEXT
+
+
+In order:
+
+
+1. Add cached SIA indexes for the two non-default presets, so an IRSA discovery outage does not break them.
+2. Add the FITS fixture and allowlist tests.
+3. Add a Sesame name resolver and sexagesimal parsing.
+4. Add a server-side coadd job with background matching and a weight map.
+5. Add proper-motion shift-and-stack as a separate, validated job.
+6. Add a 102-channel cube builder only after the coadd and spectral mapping are solid.
+
+
+The order matters. The first two are reliability work. The next two are usability and science. The cube is last because it is the easiest to fake and the hardest to validate. That is not a comment on the technology. It is a comment on what a viewer can honestly promise.
+
+
+REFERENCES
+
+
+Akeson, R., Dubois-Felsmann, G. P., Crill, B. P., et al. 2026a. The SPHEREx Image and Spectrophotometry Processing Pipeline. ApJS, 285, 67. doi:10.3847/1538-4365/ae8843.
+Akeson, R., Faisst, A., Masters, D., et al. 2026b. SPHEREx Explanatory Supplement. SSDC-DP-017, version 2.1. Caltech/IPAC. https://irsa.ipac.caltech.edu/data/SPHEREx/docs/SPHEREx_Expsupp.pdf
+Bock, J. J., Aboobaker, A. M., Adamo, J., et al. 2026. The SPHEREx Satellite Mission. ApJ, 999, 139. doi:10.3847/1538-4357/ae2be2.
+Crill, B. P., Werner, M., Akeson, R., et al. 2020. SPHEREx: NASA's near-infrared spectrophotometric all-sky survey. Proc. SPIE, 11443, 114430I. doi:10.1117/12.2567224.
+Crill, B. P., Bach, Y. P., Bryan, S. A., et al. 2025. The SPHEREx Sky Simulator: Science Data Modeling for the First All-sky Near-infrared Spectral Survey. ApJS, 281, 10. doi:10.3847/1538-4365/ae04cc.
+Hanisch, R. J., Farris, A., Greisen, E. W., et al. 2001. Definition of the Flexible Image Transport System (FITS). A&A, 376, 359-380. doi:10.1051/0004-6361:20010923.
+Calabretta, M. R., & Greisen, E. W. 2002. Representations of celestial coordinates in FITS. A&A, 395, 1077-1122. doi:10.1051/0004-6361:20021327.
+Greisen, E. W., Calabretta, M. R., Valdes, F. G., & Allen, S. L. 2006. Representations of spectral coordinates in FITS. A&A, 446, 747-771. doi:10.1051/0004-6361:20053818.
+Lang, D., Hogg, D. W., Mierle, K., Blanton, M., & Roweis, S. 2010. Astrometry.net: Blind Astrometric Calibration of Arbitrary Astronomical Images. AJ, 139, 1782-1800. doi:10.1088/0004-6256/139/5/1782.
+Astropy Collaboration, Price-Whelan, A. M., Lim, P. L., et al. 2022. The Astropy Project: Sustaining and Growing a Community-oriented Open-source Project and the Latest Major Release (v5.0) of the Core Package. ApJ, 935, 167. doi:10.3847/1538-4357/ac7c74.
+Anderson, J., & King, I. R. 2000. Toward High-Precision Astrometry with WFPC2. I. Deriving an Accurate Point-Spread Function. PASP, 112, 1360-1382. doi:10.1086/316632.
+Barnard, E. E. 1916. A small star with large proper motion. AJ, 29, 181-183. doi:10.1086/104156.
+Luhman, K. L. 2014. Discovery of a 250 K Brown Dwarf at 2 pc from the Sun. ApJL, 786, L18. doi:10.1088/2041-8205/786/2/L18.
+Kelsall, T., Weiland, J. L., Franz, B. A., et al. 1998. The COBE Diffuse Infrared Background Experiment Search for the Cosmic Infrared Background. II. Model of the Interplanetary Dust Cloud. ApJ, 508, 44-73. doi:10.1086/306380.
+
+
+DATA AND DOCUMENTATION
+
+
+SPHEREx data products: https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products
+SPHEREx DR1: https://irsa.ipac.caltech.edu/data/SPHEREx/docs/overview_dr1.html
+IRSA SPHEREx: https://irsa.ipac.caltech.edu/Missions/spherex.html
+IRSA data use terms: https://irsa.ipac.caltech.edu/data_use_terms.html
+Aladin Lite: https://aladin.cds.unistra.fr/AladinLite/doc

@@ -5,11 +5,12 @@ import type { SourceHealth } from '../lib/real'
 import { Card } from './Card'
 
 const PENDING = [
-  { id: 'sia', label: 'SIA2 discovery', ok: false, latencyMs: null, detail: 'checking' },
+  { id: 'sia', label: 'SIA2 discovery · DR1', ok: false, latencyMs: null, detail: 'checking' },
+  { id: 'sia-qr3', label: 'SIA2 discovery · QR3', ok: false, latencyMs: null, detail: 'checking' },
   { id: 'tap', label: 'IRSA TAP', ok: false, latencyMs: null, detail: 'checking' },
   { id: 's3', label: 'S3 bucket', ok: false, latencyMs: null, detail: 'checking' },
   { id: 'hips', label: 'HIPS cube', ok: false, latencyMs: null, detail: 'checking' },
-]
+] as const
 
 export function SourceHealthPanel({ health, error }: { health: SourceHealth | null; error: string }) {
   const sources = health?.sources ?? PENDING
@@ -46,11 +47,11 @@ export function SourceHealthPanel({ health, error }: { health: SourceHealth | nu
         {error ||
           (health
             ? health.ok
-              ? 'All four real sources answered. No synthetic fallback is in use.'
+              ? 'Core discovery and pixel sources are reachable. No synthetic sky is drawn.'
               : health.discoveryOk
-                ? 'Discovery is up; one real source is degraded. The viewer keeps the last real frame visible.'
+                ? 'Discovery is up; a real pixel source is degraded. The viewer keeps the last real frame visible.'
                 : 'Discovery is down. Cached real fields remain visible; no synthetic sky is drawn.'
-            : 'Checking SIA2, TAP, S3 and HIPS from the Worker.')}
+            : 'Checking SIA2 DR1, SIA2 QR3, TAP, S3 and HIPS from the Worker.')}
       </p>
     </Card>
   )

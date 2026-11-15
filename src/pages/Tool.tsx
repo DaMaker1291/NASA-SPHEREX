@@ -373,7 +373,13 @@ export function Tool() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="outline">real cutouts</Badge>
               <Badge tone={loadingFind ? 'neutral' : findError ? 'outline' : 'violet'}>
-                {loadingFind ? 'querying IRSA' : findError ? 'IRSA unavailable' : `${visits.length} real visits`}
+                {loadingFind
+                  ? 'querying IRSA'
+                  : findError
+                    ? 'IRSA unavailable'
+                    : find?.coverage?.observed === false
+                      ? 'not observed yet'
+                      : `${visits.length} real visits`}
               </Badge>
               <Button
                 variant="outline"
@@ -445,6 +451,12 @@ export function Tool() {
               </Button>
             </div>
           </form>
+
+          {!loadingFind && !findError && find?.coverage?.observed === false ? (
+            <p className="mt-3 rounded-lg border border-line bg-card px-3 py-2 text-[12px] leading-relaxed text-ink-2">
+              {find.coverage.message}
+            </p>
+          ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <span className="caps mr-1 text-[9px] text-muted">Real coverage</span>

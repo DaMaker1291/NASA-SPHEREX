@@ -1,4 +1,5 @@
 import { imageStats, numberValue, parseFits, pixelScale, readImage, skyAt, textValue, waveAt, type FitsFile, type FitsHdu } from '../lib/fits'
+import { fetchS3Cutout } from './s3'
 import {
   ApiError,
   SingleFlight,
@@ -21,6 +22,7 @@ const MAX_CATALOG_BYTES = 2_000_000
 const MAX_CUTOUT_BYTES = 40 * 1024 * 1024
 const CUTOUT_CACHE_TTL_MS = 10 * 60_000
 const CUTOUT_CACHE_MAX_BYTES = 96 * 1024 * 1024
+const CUTOUT_PRIMARY_COOLDOWN_MS = 30_000
 const MAX_HDUS = 64
 const decoder = new TextDecoder('ascii')
 
@@ -53,6 +55,13 @@ export type IrsaFieldSummary = {
   estimatedBytes: number
 }
 
+export type IrsaCoverage = {
+  observed: boolean
+  message: string
+  checkedAt: string
+  releases: string[]
+}
+
 export type IrsaFind = {
   source: {
     label: string
@@ -62,6 +71,7 @@ export type IrsaFind = {
   field: { ra: number; dec: number; fov: number }
   observations: IrsaObservation[]
   summary?: IrsaFieldSummary
+  coverage?: IrsaCoverage
   cachedAt?: string
 }
 
@@ -181,9 +191,11 @@ function rememberCooldown(store: Map<string, number>, key: string, until: number
   }
   store.set(key, until)
 }
-const cutoutFlights = new SingleFlight<string, ArrayBuffer>(32)
-const cutoutCache = new Map<string, { buffer: ArrayBuffer; at: number; bytes: number }>()
+type CutoutBuffer = { buffer: ArrayBuffer; source: string }
+const cutoutFlights = new SingleFlight<string, CutoutBuffer>(32)
+const cutoutCache = new Map<string, { buffer: ArrayBuffer; source: string; at: number; bytes: number }>()
 let cutoutCacheBytes = 0
+let cutoutPrimaryUnavailableUntil = 0
 const spectrumCache = new TtlCache<string, SpectrumSegment>(600_000, 64)
 const spectrumFlights = new SingleFlight<string, SpectrumSegment>(32)
 
@@ -260,9 +272,30 @@ export async function findSpherex(ra: number, dec: number, fov: number): Promise
 
   return searchFlights.run(cacheKey, async () => {
     try {
-      const result = await querySia(ra, dec, fov, cacheKey)
+      // TAP is the zero-lag path: it includes newly ingested artifacts before
+      // SIA2's index catches up. SIA2 remains the availability fallback.
+      const [tapResult, siaResult] = await Promise.allSettled([
+        queryTap(ra, dec, fov),
+        querySia(ra, dec, fov, cacheKey),
+      ])
+      const tap = tapResult.status === 'fulfilled' ? tapResult.value : null
+      const sia = siaResult.status === 'fulfilled' ? siaResult.value : null
+      const result = (tap?.observations.length ? tap : null)
+        ?? (sia?.observations.length ? sia : null)
+        ?? tap
+        ?? sia
+      if (!result) {
+        const error = siaResult.status === 'rejected' ? siaResult.reason : tapResult.status === 'rejected' ? tapResult.reason : null
+        if (isInfrastructureFailure(error)) siaUnavailableUntil = Date.now() + UPSTREAM_COOLDOWN_MS
+        rememberCooldown(siaCooldowns, cacheKey, Date.now() + SIA_COOLDOWN_MS)
+        const stale = await lastGoodResult(cacheKey)
+        if (stale) return stale
+        throw error instanceof Error ? error : new ApiError(502, 'Both IRSA TAP and SIA2 failed.', 'UPSTREAM_UNAVAILABLE')
+      }
       siaCooldowns.delete(cacheKey)
       siaUnavailableUntil = 0
+      searchCache.set(cacheKey, result)
+      if (result.observations.length) rememberLastGood(cacheKey, result)
       return result
     } catch (error) {
       rememberCooldown(siaCooldowns, cacheKey, Date.now() + SIA_COOLDOWN_MS)
@@ -303,13 +336,13 @@ function parseSiaHtml(text: string): Array<Record<string, string>> {
   return rows
 }
 
-async function fetchSiaRows(ra: number, dec: number): Promise<Array<Record<string, string>>> {
+async function fetchSiaRows(ra: number, dec: number, collection: string): Promise<Array<Record<string, string>>> {
   // SIA is a coverage query: ask for products whose footprint overlaps the
   // target point, not every product inside the display FOV. A 0.02-degree
   // cone is enough for a valid cutout and avoids enormous SIA result sets.
   const radius = 0.02
   const base = new URLSearchParams({
-    COLLECTION: 'spherex_dr1',
+    COLLECTION: collection,
     POS: `circle ${ra.toFixed(6)} ${dec.toFixed(6)} ${radius.toFixed(4)}`,
     MAXREC: '300',
   })
@@ -327,8 +360,7 @@ async function fetchSiaRows(ra: number, dec: number): Promise<Array<Record<strin
     const text = await readTextLimited(response, MAX_SIA_BYTES)
     if (!/^\s*</.test(text)) {
       const rows = parseCsv(text)
-      if (rows.length) return rows
-      throw new Error('IRSA SIA2 CSV had no rows.')
+      return rows
     }
     return parseSiaHtml(text)
   } catch (error) {
@@ -345,9 +377,7 @@ async function fetchSiaRows(ra: number, dec: number): Promise<Array<Record<strin
     )
     await assertUpstreamOk(response, 'IRSA SIA2')
     const text = await readTextLimited(response, MAX_SIA_HTML_BYTES)
-    const rows = parseSiaHtml(text)
-    if (!rows.length) throw new ApiError(502, 'IRSA returned an empty SIA2 table.', 'NO_ROWS')
-    return rows
+    return parseSiaHtml(text)
   } catch (htmlError) {
     if (csvError instanceof ApiError && csvError.status === 503) throw csvError
     if (htmlError instanceof ApiError) throw htmlError
@@ -355,9 +385,161 @@ async function fetchSiaRows(ra: number, dec: number): Promise<Array<Record<strin
   }
 }
 
+const SIA_COLLECTIONS = [
+  { id: 'spherex_dr1', label: 'IRSA SIA2 · SPHEREx DR1' },
+  { id: 'spherex_dr1_deep', label: 'IRSA SIA2 · SPHEREx DR1 deep' },
+  { id: 'spherex_qr3', label: 'IRSA SIA2 · SPHEREx QR3 · failover' },
+  { id: 'spherex_qr3_deep', label: 'IRSA SIA2 · SPHEREx QR3 deep · failover' },
+  { id: 'spherex_dr1_cube', label: 'IRSA SIA2 · SPHEREx DR1 cube · failover' },
+] as const
+
+const TAP = `${IRSA}/TAP/sync`
+
+function emptyCoverage() {
+  return {
+    observed: false,
+    message: 'Region not yet observed in the current SPHEREx DR1/QR3 releases.',
+    checkedAt: new Date().toISOString(),
+    releases: ['DR1', 'QR3'],
+  } satisfies IrsaCoverage
+}
+
+function emptyFind(ra: number, dec: number, fov: number, sourceLabel: string, query: string): IrsaFind {
+  return {
+    source: { label: sourceLabel, url: IRSA, query },
+    field: { ra, dec, fov },
+    observations: [],
+    summary: summarizeObservations([]),
+    coverage: emptyCoverage(),
+  }
+}
+
+function rowValue(row: Record<string, string>, ...names: string[]) {
+  for (const name of names) {
+    const exact = row[name]
+    if (exact !== undefined && exact !== '') return exact
+    const found = Object.keys(row).find((key) => key.toLowerCase() === name.toLowerCase())
+    if (found && row[found] !== '') return row[found]
+  }
+  return ''
+}
+
+function timeToMjd(value: string) {
+  const numericTime = Number(value)
+  if (Number.isFinite(numericTime) && numericTime > 10000) return numericTime
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed / 86400000 + 40587 : Number.NaN
+}
+
+function tapProductUri(raw: string) {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (/^https?:\/\//i.test(trimmed)) {
+    try { return validateIrsaProductUri(trimmed) } catch { return null }
+  }
+  const path = trimmed
+    .replace(/^\/+/, '')
+    .replace(/^irsa\.ipac\.caltech\.edu\//i, '')
+  try { return validateIrsaProductUri(`https://irsa.ipac.caltech.edu/${path}`) } catch { return null }
+}
+
+async function queryTap(ra: number, dec: number, fov: number): Promise<IrsaFind> {
+  const query = [
+    'SELECT TOP 500',
+    'a.uri AS uri,',
+    'p.time_bounds_lower AS time_lower,',
+    'p.time_bounds_upper AS time_upper,',
+    'p.energy_bandpassname AS band,',
+    'p.provenance_version AS release,',
+    'p.planeid AS planeid',
+    'FROM spherex.artifact a',
+    'JOIN spherex.plane p ON a.planeid = p.planeid',
+    `WHERE 1 = CONTAINS(POINT('ICRS', ${ra.toFixed(6)}, ${dec.toFixed(6)}), p.poly)`,
+    'ORDER BY p.time_bounds_lower',
+  ].join(' ')
+  const params = new URLSearchParams({ QUERY: query, LANG: 'ADQL', FORMAT: 'csv', MAXREC: '500' })
+  const response = await fetchWithRetry(
+    `${TAP}?${params.toString()}`,
+    { headers: { Accept: 'text/csv' } },
+    { attempts: 1, timeoutMs: 12_000, totalTimeoutMs: 16_000 },
+  )
+  await assertUpstreamOk(response, 'IRSA TAP')
+  const text = await readTextLimited(response, MAX_SIA_BYTES)
+  if (/^\s*</.test(text)) throw new ApiError(502, 'IRSA TAP returned a non-CSV response.', 'BAD_UPSTREAM_RESPONSE')
+  const rows = parseCsv(text)
+  const byTime = new Map<string, IrsaObservation>()
+
+  for (const row of rows) {
+    const uri = tapProductUri(rowValue(row, 'uri', 'access_url'))
+    if (!uri) continue
+    const file = uri.split('/').pop() ?? ''
+    const detector = detectorFromFile(file)
+    if (!detector) continue
+    const mjd = timeToMjd(rowValue(row, 'time_lower', 'time_bounds_lower', 't_min'))
+    if (!Number.isFinite(mjd)) continue
+    const bandValue = rowValue(row, 'band', 'energy_bandpassname') || detector
+    const obsid = visitFromFile(file, detector)
+    const key = `${mjd.toFixed(6)}|${obsid}`
+    const current = byTime.get(key) ?? {
+      id: key,
+      mjd,
+      iso: mjdIso(mjd),
+      obsid,
+      release: (rowValue(row, 'release', 'provenance_version') || releaseFromUri(uri)).toUpperCase(),
+      detectors: [],
+    } satisfies IrsaObservation
+    if (!current.detectors.some((item) => item.detector === detector)) {
+      current.detectors.push({ detector, band: bandValue.replace(/^SPHEREx-/i, ''), uri, file })
+    }
+    byTime.set(key, current)
+  }
+
+  const observations = [...byTime.values()]
+    .map((observation) => ({
+      ...observation,
+      detectors: observation.detectors.sort((a, b) => a.detector.localeCompare(b.detector)),
+    }))
+    .sort((a, b) => a.mjd - b.mjd)
+
+  if (!observations.length) return emptyFind(ra, dec, fov, 'IRSA TAP · SPHEREx artifacts', 'spherex.artifact + spherex.plane · CONTAINS point · no rows')
+  return {
+    source: { label: 'IRSA TAP · SPHEREx artifacts', url: IRSA, query: 'spherex.artifact + spherex.plane · CONTAINS point' },
+    field: { ra, dec, fov },
+    observations,
+    summary: summarizeObservations(observations),
+  }
+}
+
 async function querySia(ra: number, dec: number, fov: number, cacheKey: string): Promise<IrsaFind> {
-    const rows = await fetchSiaRows(ra, dec)
+    let rows: Array<Record<string, string>> = []
+    let sourceLabel: string = SIA_COLLECTIONS[0].label
+    let sourceCollection: string = SIA_COLLECTIONS[0].id
+    let lastError: unknown = null
+    let answeredEmpty = false
+
+    for (const collection of SIA_COLLECTIONS) {
+      try {
+        const candidate = await fetchSiaRows(ra, dec, collection.id)
+        if (!candidate.length) {
+          answeredEmpty = true
+          continue
+        }
+        rows = candidate
+        sourceLabel = collection.label
+        sourceCollection = collection.id
+        lastError = null
+        break
+      } catch (error) {
+        lastError = error
+      }
+    }
+
     if (!rows.length) {
+      // A successful empty SIA2 response is a coverage result. If another
+      // collection failed, do not turn an availability problem into a false
+      // "not observed" claim.
+      if (answeredEmpty && !lastError) return emptyFind(ra, dec, fov, `${sourceLabel} · no coverage`, `${sourceCollection} · POS circle · no rows`)
+      if (lastError instanceof ApiError) throw lastError
       throw new ApiError(502, 'IRSA returned no SIA2 products for that field.', 'NO_ROWS')
     }
 
@@ -402,8 +584,12 @@ async function querySia(ra: number, dec: number, fov: number, cacheKey: string):
       }))
       .sort((a, b) => a.mjd - b.mjd)
 
+    if (!observations.length) {
+      throw new ApiError(502, `${sourceLabel} returned no usable spectral images for that field.`, 'NO_ROWS')
+    }
+
     const data: IrsaFind = {
-      source: { label: 'IRSA SIA2 · SPHEREx DR1', url: IRSA, query: 'spherex_dr1 · POS circle · MAXREC 300' },
+      source: { label: sourceLabel, url: IRSA, query: `${sourceCollection} · POS circle · MAXREC 300` },
       field: { ra, dec, fov },
       observations,
       summary: summarizeObservations(observations),
@@ -561,10 +747,10 @@ function readCutoutCache(key: string) {
     cutoutCacheBytes -= entry.bytes
     return null
   }
-  return entry.buffer
+  return { buffer: entry.buffer, source: entry.source }
 }
 
-function storeCutoutCache(key: string, buffer: ArrayBuffer) {
+function storeCutoutCache(key: string, buffer: ArrayBuffer, source: string) {
   const bytes = buffer.byteLength
   const previous = cutoutCache.get(key)
   if (previous) {
@@ -579,20 +765,51 @@ function storeCutoutCache(key: string, buffer: ArrayBuffer) {
     if (entry) cutoutCacheBytes -= entry.bytes
     cutoutCache.delete(oldest.value)
   }
-  cutoutCache.set(key, { buffer, at: Date.now(), bytes })
+  cutoutCache.set(key, { buffer, source, at: Date.now(), bytes })
   cutoutCacheBytes += bytes
+}
+
+async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, size: string): Promise<CutoutBuffer> {
+  let primaryError: unknown = null
+  if (Date.now() >= cutoutPrimaryUnavailableUntil) {
+    try {
+      const buffer = await fetchCutout(uri, ra, dec, size)
+      cutoutPrimaryUnavailableUntil = 0
+      return { buffer, source: 'IRSA SPHEREx cutout service' }
+    } catch (error) {
+      primaryError = error
+      if (error instanceof ApiError && error.status >= 500) {
+        cutoutPrimaryUnavailableUntil = Date.now() + CUTOUT_PRIMARY_COOLDOWN_MS
+      }
+    }
+  } else {
+    primaryError = new Error('IRSA cutout service is cooling down after a failed request.')
+  }
+
+  try {
+    const direct = await fetchS3Cutout(uri, ra, dec, size)
+    return { buffer: direct.buffer, source: `NASA IRSA S3 · direct ${direct.key.split('/')[0].toUpperCase()} product` }
+  } catch (s3Error) {
+    const primaryDetail = primaryError instanceof Error ? primaryError.message : 'IRSA cutout failed.'
+    const s3Detail = s3Error instanceof Error ? s3Error.message : 'S3 product failed.'
+    throw new ApiError(
+      502,
+      `Both real cutout sources failed. IRSA: ${primaryDetail} S3: ${s3Detail}`,
+      'UPSTREAM_UNAVAILABLE',
+    )
+  }
 }
 
 async function getCutoutBuffer(uri: string, ra: number, dec: number, size: string) {
   const key = `${uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${size}`
   const cached = readCutoutCache(key)
-  if (cached) return { buffer: cached, cached: true }
-  const buffer = await cutoutFlights.run(key, async () => {
-    const fresh = await fetchCutout(uri, ra, dec, size)
-    storeCutoutCache(key, fresh)
+  if (cached) return { ...cached, cached: true }
+  const result = await cutoutFlights.run(key, async () => {
+    const fresh = await fetchCutoutWithFallback(uri, ra, dec, size)
+    storeCutoutCache(key, fresh.buffer, fresh.source)
     return fresh
   })
-  return { buffer, cached: false }
+  return { ...result, cached: false }
 }
 
 export async function getCutout(uri: string, ra: number, dec: number, fov: number, sizeOverride?: string) {
@@ -602,7 +819,14 @@ export async function getCutout(uri: string, ra: number, dec: number, fov: numbe
   }
   const size = clamp(fov, 0.02, 0.9).toFixed(3)
   const result = await getCutoutBuffer(safeUri, ra, dec, sizeOverride ?? `${size}d`)
-  return { buffer: result.buffer, size: Number(size), sizeLabel: sizeOverride ?? `${size}d`, uri: safeUri, cached: result.cached }
+  return {
+    buffer: result.buffer,
+    size: Number(size),
+    sizeLabel: sizeOverride ?? `${size}d`,
+    uri: safeUri,
+    source: result.source,
+    cached: result.cached,
+  }
 }
 
 function hduByName(fits: FitsFile, name: string) {

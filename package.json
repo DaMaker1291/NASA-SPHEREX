@@ -9,6 +9,9 @@
     "start": "node server.mjs",
     "preview": "vite preview",
     "stress": "node scripts/stress.mjs",
+    "test": "node --experimental-strip-types --test tests/spherex-math.test.mjs tests/spherex-mirror.test.mjs",
+    "mirror:default": "node scripts/mirror-spherex.mjs",
+    "mirror:verify": "node scripts/mirror-spherex.mjs --verify",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
@@ -31,6 +34,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.1.0",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.9.0",
     "vite": "^8.3.0",

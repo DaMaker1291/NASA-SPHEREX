@@ -1,5 +1,7 @@
 // SPHEREx Explorer frontend.
 // Real IRSA frames are loaded through the same-origin backend. Local PNGs stay local.
+import { angularSeparation, luma, normalizeRa, robustChangeThreshold, unwrapRa } from './math.js';
+
 const $ = (id) => document.getElementById(id);
 const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const el = {
@@ -19,10 +21,12 @@ const el = {
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomNative: $('zoomNative'), resetView: $('resetView'), zoomLevel: $('zoomLevel'), copyLink: $('copyLink'),
   hdToggle: $('hdToggle'), hdToggleLab: $('hdToggleLab'), stageResolution: $('stageResolution'), fullscreen: $('fullscreen'),
   appToggle: $('appToggle'), navMapApp: $('navMapApp'), appToolbar: $('appToolbar'), appHome: $('appHome'),
+  appLive: $('appLive'), appLiveText: $('appLiveText'),
   appDetails: $('appDetails'), appSequence: $('appSequence'), appTools: $('appTools'), appShare: $('appShare'), appExit: $('appExit'),
   appDetailsClose: $('appDetailsClose'), appToolsClose: $('appToolsClose'), sequenceClose: $('sequenceClose'), appScrim: $('appScrim'),
   mapSearchForm: $('mapSearchForm'), mapSearch: $('mapSearch'), navBack: $('navBack'), navForward: $('navForward'), minimapToggle: $('minimapToggle'),
   skyMinimapWrap: $('skyMinimapWrap'), skyMinimap: $('skyMinimap'), minimapField: $('minimapField'),
+  toolsSkyImage: $('toolsSkyImage'), toolsSkyTitle: $('toolsSkyTitle'), toolsSkyMeta: $('toolsSkyMeta'),
   mapCursor: $('mapCursor'), mapScaleBar: $('mapScaleBar'), mapScaleText: $('mapScaleText'), mapCompass: $('mapCompass'), mapHelp: $('mapHelp'),
   paletteSelect: $('paletteSelect'), stretchSelect: $('stretchSelect'), sharpPixels: $('sharpPixels'),
   bandRail: $('bandRail'), wavelengthBandName: $('wavelengthBandName'), wavelengthRange: $('wavelengthRange'),
@@ -109,6 +113,7 @@ let minimapPointer = null;
 let constellationRequest = 0, constellationData = null;
 let ownedObjectUrls = [];
 let toastTimeout = null, loadingReal = false, sky = null, realBadge = 'LIVE IRSA • REAL FITS';
+let loadRequest = 0, activeLoadController = null;
 
 function notify(message) {
   el.toast.textContent = message;
@@ -221,6 +226,7 @@ function openAppSheet(name) {
   if (wasOpen) return;
   document.body.classList.add(sheet.className);
   el[sheet.button]?.setAttribute('aria-expanded', 'true');
+  if (name === 'tools') updateToolsSkyContext();
   if (el.appScrim) el.appScrim.hidden = false;
   const close = name === 'details' ? el.appDetailsClose : name === 'tools' ? el.appToolsClose : el.sequenceClose;
   close?.focus({ preventScroll: true });
@@ -312,9 +318,24 @@ function readField() {
   return { ra, dec, fov };
 }
 
-function releaseImages() {
-  ownedObjectUrls.forEach((url) => URL.revokeObjectURL(url));
-  ownedObjectUrls = [];
+function releaseImages(keep = new Set()) {
+  ownedObjectUrls = ownedObjectUrls.filter((url) => {
+    if (keep.has(url)) return true;
+    URL.revokeObjectURL(url);
+    return false;
+  });
+}
+
+function discardFrameObjects(list) {
+  const current = new Set(frames.map((frame) => frame.objectUrl).filter(Boolean));
+  for (const frame of list) {
+    const url = frame.objectUrl;
+    if (!url || current.has(url)) continue;
+    URL.revokeObjectURL(url);
+    ownedObjectUrls = ownedObjectUrls.filter((item) => item !== url);
+    frame.objectUrl = '';
+    frame.src = frame.mirrorSrc || '';
+  }
 }
 
 function stopPlayback() {
@@ -595,25 +616,7 @@ async function loadConstellation(primary, ra, dec) {
   }
 }
 
-function angularSeparation(ra1, dec1, ra2, dec2) {
-  if (![ra1, dec1, ra2, dec2].every(Number.isFinite)) return null;
-  const rad = Math.PI / 180;
-  const a = Math.sin((dec2 - dec1) * rad / 2) ** 2 +
-    Math.cos(dec1 * rad) * Math.cos(dec2 * rad) * Math.sin((ra2 - ra1) * rad / 2) ** 2;
-  return 2 * Math.asin(Math.min(1, Math.sqrt(a))) / rad;
-}
-
 // Sky navigation: map-like zoom, pan, point-to-sky conversion and history.
-function normalizeRa(ra) {
-  return ((ra % 360) + 360) % 360;
-}
-
-function unwrapRa(ra, reference) {
-  let value = ra;
-  while (value - reference > 180) value -= 360;
-  while (value - reference < -180) value += 360;
-  return value;
-}
 
 function activeFrameAnalysis() {
   const frame = frames[frameIndex];
@@ -762,6 +765,106 @@ function minimapCoordinates(point) {
   };
 }
 
+// The minimap background is the official NASA/JPL-Caltech SPHEREx all-sky
+// mosaic (May-December 2025), in a Galactic equirectangular projection. It is
+// a real archive product, stored locally so the context map still works when
+// IRSA is unreachable. The equatorial grid and target markers are projected
+// onto it; no sky imagery is generated or interpolated.
+const GALACTIC_AXIS = {
+  x: [-0.0548755604162154, -0.8734370902348850, -0.4838350155487132],
+  y: [0.4941094278755837, -0.4448296299600112, 0.7469822444972180],
+  z: [-0.8676661490190047, -0.1980763734312015, 0.4559837761750669]
+};
+const allSky = { pixels: null, width: 0, height: 0, background: null, loaded: false, failed: false };
+
+function equatorialToGalactic(raDegrees, decDegrees) {
+  const ra = raDegrees * Math.PI / 180;
+  const dec = decDegrees * Math.PI / 180;
+  const cosDec = Math.cos(dec);
+  const ex = cosDec * Math.cos(ra);
+  const ey = cosDec * Math.sin(ra);
+  const ez = Math.sin(dec);
+  const dot = (axis) => ex * axis[0] + ey * axis[1] + ez * axis[2];
+  const longitude = Math.atan2(dot(GALACTIC_AXIS.y), dot(GALACTIC_AXIS.x)) * 180 / Math.PI;
+  const latitude = Math.asin(Math.max(-1, Math.min(1, dot(GALACTIC_AXIS.z)))) * 180 / Math.PI;
+  return { l: (longitude + 360) % 360, b: latitude };
+}
+
+function buildAllSkyBackground() {
+  if (!allSky.pixels) return null;
+  const outWidth = el.skyMinimap.width || 420;
+  const outHeight = el.skyMinimap.height || 210;
+  const canvas = document.createElement('canvas');
+  canvas.width = outWidth;
+  canvas.height = outHeight;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  const output = context.createImageData(outWidth, outHeight);
+  const source = allSky.pixels.data;
+  for (let y = 0; y < outHeight; y += 1) {
+    const dec = 90 - ((y + 0.5) / outHeight) * 180;
+    for (let x = 0; x < outWidth; x += 1) {
+      const ra = normalizeRa((1 - (x + 0.5) / outWidth) * 360);
+      const galactic = equatorialToGalactic(ra, dec);
+      const sx = Math.min(allSky.width - 1, Math.floor((((180 - galactic.l) % 360 + 360) % 360) / 360 * allSky.width));
+      const sy = Math.min(allSky.height - 1, Math.max(0, Math.floor((90 - galactic.b) / 180 * allSky.height)));
+      const from = (sy * allSky.width + sx) * 4;
+      const to = (y * outWidth + x) * 4;
+      output.data[to] = source[from];
+      output.data[to + 1] = source[from + 1];
+      output.data[to + 2] = source[from + 2];
+      output.data[to + 3] = 255;
+    }
+  }
+  context.putImageData(output, 0, 0);
+  return canvas;
+}
+
+function initAllSkyMap() {
+  const image = new Image();
+  image.decoding = 'async';
+  image.onload = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Canvas is unavailable.');
+      context.drawImage(image, 0, 0);
+      allSky.pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      allSky.width = canvas.width;
+      allSky.height = canvas.height;
+      allSky.background = buildAllSkyBackground();
+      allSky.loaded = Boolean(allSky.background);
+      drawMinimap();
+    } catch {
+      allSky.failed = true;
+      drawMinimap();
+    }
+  };
+  image.onerror = () => { allSky.failed = true; drawMinimap(); };
+  image.src = 'assets/spherex-allsky-2025.jpg';
+}
+
+function updateToolsSkyContext() {
+  if (!el.toolsSkyImage) return;
+  const frame = frames[frameIndex];
+  const source = frame?.objectUrl || frame?.src || '';
+  el.toolsSkyImage.style.backgroundImage = source ? `url("${source.replace(/"/g, '%22')}")` : '';
+  el.toolsSkyImage.classList.toggle('is-empty', !source);
+  el.toolsSkyTitle.textContent = frame
+    ? `${frame.date || frame.label}${frame.detector ? ` · ${frame.detector}` : ''}`
+    : 'No real visit loaded';
+  if (!frame) {
+    el.toolsSkyMeta.textContent = 'Choose a field to see it beside the tools.';
+    return;
+  }
+  const center = currentSkyCenter();
+  el.toolsSkyMeta.textContent = center
+    ? `RA ${center.ra.toFixed(3)}° · Dec ${center.dec.toFixed(3)}° · ${(Number(frame.fov) || 0.3).toFixed(2)}° field`
+    : 'The current visit has no measured WCS centre.';
+}
+
 function drawMinimap() {
   const canvas = el.skyMinimap;
   const context = canvas.getContext('2d');
@@ -769,7 +872,10 @@ function drawMinimap() {
   const width = canvas.width;
   const height = canvas.height;
   context.clearRect(0, 0, width, height);
-  context.fillStyle = '#050b13';
+  if (allSky.background) context.drawImage(allSky.background, 0, 0, width, height);
+  else { context.fillStyle = '#050b13'; context.fillRect(0, 0, width, height); }
+  // A light scrim keeps the coordinate labels readable over the real mosaic.
+  context.fillStyle = 'rgba(3, 7, 12, .22)';
   context.fillRect(0, 0, width, height);
   context.strokeStyle = 'rgba(105, 142, 176, .18)';
   context.fillStyle = 'rgba(137, 164, 190, .55)';
@@ -1271,26 +1377,31 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 45_000) {
   });
 }
 
-async function loadFrameData(frame) {
+async function loadFrameData(frame, { detached = false, timeoutMs = 45_000 } = {}) {
   if (frame.loading || frame.objectUrl) return;
   frame.loading = true;
   try {
     let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      response = await fetchWithTimeout(frame.src, { headers: { Accept: 'image/png' } }, 45_000);
+      response = await fetchWithTimeout(frame.src, { headers: { Accept: 'image/png' } }, timeoutMs);
       if (response.ok || ![429, 503, 504].includes(response.status) || attempt === 2) break;
       await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
     }
     if (!response?.ok) throw new Error(`FITS frame returned ${response?.status ?? 'no response'}.`);
     const analysis = readFrameHeaders(response);
     const bytes = await response.arrayBuffer();
-    if (!frames.includes(frame)) return;
+    if (!detached && !frames.includes(frame)) return;
+    let checksum = '';
     try {
       const digest = await crypto.subtle.digest('SHA-256', bytes);
-      frame.sha256 = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+      checksum = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
     } catch {
-      frame.sha256 = '';
+      checksum = '';
     }
+    if (frame.expectedSha256 && checksum !== frame.expectedSha256) {
+      throw new Error('Mirror checksum mismatch; refusing to display unverified data.');
+    }
+    frame.sha256 = checksum;
     const blob = new Blob([bytes], { type: 'image/png' });
     const objectUrl = URL.createObjectURL(blob);
     ownedObjectUrls.push(objectUrl);
@@ -1300,39 +1411,46 @@ async function loadFrameData(frame) {
     frame.src = objectUrl;
     frame.loadError = '';
     if (frame.thumbImg) frame.thumbImg.src = objectUrl;
-    frame.displayAnalysis = analysis;
+    frame.displayAnalysis = analysis.measured ? analysis : frame.mirrorAnalysis || null;
     if (analysis.measured) {
       frame.analysis = analysis;
+      frame.measurementError = '';
+    } else if (frame.mirrorAnalysis) {
+      // Static mirror PNGs cannot carry HTTP measurement headers. Keep the
+      // real measurements captured and checked by the mirror ingestor.
+      frame.analysis = frame.mirrorAnalysis;
       frame.measurementError = '';
     } else {
       frame.analysis = null;
       frame.measurementError = 'FITS measurement headers were not returned.';
     }
-    maybePrunePartialFrames();
-    updateBandUI();
-    updateVerification();
-    if (frames[frameIndex] === frame) render();
-    else updateLab();
-  } catch (error) {
-    if (frames.includes(frame)) {
-      frame.analysis = null;
-      frame.measurementError = error.message;
-      frame.loadError = error.message;
+    if (!detached) {
+      maybePrunePartialFrames();
+      updateBandUI();
+      updateVerification();
       if (frames[frameIndex] === frame) render();
       else updateLab();
     }
-    notify(`Could not measure that FITS frame: ${error.message}`);
+  } catch (error) {
+    frame.loadError = error.message;
+    frame.measurementError = error.message;
+    if (!detached && frames.includes(frame)) {
+      frame.analysis = null;
+      if (frames[frameIndex] === frame) render();
+      else updateLab();
+    }
+    if (!detached) notify(`Could not measure that FITS frame: ${error.message}`);
   } finally {
     frame.loading = false;
   }
 }
 
-async function loadFrameSet(list) {
+async function loadFrameSet(list, options = {}) {
   const queue = [...list];
   const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
     while (queue.length) {
       const frame = queue.shift();
-      if (frame) await loadFrameData(frame);
+      if (frame) await loadFrameData(frame, options);
     }
   });
   await Promise.all(workers);
@@ -1425,9 +1543,20 @@ function setLoading(isLoading) {
   el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Show this sky sequence';
 }
 
+function updateAppLive(state = 'live') {
+  if (!el.appLive) return;
+  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', offline: 'IRSA OFFLINE', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', 'no-coverage': 'NO COVERAGE' };
+  if (el.appLiveText) el.appLiveText.textContent = labels[state] || labels.live;
+  el.appLive.dataset.state = state;
+}
+
 function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
-  stopPlayback(); releaseImages();
+  stopPlayback();
+  releaseImages(new Set(newFrames.map((frame) => frame.objectUrl).filter(Boolean)));
   frames = newFrames; frameIndex = 0; comparisonOpen = false; realBadge = badge;
+  const localOnly = newFrames.length > 0 && newFrames.every(frame => !frame.real);
+  const mirrorOnly = newFrames.length > 0 && newFrames.every(frame => frame.mirror);
+  updateAppLive(localOnly ? 'local' : mirrorOnly ? 'mirror' : /bundled|last known|fallback|last-good|cached/i.test(badge) ? 'cached' : 'live');
   hdMode = false; updateHDControls();
   el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side';
   el.sourceLabel.textContent = source;
@@ -1474,24 +1603,177 @@ async function loadPNGFiles(files) {
   if (valid.length < 2) notify('Load at least 2 observations to see changes over time.');
 }
 
+function isIrsaUri(value) {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' && url.hostname === 'irsa.ipac.caltech.edu' && url.pathname.startsWith('/ibe/data/spherex/');
+  } catch {
+    return false;
+  }
+}
+
+function mirrorAsset(value) {
+  if (typeof value !== 'string' || !/^fields\/[A-Za-z0-9._/-]+$/.test(value) || value.includes('\\') || value.split('/').includes('..')) return '';
+  return `/mirror/${value}`;
+}
+
+function mirrorMeasurement(value) {
+  if (!value || value.measured !== true) return null;
+  if (!['median', 'mean', 'waveMin', 'waveMax', 'width', 'height'].every((key) => Number.isFinite(value[key]))) return null;
+  if (value.width <= 0 || value.height <= 0) return null;
+  return { ...value, measured: true };
+}
+
+async function loadMirrorField(field, requestedDetector, requestedPalette, requestedStretch) {
+  let response;
+  try {
+    response = await fetch('/mirror/index.json', { cache: 'no-store', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5_000) });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  let manifest;
+  try { manifest = await response.json(); } catch { return null; }
+  if (manifest?.schemaVersion !== 2 || !Array.isArray(manifest.fields)) return null;
+  const entry = manifest.fields.find(item =>
+    Number.isFinite(item.ra) &&
+    Number.isFinite(item.dec) &&
+    Math.abs(item.ra - field.ra) < 0.01 &&
+    Math.abs(item.dec - field.dec) < 0.01 &&
+    Number.isFinite(item.fov) &&
+    Math.abs(item.fov - field.fov) < 0.001 &&
+    item.detector === requestedDetector &&
+    item.palette === requestedPalette &&
+    item.stretch === requestedStretch
+  );
+  if (!entry || !Array.isArray(entry.frames) || !entry.frames.length) return null;
+  const mirrorFrames = [];
+  for (const frame of entry.frames) {
+    const measurement = mirrorMeasurement(frame.measurement);
+    const png = mirrorAsset(frame.png);
+    const fits = mirrorAsset(frame.fits);
+    if (!frame.obsid || !isIrsaUri(frame.uri) || !png || !fits || !measurement) return null;
+    if (!/^[a-f0-9]{64}$/.test(frame.pngSha256 || '') || !/^[a-f0-9]{64}$/.test(frame.fitsSha256 || '')) return null;
+    if (!Number.isInteger(frame.pngBytes) || frame.pngBytes <= 0 || !Number.isInteger(frame.fitsBytes) || frame.fitsBytes <= 0) return null;
+    mirrorFrames.push({
+      label: `${frame.date} · ${frame.detector}`,
+      src: png,
+      mirrorSrc: png,
+      remoteSrc: '',
+      width: measurement.width,
+      height: measurement.height,
+      fov: entry.fov,
+      date: frame.date,
+      iso: frame.iso,
+      band: frame.band,
+      detector: frame.detector,
+      uri: frame.uri,
+      obsid: frame.obsid,
+      ra: entry.ra,
+      dec: entry.dec,
+      analysis: measurement,
+      mirrorAnalysis: measurement,
+      measurementError: null,
+      sourceLabel: 'Local mirror · verified real IRSA FITS',
+      real: true,
+      mirror: true,
+      expectedSha256: frame.pngSha256
+    });
+  }
+  return {
+    frames: mirrorFrames,
+    source: `Local mirror · ${mirrorFrames.length} verified real visits · ${entry.detector}`,
+    sky: entry.sky || null
+  };
+}
+
+function showNoCoverage(payload, field, target) {
+  const coverage = payload.coverage || {};
+  const message = coverage.message || 'Region not yet observed in the current SPHEREx DR1/QR3 releases.';
+  loadFrames([], message, 'NO OBSERVATIONS');
+  el.sourceLabel.classList.remove('error');
+  el.emptyEyebrow.textContent = 'NO OBSERVATIONS YET';
+  el.emptyTitle.textContent = 'This patch is outside current coverage.';
+  el.emptyMessage.textContent = message;
+  el.viewerTitle.textContent = target?.label || 'Custom sky region';
+  el.fieldConstellation.textContent = payload.sky?.constellation?.name
+    ? `${payload.sky.constellation.name.toUpperCase()} · SPHEREX COVERAGE`
+    : target?.constellation ? `${target.constellation.toUpperCase()} · SPHEREX COVERAGE` : 'SPHEREX COVERAGE';
+  el.fieldMeta.textContent = `${coordinateText(field.ra, field.dec)} · ${field.fov.toFixed(2)}° field`;
+  updateAppLive('no-coverage');
+  notify(message);
+}
+
+async function loadVerifiedMirror(field) {
+  let mirror = null;
+  try { mirror = await loadMirrorField(field, detector, palette, stretch); } catch { return null; }
+  if (!mirror) return null;
+  try {
+    await loadFrameSet(mirror.frames, { detached: true, timeoutMs: 8_000 });
+    if (mirror.frames.some(frame => !frame.objectUrl || frame.loadError)) throw new Error('Local mirror failed PNG integrity verification.');
+    return mirror;
+  } catch {
+    discardFrameObjects(mirror.frames);
+    return null;
+  }
+}
+
+function showMirrorField(mirror, field, { record = true, note = '' } = {}) {
+  loadFrames(mirror.frames, mirror.source, 'LOCAL MIRROR · REAL FITS');
+  el.sourceLabel.classList.remove('error');
+  el.sourceLabel.textContent = note ? `${mirror.source} · ${note}` : mirror.source;
+  const target = targets[el.target.value];
+  el.viewerTitle.textContent = target?.label || 'Custom sky region';
+  el.fieldConstellation.textContent = mirror.sky?.constellation?.name
+    ? `${mirror.sky.constellation.name.toUpperCase()} · LOCAL MIRROR`
+    : 'LOCAL MIRROR · REAL FITS';
+  el.fieldMeta.textContent = `${coordinateText(field.ra, field.dec)} · ${field.fov.toFixed(2)}° field`;
+  if (record) recordNavigation(field, el.target.value);
+  updateUrl(field, el.target.value);
+  updateBandUI();
+  updateMapUI();
+  loadConstellation(mirror.sky, field.ra, field.dec);
+  updateVerification();
+}
+
 async function loadRealFrames(options = {}) {
-  if (loadingReal) return;
   const record = options?.record !== false;
   let field;
   try { field = readField(); } catch (error) { notify(error.message); return; }
 
+  const request = ++loadRequest;
+  activeLoadController?.abort();
+  const controller = new AbortController();
+  activeLoadController = controller;
   setLoading(true);
-  if (frames.length) loadFrames([], 'Loading this patch…');
+  // Keep the current real visit set visible until a replacement is fully
+  // received. A failed navigation must never erase data already on screen.
   el.empty.hidden = true;
   el.sourceLabel.classList.remove('error');
-  el.sourceLabel.textContent = 'Querying IRSA SIA2 for real visits…';
-  notify('Finding real SPHEREx visits for this patch.');
+  el.sourceLabel.textContent = 'Checking verified local mirror…';
+  notify('Checking the verified local mirror before contacting IRSA.');
+  let mirror = null;
   try {
+    mirror = await loadVerifiedMirror(field);
+    if (request !== loadRequest) {
+      if (mirror) discardFrameObjects(mirror.frames);
+      return;
+    }
+    if (mirror) {
+      showMirrorField(mirror, field, { record, note: 'refreshing IRSA…' });
+      el.stageLoading.hidden = true;
+      // The mirror is usable now; the IRSA request is the background refresh.
+      setLoading(false);
+      notify(`Showing ${mirror.frames.length} verified local visits while IRSA refreshes.`);
+    } else {
+      el.sourceLabel.textContent = 'Querying IRSA SIA2 for real visits…';
+      notify('Finding real SPHEREx visits for this patch.');
+    }
+
     const params = new URLSearchParams({
       ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '8', v: '10',
       detector, palette, stretch
     });
-    const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45_000);
     let response;
     try {
@@ -1499,8 +1781,13 @@ async function loadRealFrames(options = {}) {
     } finally {
       clearTimeout(timeout);
     }
+    if (request !== loadRequest) return;
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `IRSA frame discovery returned ${response.status}.`);
+    if (Array.isArray(payload.frames) && payload.frames.length === 0 && payload.coverage?.observed === false) {
+      showNoCoverage(payload, field, targets[el.target.value]);
+      return;
+    }
     if (!Array.isArray(payload.frames) || !payload.frames.length) throw new Error('IRSA returned no real products for this field.');
 
     detector = payload.detector || detector;
@@ -1547,16 +1834,33 @@ async function loadRealFrames(options = {}) {
     updateVerification();
     notify(`Loaded ${realFrames.length} real visits in ${detector}. Press play, blink, or difference.`);
   } catch (error) {
+    if (request !== loadRequest) return;
     el.stageLoading.hidden = true;
-    el.sourceLabel.textContent = `IRSA unavailable: ${error.message}`;
     el.sourceLabel.classList.add('error');
-    if (!frames.length) {
+    if (mirror) {
+      updateAppLive('mirror');
+      el.sourceLabel.textContent = `${mirror.source} · IRSA refresh failed: ${error.message}`;
+      el.stageBadge.hidden = false;
+      el.stageBadge.textContent = 'LOCAL MIRROR · REAL FITS';
+      notify(`IRSA refresh failed: ${error.message}. Keeping the verified local mirror.`);
+      return;
+    }
+    updateAppLive('offline');
+    if (frames.length) {
+      el.sourceLabel.textContent = `IRSA unavailable: ${error.message} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
+      el.stageBadge.hidden = false;
+      el.stageBadge.textContent = realBadge;
+    } else {
+      el.sourceLabel.textContent = `IRSA unavailable: ${error.message}`;
       el.empty.hidden = false;
       setEmptyState('ARCHIVE NOT AVAILABLE', 'IRSA is not answering', `${error.message} The archive can be busy; try again in a moment or choose another field.`);
     }
     notify(`IRSA request failed: ${error.message}`);
   } finally {
-    setLoading(false);
+    if (request === loadRequest) {
+      setLoading(false);
+      if (activeLoadController === controller) activeLoadController = null;
+    }
   }
 }
 
@@ -1607,7 +1911,7 @@ async function loadHDFrame(frame) {
 
 function updateHDControls() {
   const current = frames[frameIndex];
-  const enabled = Boolean(current?.real);
+  const enabled = Boolean(current?.real && current?.remoteSrc);
   for (const button of [el.hdToggle, el.hdToggleLab]) {
     if (!button) continue;
     button.disabled = !enabled;
@@ -1618,7 +1922,7 @@ function updateHDControls() {
 
 function toggleHD() {
   const current = frames[frameIndex];
-  if (!current?.real) { notify('Load a real IRSA frame before opening the wide window.'); return; }
+  if (!current?.real || !current?.remoteSrc) { notify('The wide window requires a live IRSA frame.'); return; }
   hdMode = !hdMode;
   updateHDControls();
   if (hdMode) loadHDFrame(current);
@@ -1630,6 +1934,7 @@ function render() {
   if (!f) {
     el.image.hidden = true; el.differenceCanvas.hidden = true; el.empty.hidden = false;
     drawMinimap();
+    updateToolsSkyContext();
     updateMapCenter();
     el.frameLabel.textContent = 'No images loaded'; el.frameCount.textContent = '0 / 0';
     el.stageDate.textContent = 'No visit loaded';
@@ -1675,6 +1980,7 @@ function render() {
   updateLab();
   updateTransform();
   drawMinimap();
+  updateToolsSkyContext();
   updateMapCenter();
   syncQuickTime();
 }
@@ -2171,6 +2477,8 @@ const labState = {
   learnScore: 0,
   question: null,
   frameSetKey: '',
+  framesRef: null,
+  currentFrameKey: '',
   brighter: null,
   wave: null,
   band: null,
@@ -2275,13 +2583,25 @@ function updateLab() {
 
   if (!labState.question || (labState.question.needsData && data.frame)) newLearnQuestion();
 
-  const frameSetKey = frames.map(frame => `${frame.label}:${frame.analysis?.median ?? ''}:${frame.analysis?.waveMin ?? ''}`).join('|');
-  if (frameSetKey !== labState.frameSetKey) {
-    labState.frameSetKey = frameSetKey;
+  // A new frame set gets three fresh rounds. Measurement headers arrive
+  // asynchronously; they must not wipe a round the visitor is already playing.
+  if (labState.framesRef !== frames) {
+    labState.framesRef = frames;
+    labState.currentFrameKey = '';
     newBrighterRound();
+  }
+
+  const currentFrameKey = [
+    frameIndex, data.frame?.label, data.frame?.detector, data.band,
+    data.median ?? '', data.waveMin ?? '', data.waveMax ?? ''
+  ].join('|');
+  if (currentFrameKey !== labState.currentFrameKey) {
+    labState.currentFrameKey = currentFrameKey;
     newWaveRound();
     newBandRound();
   }
+
+  if (!labState.brighter) newBrighterRound();
   updateDiscovery();
 }
 
@@ -2535,8 +2855,8 @@ async function runDiscoveryScan() {
     const lumaB = new Float32Array(width * height);
     for (let index = 0; index < lumaA.length; index += 1) {
       const at = index * 4;
-      lumaA[index] = pixelsA[at] * .299 + pixelsA[at + 1] * .587 + pixelsA[at + 2] * .114;
-      lumaB[index] = pixelsB[at] * .299 + pixelsB[at + 1] * .587 + pixelsB[at + 2] * .114;
+      lumaA[index] = luma(pixelsA[at], pixelsA[at + 1], pixelsA[at + 2]);
+      lumaB[index] = luma(pixelsB[at], pixelsB[at + 1], pixelsB[at + 2]);
     }
     const smoothA = smoothLuma(lumaA, width, height);
     const smoothB = smoothLuma(lumaB, width, height);
@@ -2546,11 +2866,7 @@ async function runDiscoveryScan() {
       difference[index] = smoothB[index] - smoothA[index];
       absolute[index] = Math.abs(difference[index]);
     }
-    const samples = Array.from(absolute).sort((a, b) => a - b);
-    const median = samples[Math.floor(samples.length / 2)] || 0;
-    const madSamples = samples.map(value => Math.abs(value - median)).sort((a, b) => a - b);
-    const mad = madSamples[Math.floor(madSamples.length / 2)] || 0;
-    const threshold = Math.max(7, median + 6 * Math.max(mad, 0.3));
+    const { threshold } = robustChangeThreshold(absolute);
     const points = [];
     for (let y = 5; y < height - 5; y += 1) {
       for (let x = 5; x < width - 5; x += 1) {
@@ -2681,6 +2997,24 @@ function addLabChoice(container, label, onClick) {
   return button;
 }
 
+function addLabFrameChoice(container, frame, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'option-button frame-option';
+  button.dataset.frameLabel = frame.label;
+  const image = document.createElement('img');
+  image.src = frame.objectUrl || frame.src;
+  image.alt = `Real SPHEREx frame from ${frame.label}`;
+  image.loading = 'lazy';
+  image.addEventListener('error', () => image.remove());
+  const label = document.createElement('span');
+  label.textContent = frame.label;
+  button.append(image, label);
+  button.addEventListener('click', onClick);
+  container.append(button);
+  return button;
+}
+
 function newLearnQuestion() {
   const data = labData();
   const questions = [];
@@ -2791,11 +3125,15 @@ function newBrighterRound() {
   const brighter = pair[0].analysis.median >= pair[1].analysis.median ? pair[0] : pair[1];
   labState.brighter = { pair, brighter, answered: false };
   for (const frame of pair) {
-    addLabChoice(lab.brighterChoices, frame.label, () => {
+    addLabFrameChoice(lab.brighterChoices, frame, event => {
       if (!labState.brighter || labState.brighter.answered) return;
       labState.brighter.answered = true;
       const correct = frame === brighter;
       for (const button of lab.brighterChoices.querySelectorAll('button')) button.disabled = true;
+      event.currentTarget.classList.add(correct ? 'correct' : 'wrong');
+      const brighterButton = [...lab.brighterChoices.querySelectorAll('button')]
+        .find(button => button.dataset.frameLabel === brighter.label);
+      brighterButton?.classList.add('correct');
       const labels = pair.map(item => `${item.label}: ${formatNumber(item.analysis.median)} MJy / sr`).join(' · ');
       lab.brighterFeedback.textContent = `${correct ? 'Correct.' : 'Not quite.'} ${labels}`;
       lab.brighterFeedback.className = `quiz-feedback ${correct ? 'correct-text' : 'wrong-text'}`;
@@ -2818,11 +3156,14 @@ function newWaveRound() {
   const options = [...new Set([middle, data.waveMax + 0.2, Math.max(0.1, data.waveMin - 0.2)].map(value => `${value.toFixed(3)} μm`))];
   labState.wave = { answered: false, correct: `${middle.toFixed(3)} μm`, min: data.waveMin, max: data.waveMax };
   for (const option of shuffle(options)) {
-    addLabChoice(lab.waveChoices, option, () => {
+    addLabChoice(lab.waveChoices, option, event => {
       if (!labState.wave || labState.wave.answered) return;
       labState.wave.answered = true;
       const correct = option === labState.wave.correct;
-      for (const button of lab.waveChoices.querySelectorAll('button')) button.disabled = true;
+      const buttons = [...lab.waveChoices.querySelectorAll('button')];
+      for (const button of buttons) button.disabled = true;
+      event.currentTarget.classList.add(correct ? 'correct' : 'wrong');
+      buttons.find(button => button.textContent === labState.wave.correct)?.classList.add('correct');
       lab.waveFeedback.textContent = `${correct ? 'Correct.' : 'Not quite.'} This frame spans ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`;
       lab.waveFeedback.className = `quiz-feedback ${correct ? 'correct-text' : 'wrong-text'}`;
       lab.waveNext.disabled = false;
@@ -2964,6 +3305,7 @@ restoreFromUrl();
 syncQuickFilters();
 syncQuickTime();
 initLab();
+initAllSkyMap();
 render();
 loadRealFrames();
 if (shouldOpenMapApp) enterMapApp({ quiet: true });

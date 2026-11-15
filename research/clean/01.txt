@@ -1,0 +1,194 @@
+﻿SPHEREx Viewer Research, Document 1
+Research notes for the Drift SPHEREx viewer
+Prepared by Shaurjesh Basu
+14 November 2026
+
+
+WHAT THIS DOCUMENT IS ABOUT
+
+
+Before I wrote any code, I tried to answer a basic question: what is a SPHEREx image?
+
+
+I had assumed it was a picture of the sky with 102 colour channels attached. That assumption was wrong, and almost every useful design decision came from correcting it.
+
+
+SPHEREx is a near-infrared survey instrument. It takes many small spectral images, one detector at a time, and each image covers a broad wavelength range that changes across the frame. The archive is IRSA. The data are public, but they are not arranged like a photo album. They are arranged like an astronomical archive: searchable by position, delivered as FITS files, and documented with a long list of conventions that matter.
+
+
+This document is about that reality: where the data live, what one observation actually contains, how the instrument works, and why the viewer is built around one real detector frame instead of a 102-band cube. The companion documents cover the science algorithms, the backend, and the front end. My sources are the SPHEREx mission papers (Crill et al. 2020; Bock et al. 2026), the pipeline paper (Akeson et al. 2026a), and the Explanatory Supplement (Akeson et al. 2026b).
+
+
+THE ARCHIVE IS IRSA, NOT A FOLDER OF FILES
+
+
+The first place to look is NASA/IPAC/IRSA. IRSA hosts the SPHEREx spectral images, the higher-level cubes and catalogues, the SIA2 search service, the cutout service, and the documentation. The mission is a JPL/Caltech project, but IRSA is the public front door (Akeson et al. 2026b).
+
+
+There is also a copy in the public AWS bucket nasa-irsa-spherex, in us-east-1. That bucket is genuinely useful. It is listed in the AWS Open Data Registry, and it is a good place to do bulk work, read headers, or build a local index. But it is an object store, not a search engine. It can hold every file and still not answer the question "which detector frames cover this position?" without an index that someone has to build and maintain.
+
+
+That distinction sounds bureaucratic until you try to build the app. A browser tool needs a small cutout around a position. It does not need a mirror of the archive. IRSA's SIA2 service answers "what exists here?" and its cutout service answers "give me only the pixels around this point." Those are the two services the viewer uses. The cloud bucket remains a documented alternative for bulk access, not the live path.
+
+
+The data release matters too. IRSA released SPHEREx Data Release 1 in November 2026. DR1 reprocesses the QR2 spectral images so that DR1 and QR3 form a uniformly processed set, and it adds an all-sky cube in the 102 nominal channels. QR2 is no longer returned in IRSA or VO searches, though direct downloads remain available for a transition period. The app searches spherex_dr1 and ships one real DR1 result as its default field (Akeson et al. 2026a, 2026b).
+
+
+The data are public, and the FAIR principles are a reasonable way to describe why that matters (Wilkinson et al. 2016). IRSA's terms allow public access, and the SPHEREx documentation asks users to cite the data DOI and include the mission acknowledgment. That is not a formality. If the tool is going to show archive pixels, it should also carry the archive's citation.
+
+
+WHAT ONE OBSERVATION ACTUALLY CONTAINS
+
+
+A SPHEREx Level-2 product is a Multi-Extension FITS file for one detector and one pointing (Akeson et al. 2026a, 2026b). "Multi-extension" simply means one file with several named blocks inside it. The active detector is 2,040 by 2,040 pixels (Bock et al. 2026), with four rows and columns of reference pixels at the border. The file is about 72 MB.
+
+
+Inside are six blocks:
+
+
+- IMAGE: the calibrated surface brightness, in MJy per steradian.
+- FLAGS: a per-pixel bitmask that records processing status and problems.
+- VARIANCE: the per-pixel variance, in square MJy per steradian.
+- ZODI: a model of the zodiacal light background. It is not subtracted from IMAGE.
+- PSF or EPSF: the point-spread function product. In the R7/DR1 era the calibration product is an effective PSF, but the Level-2 file still carries a PSF extension.
+- WCS-WAVE: a lookup table that maps pixel coordinates to central wavelength and bandwidth.
+
+
+That list is the unit of work. It is not a 102-plane cube. One detector frame covers a broad band, and the wavelength changes across the frame because of the linear variable filter. The spacecraft repoints between exposures, so a source lands at different detector positions and is sampled at different wavelengths. A spectrum is built from several exposures, not from one cube sitting in a single file.
+
+
+This corrected the roughest estimate in my first plan. "One image times 102 bands times four epochs per year times two years" overcounts the file structure by a large factor. The 102 channels are 17 channels across each of six detector arrays. There are six Level-2 files per pointing, not 102. The all-sky cube is a separate, much larger product.
+
+
+The published sizes make the scale concrete (Akeson et al. 2026a, 2026b):
+
+
+- One spectral image: about 72 MB.
+- The spectral-image collection: about 190 TB.
+- The all-sky data cubes: about 95 TB.
+- The high-reliability source catalogue: about 120 TB.
+
+
+That is hundreds of terabytes, and effectively petabyte-class once calibration and ancillary products are included. It is not something a browser should download, and it is not something I wanted to mirror. The app asks for one small cutout at a time. The default field ships with one cached SIA index and one 176 by 176 D2 cutout, a few megabytes in total.
+
+
+THE CAMERA IS ALSO A SPECTROGRAPH
+
+
+The telescope has a 20 cm effective aperture and a field of view made of two 3.5 by 11.3 degree fields, split by a dichroic. There are six Teledyne H2RG HgCdTe detector arrays (Crill et al. 2020; Bock et al. 2026), each 2,048 by 2,048 with 2,040 by 2,040 optically active pixels. Three arrays sit in the short-wave infrared focal plane and three in the mid-wave infrared focal plane.
+
+
+Each array has a linear variable filter mounted above it. The filter's central wavelength changes along one axis of the array. That is the key idea: position on the detector encodes wavelength. A single frame is therefore both an image and a spectrum, but only in a limited sense. It covers one broad band, and the wavelength varies across the field.
+
+
+The six arrays cover:
+
+
+- Band 1: 0.744 to 1.116 micron, R of about 39.
+- Band 2: 1.099 to 1.651 micron, R of about 41.
+- Band 3: 1.636 to 2.421 micron, R of about 41.
+- Band 4: 2.423 to 3.822 micron, R of about 35.
+- Band 5: 3.809 to 4.420 micron, R of about 112.
+- Band 6: 4.412 to 5.002 micron, R of about 128.
+
+
+The exact resolving powers are quoted a little differently in different mission papers (Bock et al. 2026; Akeson et al. 2026a), usually 35 to 130. The table above is the one I used in the app. Each band is divided into 17 nominal spectral channels for survey planning, which gives 102 channels across the instrument. The pixel scale is 6.15 arcsec, the frame time is 1.5349 s, and the nominal exposure is 113.58 s.
+
+
+The dichroic sends short wavelengths to one focal plane and long wavelengths to the other. Within each array, the filter makes the wavelength change across the field. A single pointing therefore gives six broad spectral slices at different positions, not a simultaneous 0.75 to 5 micron spectrum of every source.
+
+
+That matters for any plan to add arrays for signal-to-noise. You can combine arrays to cover more wavelength, but you cannot add them as if they were redundant measurements of the same band. They have different spectral samples, different PSFs, different backgrounds, and different detector systematics. The app exposes the detector choice for exactly this reason: it lets you look at one real array at a time instead of pretending the six are interchangeable.
+
+
+THE POINT-SPREAD FUNCTION IS THE HARD PART
+
+
+The SPHEREx PSF is significantly undersampled at the native 6.15 arcsec pixel scale (Akeson et al. 2026a; Anderson & King 2000). Undersampled means the star's image is smaller than the pixels that record it, so the shape is partly lost to the pixel grid. The mission's PSF products are built to deal with that.
+
+
+The older QR2 product is a 121-plane cube of 101 by 101 PSFs, oversampled 10 times, on an 11 by 11 grid across the detector. The R7/DR1 calibration uses effective PSFs: 33 by 33 arrays oversampled 5 times, with 21 by 21 spatial zones for most detectors and a finer 11 by 41 grid for detector 3 along the dispersion direction.
+
+
+The PSF changes with position and wavelength. The sky simulator paper describes the variation as continuous across the focal plane (Crill et al. 2025), with the PSF generally growing toward longer wavelengths and additional optical variation across the field. This is not a cosmetic detail. A coadd that assumes one PSF for all epochs and bands will be wrong at some level. A difference image that ignores PSF matching will leave residuals around every star.
+
+
+I did not try to solve that in the browser. The viewer draws the native pixels and reports the pixel scale from the WCS. The local FITS lab can read the PSF cube when the user supplies a real product. The app does not claim to have done PSF-matched photometry.
+
+
+CADENCE: FOUR MAPS, NOT A NIGHTLY TIME SERIES
+
+
+The survey is not a simple two-epochs-per-field-per-year cadence (Crill et al. 2020; Bock et al. 2026). SPHEREx completes four all-sky maps over its 25-month prime mission. Surveys 1 and 2 cover the first 12.5 months; Surveys 3 and 4 cover the second 12.5 months. Surveys 1 and 3 use one observatory position angle, and Surveys 2 and 4 use the other. Surveys 3 and 4 are shifted by about 6 arcmin relative to Surveys 1 and 2 to improve spectral sampling.
+
+
+The survey is designed to place every source within each spectral channel at least once per six-month survey. The deep fields near the north and south ecliptic poles get much more coverage. So the number of useful visits depends strongly on where you point. A field near the ecliptic pole can have many more epochs than a random all-sky field. The app does not hard-code a cadence; it shows whatever visits SIA2 returns for the requested position.
+
+
+Time metadata is present, but it needs care. The Level-2 header has TIMESYS = UTC, DATE-OBS, MJD-OBS, DATE-BEG, MJD-BEG, DATE-AVG, MJD-AVG, DATE-END, and MJD-END. MJD-OBS is the start of the observation, not a barycentric-corrected time. I did not find a barycentric time column in the Level-2 product. For high-precision proper-motion work, that correction has to be applied by the analysis layer, with the spacecraft orbit and the target position. The viewer displays DATE-AVG because it is the midpoint of the exposure and the least misleading single timestamp for a frame.
+
+
+This is also why proper motion over the SPHEREx baseline is not a built-in feature. The data can support that work, but it needs a time model and a stacking method, not a slider.
+
+
+FLAGS, WCS, AND WHY CUTOUTS LOOK TILTED
+
+
+The FLAGS block is a real bitmask, not a quality score. It includes bits for transients and cosmic rays, overflow, surface-ramp errors, nonfunctional pixels, dichroic-edge pixels, persistence, outliers, crosstalk, known-source masks, ghosts, blooms, snowballs, halos, and satellite halos. The names and bit assignments are in Table 10 of the Explanatory Supplement (Akeson et al. 2026b). The app shows the raw bits and counts them. It does not relabel a bit as ghost or stray light unless the archive does.
+
+
+The WCS is a tangent-plane projection with SIP distortion (Calabretta & Greisen 2002; Greisen & Calabretta 2002). In plain terms, it is the map legend that turns pixel coordinates into sky coordinates, and the SIP terms describe how the optics bend the grid. The headers contain the tangent-plane projection type, CRPIX, CRVAL, PC, and the SIP coefficients. The fine-astrometry step uses Gaia DR3 as the reference (Gaia Collaboration et al. 2023), with Gaia proper motions propagated to the observation epoch. The archive reports a median alignment precision of about 0.1 to 0.4 arcsec for images with a good FINAST flag. The maximum distortion at the corners can be around 13 pixels, or roughly 80 arcsec.
+
+
+That is why a cutout cannot be treated as a north-up picture. IRSA's cutout service preserves the parent image's orientation. The axes of the cutout are aligned with the detector axes, not with north and east. This is not a bug. It is the real geometry. The app uses the FITS WCS for every coordinate conversion and does not rotate the image to a conventional sky orientation.
+
+
+The WCS-WAVE table is a separate spectral WCS. It is a lookup table, not a 3D image. IRSA notes that it is intended for visualization (Akeson et al. 2026b); for science analysis, the standalone CWAVE and CBAND calibration products are better. I used WCS-WAVE because the viewer is a visualization and measurement tool, and because it is already in the Level-2 cutout. The app labels the resulting spectrum as a real pixel-aperture measurement, not a calibrated science spectrum.
+
+
+WHAT I BUILT BECAUSE OF THIS
+
+
+These are the concrete decisions that came out of the archive research:
+
+
+- Use IRSA SIA2 as the discovery layer, not a bulk download.
+- Request the spherex_dr1 collection, with a cone search and CSV output.
+- Use the IRSA cutout service for a spatial subset, and strip the large EPSF block before sending the FITS to the browser.
+- Preserve the native detector WCS and orientation. Do not reproject to north-up.
+- Show IMAGE, VARIANCE, FLAGS, and ZODI as separate real layers.
+- Treat WCS-WAVE as a visualization lookup table, not a full spectral cube.
+- Cache one real default field so the first render does not depend on a live archive queue.
+- Do not claim a 102-band cube. The six arrays and 17 channels are instrument geometry, and the app says so.
+
+
+The result is a tool that is honest about the unit of data it has. It does not pretend that a 176 by 176 cutout is the whole spectrum, and it does not pretend that a six-month survey is a nightly time series. That honesty is the point. It is also what makes the viewer useful: when you see a frame, you know exactly what you are looking at.
+
+
+REFERENCES
+
+
+Crill, B. P., Werner, M., Akeson, R., et al. 2020. SPHEREx: NASA's near-infrared spectrophotometric all-sky survey. Proc. SPIE, 11443, 114430I. doi:10.1117/12.2567224.
+Bock, J. J., Aboobaker, A. M., Adamo, J., et al. 2026. The SPHEREx Satellite Mission. ApJ, 999, 139. doi:10.3847/1538-4357/ae2be2.
+Akeson, R., Dubois-Felsmann, G. P., Crill, B. P., et al. 2026a. The SPHEREx Image and Spectrophotometry Processing Pipeline. ApJS, 285, 67. doi:10.3847/1538-4365/ae8843.
+Akeson, R., Faisst, A., Masters, D., et al. 2026b. SPHEREx Explanatory Supplement. SSDC-DP-017, version 2.1. Caltech/IPAC. https://irsa.ipac.caltech.edu/data/SPHEREx/docs/SPHEREx_Expsupp.pdf
+Crill, B. P., Bach, Y. P., Bryan, S. A., et al. 2025. The SPHEREx Sky Simulator: Science Data Modeling for the First All-sky Near-infrared Spectral Survey. ApJS, 281, 10. doi:10.3847/1538-4365/ae04cc.
+Hanisch, R. J., Farris, A., Greisen, E. W., et al. 2001. Definition of the Flexible Image Transport System (FITS). A&A, 376, 359-380. doi:10.1051/0004-6361:20010923.
+Greisen, E. W., & Calabretta, M. R. 2002. Representations of world coordinates in FITS. A&A, 395, 1061-1075.
+Calabretta, M. R., & Greisen, E. W. 2002. Representations of celestial coordinates in FITS. A&A, 395, 1077-1122. doi:10.1051/0004-6361:20021327.
+Greisen, E. W., Calabretta, M. R., Valdes, F. G., & Allen, S. L. 2006. Representations of spectral coordinates in FITS. A&A, 446, 747-771. doi:10.1051/0004-6361:20053818.
+Anderson, J., & King, I. R. 2000. Toward High-Precision Astrometry with WFPC2. I. Deriving an Accurate Point-Spread Function. PASP, 112, 1360-1382. doi:10.1086/316632.
+Gaia Collaboration, Vallenari, A., Brown, A. G. A., et al. 2023. Gaia Data Release 3. Summary of the content and survey properties. A&A, 674, A1. doi:10.1051/0004-6361/202243940.
+Kelsall, T., Weiland, J. L., Franz, B. A., et al. 1998. The COBE Diffuse Infrared Background Experiment Search for the Cosmic Infrared Background. II. Model of the Interplanetary Dust Cloud. ApJ, 508, 44-73. doi:10.1086/306380.
+Wilkinson, M. D., Dumontier, M., Aalbersberg, I. J., et al. 2016. The FAIR Guiding Principles for scientific data management and stewardship. Scientific Data, 3, 160018. doi:10.1038/sdata.2016.18.
+
+
+DATA AND DOCUMENTATION
+
+
+SPHEREx instrument: https://spherex.caltech.edu/page/instrument
+SPHEREx survey: https://spherex.caltech.edu/page/survey
+SPHEREx DR1: https://irsa.ipac.caltech.edu/data/SPHEREx/docs/overview_dr1.html
+IRSA SPHEREx: https://irsa.ipac.caltech.edu/Missions/spherex.html
+SPHEREx data products: https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products
+IRSA cloud access: https://irsa.ipac.caltech.edu/cloud_access/

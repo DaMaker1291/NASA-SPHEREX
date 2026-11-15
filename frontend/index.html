@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-27">
-  <script defer src="script.js?v=next-46"></script>
+  <link rel="stylesheet" href="style.css?v=next-32">
+  <script type="module" src="script.js?v=next-52"></script>
 </head>
 <body>
   <header class="site-header">
@@ -109,7 +109,7 @@
       <section class="viewer-panel" aria-label="Sky image viewer">
         <div id="appToolbar" class="app-toolbar" aria-label="Map application controls">
           <button id="appHome" class="app-brand" type="button" title="Leave the map app" aria-label="SPHEREx Explorer home"><span aria-hidden="true">✦</span><strong>SPHEREx</strong><em>Explorer</em></button>
-          <span class="app-live"><span class="live-dot"></span> LIVE IRSA</span>
+          <span class="app-live" id="appLive"><span class="live-dot"></span> <span id="appLiveText">LIVE IRSA</span></span>
           <div class="app-actions">
             <button id="appDetails" class="app-action" type="button" aria-expanded="false" aria-controls="infoPanel">Details</button>
             <button id="appSequence" class="app-action" type="button" aria-expanded="false" aria-controls="sequenceSheet">Sequence</button>
@@ -178,10 +178,10 @@
             <small>Querying IRSA SIA2 and preparing detector cutouts</small>
           </div>
           <div id="crosshair" class="crosshair" aria-hidden="true"><span></span></div>
-          <div id="skyMinimapWrap" class="sky-minimap" aria-label="All-sky navigation map">
+          <div id="skyMinimapWrap" class="sky-minimap" aria-label="All-sky navigation map. Background: the real NASA/JPL-Caltech SPHEREx 2025 all-sky mosaic.">
             <div class="minimap-head"><span>ALL-SKY MAP</span><span id="minimapField">IAU J2000</span></div>
-            <canvas id="skyMinimap" width="420" height="210" aria-label="All-sky map. Click to move the field."></canvas>
-            <div class="minimap-foot">Click or drag to change place</div>
+            <canvas id="skyMinimap" width="420" height="210" aria-label="All-sky map using the real NASA/JPL-Caltech SPHEREx 2025 mosaic. Click or drag to move the field."></canvas>
+            <div class="minimap-foot"><span>NASA/JPL-Caltech mosaic</span><span>Click or drag</span></div>
           </div>
           <div id="stageBadge" class="stage-badge" hidden>LIVE IRSA · REAL FITS</div>
           <div class="stage-hud">
@@ -318,6 +318,14 @@
       <div class="lab-heading">
         <div><p class="kicker">OBSERVATION WORKSPACE</p><h2>Go deeper than one picture.</h2></div>
         <div class="lab-heading-actions"><span class="lab-caption">WAVELENGTH · SKY · LEARN · GAME · VERIFY</span><button id="appToolsClose" class="app-sheet-close" type="button">Close ✕</button></div>
+      </div>
+      <div class="tools-sky-context" aria-label="Current sky context">
+        <div id="toolsSkyImage" class="tools-sky-thumb" role="img" aria-label="Current SPHEREx sky preview"></div>
+        <div class="tools-sky-copy">
+          <span>SKY UNDER THESE TOOLS</span>
+          <strong id="toolsSkyTitle">No real visit loaded</strong>
+          <small id="toolsSkyMeta">Choose a field to see it beside the tools.</small>
+        </div>
       </div>
       <div class="lab-tabs" role="tablist" aria-label="Observation workspace tools">
         <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labWavelength" data-lab-tab="wavelength">Wavelength & filters</button>

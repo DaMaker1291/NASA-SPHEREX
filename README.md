@@ -3,10 +3,13 @@
 A public-facing browser viewer for real SPHEREx level-2 data. Pick a named
 moving target or enter any coordinates, and the app asks IRSA for the actual
 SPHEREx DR1 detector frames covering it, fetches real FITS cutouts through a
-Worker proxy, and plays them as a visit-by-visit sequence. A filmstrip, blink
-control and a real difference view make it practical to spot motion or
-brightness changes. Spectra are measured from those pixels with the WCS-WAVE
-table. Gaia DR3 and AllWISE overlays are live catalogue queries.
+Worker proxy, and plays them as a visit-by-visit sequence. Discovery tries
+IRSA TAP against `spherex.artifact`/`spherex.plane` first for newly ingested
+rows, with SIA2 covering DR1, deep and QR3 collections as the availability
+fallback. A zero-row result is a real `NO COVERAGE` state, not a synthetic
+frame. A filmstrip, blink control and a real difference view make it practical
+to spot motion or brightness changes. Spectra are measured from those pixels
+with the WCS-WAVE table. Gaia DR3 and AllWISE overlays are live catalogue queries.
 
 There is no deterministic sky model in the viewer and no simulated noise,
 contamination or catalogue. The source of every displayed cutout is named in
@@ -153,7 +156,28 @@ When the bundled index is used, the badge reads **CACHED IRSA • REAL FITS**;
 live SIA2 results read **LIVE IRSA • REAL FITS**. **Refetch** and any other field
 use the live Worker routes. IRSA occasionally answers the cutout service with
 `503 Server busy`; the proxy retries and the UI exposes a Retry button rather
-than substituting a model.
+than substituting a model. If the cutout service is unavailable, the Worker can
+read the same product from the public SPHEREx S3 bucket using HTTP byte ranges;
+it fetches the header blocks and only the IMAGE/VARIANCE/FLAGS/ZODI/WCS-WAVE
+HDUs needed for the crop, rather than downloading the full 65 MB product. See
+`docs/live-data.md`.
+
+### Verified local mirror
+
+`public/mirror/` contains a checked, local mirror of the default field in the
+D2 and D6 detectors, with eight real visits per detector. Each mirrored frame
+has a PNG preview, a real FITS cutout, the original IRSA URI, and SHA-256
+checksums; `npm run mirror:verify` validates all 32 files and signatures. The
+browser verifies every mirrored PNG before display and labels it
+**LOCAL MIRROR · REAL FITS**. A matching verified field is shown immediately
+while the live IRSA request refreshes in the background; if that request fails,
+the mirror remains visible. This keeps the default field available when IRSA
+discovery is unavailable. The ingestor talks directly to IRSA TAP/SIA2 and the
+IRSA/S3 cutout sources, so it does not need the app API; a fresh run mirrors up
+to 24 visits per detector by default and can mirror every available visit with
+`--limit 0`. The mirror contains real archive products only; it does not invent
+missing fields. See `docs/mirror.md` for the ingestion CLI and the limits of a
+selected-field mirror.
 
 ## What is real
 
@@ -176,8 +200,10 @@ the wide detector strip used for spectra covers the detector’s real spectral
 range. The six-array, 102-channel band plan is instrument geometry, not a claim
 that the viewer has a full 102-band image cube. Gaps in the spectrum are real
 detector coverage gaps. No astrometric or photometric correction beyond the IRSA
-level-2 pipeline is applied. IRSA availability is a hard dependency; cached
-default data is the only offline pixel path.
+level-2 pipeline is applied. IRSA availability is a hard dependency for new
+discovery; the verified default-field mirror remains available when it is down.
+Other fields still require the live archive to be discovered; no synthetic
+pixel path exists for them.
 
 ## URL state
 

@@ -342,6 +342,31 @@ app.get('/api/spherex/frames', async (c) => {
       data = fallback
     }
 
+    if (!data.observations.length) {
+      c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
+      c.header('X-Data-Source', asciiHeader(data.source.label))
+      const response = c.json({
+        source: data.source,
+        field: { ra, dec, fov },
+        summary: null,
+        sky: skyContext(ra, dec),
+        detector: null,
+        detectorRequested: requestedDetector,
+        availableDetectors: [],
+        palette,
+        stretch,
+        frames: [],
+        coverage: data.coverage ?? {
+          observed: false,
+          message: 'Region not yet observed in the current SPHEREx DR1/QR3 releases.',
+          checkedAt: new Date().toISOString(),
+          releases: ['DR1', 'QR3'],
+        },
+      })
+      edgeStore(c, response)
+      return withCacheState(response, 'MISS')
+    }
+
     const groups = new Map<string, IrsaObservation[]>()
     for (const observation of data.observations) {
       const key = observation.obsid.replace(/_\d+$/, '')
@@ -447,8 +472,9 @@ app.get('/api/spherex/png', async (c) => {
 
     c.header('Content-Type', 'image/png')
     c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
-    c.header('X-Data-Source', 'IRSA SPHEREx cutout raster')
+    c.header('X-Data-Source', asciiHeader(`${cutout.source} raster`))
     c.header('X-Data-Url', cutout.uri)
+    if (!cutout.source.startsWith('IRSA')) c.header('X-Data-Fallback', 's3-direct')
     c.header('X-Cutout-Cache', cutout.cached ? 'HIT' : 'MISS')
     c.header('X-Cutout-Size', cutout.sizeLabel)
     c.header('X-Raster-Cache', rasterResult.cached ? 'HIT' : 'MISS')
@@ -517,8 +543,9 @@ app.get('/api/spherex/cutout', async (c) => {
     const data = await getCutout(uri, ra, dec, fov)
     c.header('Content-Type', 'application/fits')
     c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
-    c.header('X-Data-Source', 'IRSA SPHEREx cutout')
+    c.header('X-Data-Source', asciiHeader(data.source))
     c.header('X-Data-Url', data.uri)
+    if (!data.source.startsWith('IRSA')) c.header('X-Data-Fallback', 's3-direct')
     c.header('X-Cutout-Size', String(data.size))
     c.header('X-Cutout-Cache', data.cached ? 'HIT' : 'MISS')
     const response = c.body(data.buffer)
@@ -556,7 +583,8 @@ app.get('/api/spherex/summary', async (c) => {
     const sky = summary.center ? skyContext(summary.center.ra, summary.center.dec) : skyContext(ra, dec)
 
     c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
-    c.header('X-Data-Source', 'IRSA SPHEREx cutout header summary')
+    c.header('X-Data-Source', asciiHeader(`${cutout.source} header summary`))
+    if (!cutout.source.startsWith('IRSA')) c.header('X-Data-Fallback', 's3-direct')
     c.header('X-Cutout-Cache', cutout.cached ? 'HIT' : 'MISS')
     c.header('X-Summary-Cache', summaryCached ? 'HIT' : 'MISS')
     const response = c.json({

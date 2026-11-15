@@ -41,11 +41,19 @@ export type IrsaFieldSummary = {
   estimatedBytes: number
 }
 
+export type IrsaCoverage = {
+  observed: boolean
+  message: string
+  checkedAt: string
+  releases: string[]
+}
+
 export type IrsaFind = {
   source: { label: string; url: string; query: string }
   field: { ra: number; dec: number; fov: number }
   observations: IrsaObservation[]
   summary?: IrsaFieldSummary
+  coverage?: IrsaCoverage
   cachedAt?: string
 }
 
@@ -124,7 +132,7 @@ export type CatalogResult = {
 }
 
 export type SourceProbe = {
-  id: 'sia' | 'tap' | 's3' | 'hips'
+  id: 'sia' | 'sia-qr3' | 'tap' | 's3' | 'hips'
   label: string
   ok: boolean
   status: number | null

@@ -1,4 +1,4 @@
-export type SourceId = 'sia' | 'tap' | 's3' | 'hips'
+export type SourceId = 'sia' | 'sia-qr3' | 'tap' | 's3' | 'hips'
 
 export type SourceProbe = {
   id: SourceId
@@ -22,6 +22,8 @@ const PROBE_TIMEOUT_MS = 6_000
 
 const SIA_PROBE =
   'https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_dr1&POS=circle+150+19.5+0.01&RESPONSEFORMAT=CSV&MAXREC=1'
+const SIA_QR3_PROBE =
+  'https://irsa.ipac.caltech.edu/SIA?COLLECTION=spherex_qr3&POS=circle+150+19.5+0.01&RESPONSEFORMAT=CSV&MAXREC=1'
 const TAP_PROBE =
   'https://irsa.ipac.caltech.edu/TAP/sync?QUERY=SELECT+TOP+1+*+FROM+TAP_SCHEMA.tables&FORMAT=csv'
 const S3_PROBE =
@@ -76,16 +78,23 @@ async function probe(
 
 async function buildHealth(): Promise<SourceHealth> {
   const sources = await Promise.all([
-    probe('sia', 'SIA2 discovery', SIA_PROBE, 'text/csv'),
+    probe('sia', 'SIA2 discovery · DR1', SIA_PROBE, 'text/csv'),
+    probe('sia-qr3', 'SIA2 discovery · QR3', SIA_QR3_PROBE, 'text/csv'),
     probe('tap', 'IRSA TAP (catalog)', TAP_PROBE, 'text/csv'),
     probe('s3', 'S3 bucket', S3_PROBE, 'application/xml'),
     probe('hips', 'HIPS cube', HIPS_PROBE, 'application/fits', true),
   ])
+  const discoveryOk = sources.some(
+    (source) => (source.id === 'sia' || source.id === 'sia-qr3' || source.id === 'tap') && source.ok,
+  )
+  const pixelsOk = sources.some((source) => (source.id === 's3' || source.id === 'hips') && source.ok)
   return {
     checkedAt: new Date().toISOString(),
-    ok: sources.every((source) => source.ok),
-    discoveryOk: sources.some((source) => source.id === 'sia' && source.ok),
-    pixelsOk: sources.some((source) => (source.id === 's3' || source.id === 'hips') && source.ok),
+    // Individual providers can be degraded without taking the viewer down.
+    // The core paths are discovery and direct pixels, not a unanimous probe.
+    ok: discoveryOk && pixelsOk,
+    discoveryOk,
+    pixelsOk,
     sources,
   }
 }

@@ -1,0 +1,220 @@
+﻿SPHEREx Viewer Research, Document 2
+Research notes for the Drift SPHEREx viewer
+Prepared by Shaurjesh Basu
+14 November 2026
+
+
+WHAT THIS DOCUMENT IS ABOUT
+
+
+The hardest part of this project was deciding what not to build.
+
+
+A browser tool can draw a pretty picture of a galaxy in an afternoon. It cannot earn the right to call that picture a coadd, a difference image, or a proper-motion detection without a lot of machinery behind it. The algorithms in this document are the ones that separate a viewer from a survey pipeline. I studied them because they define the edges of the app, not because I planned to hide them behind a button.
+
+
+The app is a viewer and a pixel-measurement tool. It asks IRSA for real detector frames, fetches a real cutout, draws the real arrays, and measures an aperture spectrum from a real detector strip. There is no sky model, no synthetic noise, no invented catalogue, and no hidden stack. The badge in the corner of the image always says where the pixels came from.
+
+
+The algorithm choices follow the difference-imaging and reprojection literature (Alard & Lupton 1998; Bramich 2008; Zackay et al. 2016; Jacob et al. 2010; Robitaille et al. 2020).
+
+
+THE FOUR THINGS THE APP DOES
+
+
+1. Ask IRSA which real SPHEREx detector frames cover a position.
+2. Fetch one real Level-2 cutout for a selected visit and detector.
+3. Draw the real IMAGE, VARIANCE, FLAGS, and ZODI arrays with their native WCS.
+4. Measure a real aperture spectrum from the real detector strip, using WCS-WAVE.
+
+
+That is the whole contract. If a feature does not fit those four jobs, it belongs in a different tool or a later version with its own validation.
+
+
+A CUTOUT IS NOT A COADD
+
+
+A cutout is a window cut out of one parent file. IRSA's SPHEREx cutout service takes a spatial subset of one Multi-Extension FITS product and cuts every extension the same way. The WCS, the spectral lookup table, the flags, and the variance all stay attached to the pixels they describe. The service does not resample the image or combine it with anything else.
+
+
+A coadd is a different object. It takes several exposures, puts them on a common grid, and averages them to reduce noise or fill gaps. The usual approach is to define a common tangent plane and reproject each image onto it (Jacob et al. 2010; Robitaille et al. 2020; Astropy Collaboration 2022). reproject is the Python reference implementation; Montage is the long-standing C toolkit. Both handle FITS WCS, including SIP distortion, and both can weight and combine images.
+
+
+The reprojection call is the easy part. The background is the hard part (Kelsall et al. 1998; Akeson et al. 2026a). SPHEREx images carry a zodiacal light model called ZODI, and that model is not subtracted from IMAGE. The zodiacal background changes with time and position. If you coadd epochs without matching the background, you get a moving pedestal and artificial structure. If you subtract ZODI too aggressively, you can remove real diffuse emission. The archive gives you the model so you can make that choice explicitly.
+
+
+I did not implement reprojection or coaddition. The app shows one native cutout at a time. The visit slider changes the exposure; it does not build a stack. That keeps the geometry honest and avoids a false claim of deeper data.
+
+
+A future coadd could still use the cutout service as its starting point. A server-side job would fetch several cutouts, reproject them to a common WCS, fit or subtract the background, and return a weight map. That is a real pipeline with real failure modes. It should not be hidden inside a difference toggle.
+
+
+DIFFERENCE IMAGING IS A CHAIN, NOT A BUTTON
+
+
+The standard reference is optimal image subtraction (Alard & Lupton 1998; Bramich 2008; Zackay et al. 2016). The idea is simple to state: find a convolution kernel that matches the PSF of the reference image to the PSF of the science image, then subtract. The implementation is not simple.
+
+
+A pixel-by-pixel subtraction fails whenever the PSF changes between epochs. SPHEREx's PSF changes with wavelength and position, and the native pixels undersample it. A practical difference pipeline needs a common astrometric frame, a PSF model or a set of matching stars, a background model on both images, a mask for saturated and flagged pixels, a kernel fit that is stable across the field, and a way to reject artifacts that survive the subtraction.
+
+
+Even then, bright stars leave residuals. Satellite trails can look like moving sources. The undersampled PSF makes the kernel fit sensitive to where a star falls inside a pixel. The LSST stack adds decorrelation and artifact flags for exactly these reasons.
+
+
+I did not build difference imaging. The app has no template, no registration, no PSF matching, and no artifact rejection. Putting a difference button on a single cutout would produce a picture that looks scientific and cannot be trusted.
+
+
+What the app does have is the raw material: the visit list, the real flags, and the real variance. A future difference mode could use those, but it would need a separate validation set and a label that says exactly what was subtracted from what.
+
+
+PROPER MOTION: WHY A SLIDER IS NOT ENOUGH
+
+
+A star with proper motion is moving across the sky. The units are arcseconds per year, and the motion is usually small. The point of shift-and-stack is to use that motion: assume a vector, shift each epoch by the predicted amount, and stack. A real moving source adds coherently. A stationary background smears. If you try many vectors, you get a score map that shows where a source would have to be moving to line up.
+
+
+The test targets in the research plan cover different regimes (Barnard 1916; Luhman 2014):
+
+
+- Barnard's Star moves about 10.3 arcsec per year. Over a two-year baseline that is roughly 20 arcsec, or about three SPHEREx pixels. It is bright and well studied, which makes it a good astrometric sanity check.
+- WISE 0855 is a very faint Y dwarf with a large proper motion, roughly 8 arcsec per year. It is a sensitivity and stacking challenge, not a single-epoch detection guarantee.
+- Epsilon Indi B is a brown-dwarf pair with a separation of roughly 0.7 to 1.5 arcsec. That is far below the 6.15 arcsec SPHEREx pixel. The pair is unresolved. The tool can show a blended PSF and photometric variability, but it cannot resolve the two objects.
+- RW Aur and R Dra are variable stars. Their variability timescales do not line up with a six-month cadence, so a visit series can alias the period. The tool can show the sampling, but it cannot recover a period the cadence does not support.
+
+
+I did not implement shift-and-stack. The app does not propagate Gaia proper motions either. It fetches pmra and pmdec for Gaia sources, but the overlay uses the catalogue position at the catalogue epoch, not a motion-corrected position at the SPHEREx epoch. That is a real limitation, and the guide says so.
+
+
+If I add proper-motion stacking, it will be a separate job with a user-supplied vector, a score map, and a null test. It will not be a checkbox that silently changes the data.
+
+
+THE 102-BAND QUESTION
+
+
+The 102 channels are not a single cube in the Level-2 data (Akeson et al. 2026a; Bock et al. 2026). They are 17 nominal channels in each of six detector arrays. A small square cutout covers a narrow wavelength slice because the linear variable filter maps wavelength to position. A wide detector strip covers the array's full spectral range.
+
+
+That geometry explains the spectrum path. The app uses a 24 by 2,040 pixel strip from each selected detector. The server averages a five-pixel aperture row by row, reads the central wavelength and bandwidth from WCS-WAVE, and returns the measured samples. It does not interpolate across detector gaps. It does not fill missing channels. It does not combine the six arrays into a seamless 0.75 to 5 micron spectrum. The chart shows separate segments, with gaps where the detector coverage has gaps.
+
+
+This is a deliberate real-pixels-first choice. A continuous curve would look better and say less. The app marks samples with a real FLAGS bit in pink and reports the number of flagged samples.
+
+
+I did not build a spectral cube, a pseudo-colour composite, or an RGB mapping of 102 bands. The BandExplorer shows the nominal band plan and colours; it is instrument geometry, not a claim that the viewer has a 102-plane cube. The local FITS lab can read a real all-extension product, including the PSF cube, but that is a file inspector, not a sky cube.
+
+
+A future cube builder would need to group exposures by position and survey, resample each detector frame onto a common spatial grid, assign each pixel to a spectral channel using CWAVE and CBAND, carry variance and flags and coverage, and decide how to handle gaps and overlaps. That is a server-side job. It is not a browser rendering trick.
+
+
+CATALOGUES: A USEFUL OVERLAY, NOT A DETECTION
+
+
+The app uses two catalogue services (Gaia Collaboration et al. 2023; Cutri et al. 2013; Wright et al. 2010):
+
+
+- Gaia DR3 through the ESA Gaia Archive TAP service, querying gaiadr3.gaia_source with a cone restriction.
+- AllWISE through IRSA's Gator cone search, using the allwise_p3as_psd table and the w1mpro and w2mpro magnitudes.
+
+
+Both are live queries. The positions are projected onto the detector WCS with the same inversion used for the pixel probe. The overlay draws real catalogue positions. It does not invent scene stars.
+
+
+The Gaia query returns pmra and pmdec, but the overlay does not propagate them. For a high-proper-motion star, the Gaia position at J2016.0 can be several arcseconds away from the SPHEREx epoch. That is another reason the app labels the overlay as a catalogue position, not a measured counterpart.
+
+
+The app does not query SIMBAD or NED. The coordinate inputs are decimal degrees only. I did not add a name resolver because it would introduce a second network dependency and a parsing layer the first version did not need. If I add one, Sesame is the obvious choice: it resolves names across SIMBAD, NED, and VizieR, and it has a simple HTTP interface. The URL state already has room for a target parameter.
+
+
+COORDINATE PARSING
+
+
+The current parser is intentionally strict (Calabretta & Greisen 2002):
+
+
+- RA is decimal degrees from 0 to 360.
+- Dec is decimal degrees from -90 to +90.
+- Field of view is 0.10 to 0.90 degrees.
+- Detector and visit IDs are validated against the SIA result.
+
+
+It does not parse sexagesimal strings, and it does not resolve object names. That is a real limitation for a public tool. A robust version would accept 17h57m47.67s +04d44m16.73s, decimal degrees, and a name. The parsing rules are not hard. The failure modes are: ambiguous names, epoch-dependent positions, and silent truncation.
+
+
+The URL state is already there, so a resolver only needs to produce the same three numbers and hand off to the existing search path. That is a small feature with a surprisingly large set of edge cases.
+
+
+WHAT SHIPPED AND WHAT I PARKED
+
+
+Shipped:
+
+
+- SIA2 discovery of real DR1 detector frames.
+- Real cutout fetch and FITS parsing.
+- Native WCS pixel probe and catalogue projection.
+- IMAGE, VARIANCE, FLAGS, and ZODI layers.
+- A real aperture spectrum from a wide detector strip.
+- Gaia DR3 and AllWISE overlays.
+- URL state for field, visit, detector, and layer.
+- A local all-extension FITS lab.
+
+
+Parked:
+
+
+- Reprojection and coaddition.
+- Background matching across epochs.
+- Optimal image subtraction.
+- Artifact rejection beyond the archive flags.
+- Proper-motion shift-and-stack.
+- A full 102-channel cube.
+- A pseudo-colour or RGB compositor.
+- Sesame and SIMBAD name resolution.
+- Sexagesimal parsing.
+- Server-side asynchronous jobs.
+
+
+The parked list is not a roadmap promise. It is a record of what the research covered and what the current app does not claim.
+
+
+WHY THIS ORDER
+
+
+I built the discovery and cutout path first because everything else depends on having a real FITS file with a real WCS. Once that worked, the viewer could expose the real arrays and the real flags. The spectrum came next because it uses the same cutout service and the same WCS-WAVE table. Catalogue overlays came after that because they are a projection problem, not a pixel problem.
+
+
+The advanced algorithms come last because they need a stable data path and a validation set. Starting with difference imaging would have produced a demo that looked impressive and could not be trusted. Starting with the archive made a smaller tool that can be checked against the exact IRSA product. I would rather have a small tool that survives contact with the archive than a large one that only survives a screenshot.
+
+
+REFERENCES
+
+
+Akeson, R., Dubois-Felsmann, G. P., Crill, B. P., et al. 2026a. The SPHEREx Image and Spectrophotometry Processing Pipeline. ApJS, 285, 67. doi:10.3847/1538-4365/ae8843.
+Akeson, R., Faisst, A., Masters, D., et al. 2026b. SPHEREx Explanatory Supplement. SSDC-DP-017, version 2.1. Caltech/IPAC. https://irsa.ipac.caltech.edu/data/SPHEREx/docs/SPHEREx_Expsupp.pdf
+Bock, J. J., Aboobaker, A. M., Adamo, J., et al. 2026. The SPHEREx Satellite Mission. ApJ, 999, 139. doi:10.3847/1538-4357/ae2be2.
+Crill, B. P., Werner, M., Akeson, R., et al. 2020. SPHEREx: NASA's near-infrared spectrophotometric all-sky survey. Proc. SPIE, 11443, 114430I. doi:10.1117/12.2567224.
+Alard, C., & Lupton, R. H. 1998. A Method for Optimal Image Subtraction. ApJ, 503, 325-331. doi:10.1086/305984.
+Bramich, D. M. 2008. A new algorithm for difference image analysis. MNRAS, 386, L77-L81. doi:10.1111/j.1745-3933.2008.00464.x.
+Zackay, B., Ofek, E. O., & Gal-Yam, A. 2016. Proper Image Subtraction: Optimal Transient Detection, Photometry, and Hypothesis Testing. ApJ, 830, 27. doi:10.3847/0004-637X/830/1/27.
+Jacob, J. C., Katz, D. S., Berriman, G. B., et al. 2010. Montage: a grid portal and software toolkit for science-grade astronomical image mosaicking. International Journal of Computational Science and Engineering, 4, 73-87.
+Robitaille, T., Deil, C., & Ginsburg, A. 2020. reproject: Python-based astronomical image reprojection. Astrophysics Source Code Library, ascl:2011.023.
+Astropy Collaboration, Price-Whelan, A. M., Lim, P. L., et al. 2022. The Astropy Project: Sustaining and Growing a Community-oriented Open-source Project and the Latest Major Release (v5.0) of the Core Package. ApJ, 935, 167. doi:10.3847/1538-4357/ac7c74.
+Kelsall, T., Weiland, J. L., Franz, B. A., et al. 1998. The COBE Diffuse Infrared Background Experiment Search for the Cosmic Infrared Background. II. Model of the Interplanetary Dust Cloud. ApJ, 508, 44-73. doi:10.1086/306380.
+Gaia Collaboration, Vallenari, A., Brown, A. G. A., et al. 2023. Gaia Data Release 3. Summary of the content and survey properties. A&A, 674, A1. doi:10.1051/0004-6361/202243940.
+Cutri, R. M., Wright, E. L., Conrow, T., et al. 2013. Explanatory Supplement to the AllWISE Data Release Products. IPAC/Caltech.
+Wright, E. L., Eisenhardt, P. R. M., Mainzer, A. K., et al. 2010. The Wide-field Infrared Survey Explorer (WISE): Mission Description and Initial On-orbit Performance. AJ, 140, 1868-1881. doi:10.1088/0004-6256/140/6/1868.
+Barnard, E. E. 1916. A small star with large proper motion. AJ, 29, 181-183. doi:10.1086/104156.
+Luhman, K. L. 2014. Discovery of a 250 K Brown Dwarf at 2 pc from the Sun. ApJL, 786, L18. doi:10.1088/2041-8205/786/2/L18.
+Lang, D., Hogg, D. W., Mierle, K., Blanton, M., & Roweis, S. 2010. Astrometry.net: Blind Astrometric Calibration of Arbitrary Astronomical Images. AJ, 139, 1782-1800. doi:10.1088/0004-6256/139/5/1782.
+Bertin, E., & Arnouts, S. 1996. SExtractor: Software for source extraction. A&AS, 117, 393-404. doi:10.1051/aas:1996164.
+
+
+DATA AND DOCUMENTATION
+
+
+SPHEREx data products: https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products
+Astropy reproject: https://docs.astropy.org/projects/reproject/en/stable/
+Montage: http://montage.ipac.caltech.edu/
+Gaia Archive: https://gea.esac.esa.int/archive/
+IRSA Gator: https://irsa.ipac.caltech.edu/docs/howto/gator_prog_interface.html
+Sesame: https://cds.unistra.fr/cgi-bin/Sesame

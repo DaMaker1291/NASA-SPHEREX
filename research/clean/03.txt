@@ -1,0 +1,210 @@
+﻿SPHEREx Viewer Research, Document 3
+Research notes for the Drift SPHEREx viewer
+Prepared by Shaurjesh Basu
+14 November 2026
+
+
+WHAT THIS DOCUMENT IS ABOUT
+
+
+The backend is a doorman, not a data centre.
+
+
+That sounds like a limitation, and in some ways it is. But it is the right shape for this app. The archive already owns the pixels. The catalogues already own the source lists. The browser is perfectly capable of parsing a FITS cutout and drawing it. The backend's job is to make those requests safe, bounded, and repeatable, and then get out of the way.
+
+
+This document covers the architecture I chose, the alternatives I evaluated, and the parts of the original starter stack that I did not use. The archive and product facts come from the SPHEREx pipeline and Explanatory Supplement papers (Akeson et al. 2026a, 2026b).
+
+
+THE SHAPE OF THE SYSTEM
+
+
+The app is a React and TypeScript client served by a Cloudflare Worker. The Worker uses Hono for routing. Vite builds the client and the Worker together through the Cloudflare Vite plugin, and Wrangler deploys the Worker and its static assets.
+
+
+There is no FastAPI service, no dask cluster, no PostgreSQL database, and no object-store mirror. That is not because those tools are bad. It is because the first version has no user accounts, no long-running jobs, and no need to store derived data. A request comes in, the Worker validates it, fetches from IRSA or Gaia, optionally caches the response, and returns it. The browser does the FITS parsing and drawing.
+
+
+The trade-off is real. A Worker has a CPU budget, a memory budget, and a subrequest budget. Reprojection, coaddition, difference imaging, and cube building belong in a batch system, not in a request handler. I kept them out. If the app grows those features, the backend grows with them, but it should grow because of a workload, not because a stack diagram looked impressive.
+
+
+THE API IS SMALL
+
+
+The API surface follows the FITS and WCS standards (Hanisch et al. 2001; Calabretta & Greisen 2002; Greisen et al. 2006), and it is deliberately short:
+
+
+- Discovery: GET /api/spherex/find, with ra, dec, and fov.
+- Cutout: GET /api/spherex/cutout, with uri, ra, dec, and fov.
+- Spectrum: GET /api/spherex/spectrum, with up to six uri values, ra, and dec.
+- Catalog: GET /api/catalog, with survey, ra, dec, and radius.
+- Health: GET /api/health, with no parameters.
+
+
+All routes return JSON errors with a code, a message, and a request ID. Failures carry Cache-Control: no-store. Successful cutouts return application/fits. Successful discovery and catalogue responses return JSON.
+
+
+The find route is the one that matters most (Akeson et al. 2026a). It builds an IRSA SIA2 query with the spherex_dr1 collection, a cone search around the requested position, CSV output, and a row cap. It parses the CSV, groups rows by observation time and observation ID, extracts the detector from the filename, and returns a list of observations with their detector products. The browser never sees the raw archive table.
+
+
+The cutout route does not accept an arbitrary URL (Akeson et al. 2026b). It accepts an IRSA product URL that passes an allowlist: HTTPS, the irsa.ipac.caltech.edu host, a path under the SPHEREx data area, a .fits suffix, no user information, no port, no fragment, and no path traversal. It appends the centre, size, and gzip settings, fetches the cutout, checks that the response starts with the FITS signature, and strips the EPSF block before returning it. The strip matters because the PSF table is large and the basic viewer does not need it. The local FITS lab can read a full PSF product when the user supplies one.
+
+
+The spectrum route uses the same cutout service (Greisen et al. 2006; Akeson et al. 2026a) with a 24 by 2,040 pixel strip. It reads IMAGE, VARIANCE, FLAGS, and WCS-WAVE, averages a five-pixel aperture row by row, and returns the real samples. It fetches at most six detector strips, three at a time, and reports partial failures instead of failing the whole request.
+
+
+The catalogue route uses Gaia TAP for Gaia and IRSA Gator for AllWISE (Gaia Collaboration et al. 2023; Cutri et al. 2013). Both are live queries with a row cap. The app does not keep a local copy of either catalogue.
+
+
+WHY NOT THE FULL STARTER STACK
+
+
+The original research stack suggested FastAPI, dask, kerchunk, xarray, and a PostgreSQL database with PostGIS. Those are reasonable choices for a team building a data service. They are not the smallest correct choice for this app.
+
+
+FastAPI would add a Python runtime and a container. The Worker already runs close to the user, and the request is a proxy. The CPU work, FITS parsing, happens in the browser. For this workload, FastAPI would be a second service to deploy and monitor without removing any real bottleneck.
+
+
+dask would help with a multi-epoch coadd or a large cutout batch. The current app fetches one cutout at a time. Adding dask would mean running a scheduler for a request that already completes in a few seconds at the edge.
+
+
+kerchunk and xarray would be useful for reading many S3 objects as virtual datasets. The app does not need a virtual dataset. It needs one cutout from IRSA, and it needs the browser to parse it.
+
+
+PostgreSQL and PostGIS would be useful for jobs, annotations, and a local catalogue. The app has none of those. The shareable URL is the state.
+
+
+The edge proxy has limits, and I designed around them. Cloudflare Workers have a CPU budget, a 128 MB memory limit, a subrequest limit, and a 64 MiB bundle limit. The Cache API is per data centre, not a global database. The app uses it for successful GETs and keeps a small in-memory cache for hot requests, but it does not treat either one as durable storage.
+
+
+If the app grows a job queue, the calculation changes. A video render or a multi-epoch stack should be a queued job with an object-store result, not a long request. That is the point where a database and a worker pool start to earn their keep.
+
+
+CACHING IS A SET OF BETS
+
+
+There are four cache layers, and they do different jobs.
+
+
+1. In-memory caches inside the Worker isolate. SIA2 results live for 5 minutes, catalogue results for 30 minutes, and spectrum segments for 10 minutes. These are bounded maps, not a database.
+2. Single-flight wrappers. If ten users request the same field at once, one upstream request runs and the rest wait for it. That protects IRSA from a thundering herd and keeps latency predictable.
+3. The Cloudflare Cache API, under the drift-api-v2 namespace. Successful GET responses are stored with the route's cache headers. Discovery is cached for 5 minutes, cutouts for a day at the browser and a week at the edge, catalogues for 30 minutes, and spectra for 5 minutes.
+4. The bundled default field. The client ships a real SIA2 result and a real D2 cutout. The server also has an exact-coordinate fallback to the bundled SIA result. This is the only offline pixel path.
+
+
+The caches are conservative on purpose. A cutout is immutable for a given product and centre, so a long TTL is safe. A SIA2 result can change when new data are ingested, so 5 minutes is a reasonable compromise. A catalogue can change when a new data release lands, so 30 minutes balances freshness against load.
+
+
+The failure path is not a cache. If SIA2 returns a 5xx, the Worker maps it to a 502 and puts the service into a 30-second cooldown. During the cooldown, requests return 503 with Retry-After instead of hammering the archive. The default field can still fall back to the bundled result. Other fields cannot.
+
+
+That behaviour mattered during the build. SIA2 and TAP were intermittently returning 502s, while the cutout service and S3 stayed healthy. The default field still worked from the bundled index and cutout. The other presets failed at discovery because there was no cached index for them. That was a deliberate consequence of caching only the default, not a bug in the cutout path.
+
+
+SECURITY: THE URL IS THE DANGEROUS PART
+
+
+The most important security property is the SSRF boundary. The cutout and spectrum routes accept a URL from the client, so the Worker must not fetch arbitrary hosts. The allowlist checks the protocol, host, path prefix, suffix, user information, port, fragment, and traversal. It also rejects anything that is not an IRSA SPHEREx FITS product.
+
+
+The rest is input discipline:
+
+
+- RA is 0 to 360, Dec is -90 to +90, and field of view is 0.02 to 0.9 degrees for cutouts and 0.1 to 0.9 degrees for discovery.
+- Survey is an enum: gaia or wise.
+- Spectrum requests are capped at six detector products.
+- A cutout response is capped at 40 MB; a SIA response at 1.5 MB; a catalogue response at 2 MB.
+- Upstream requests have per-attempt timeouts and a total budget: 50 seconds for SIA2, 45 seconds for cutouts and TAP.
+- Transient 408, 429, and 5xx responses retry with exponential backoff and honour Retry-After.
+- Every API response carries a request ID, and server errors log a bounded JSON record.
+
+
+None of this makes the Worker a general-purpose proxy. It makes it a narrow, auditable bridge to two archives. That is a much smaller thing to secure.
+
+
+STORAGE: S3 IS A WAREHOUSE, NOT A MAP
+
+
+I evaluated the public S3 bucket seriously (Akeson et al. 2026b; Wilkinson et al. 2016). It is excellent for bulk access, and it is the right place to build a global index if the app ever needs one. But S3 is not a spatial discovery service. There is no native query for "find all objects covering this cone." A global index would need a separate database or a precomputed spatial index, plus a refresh pipeline for weekly ingest.
+
+
+IRSA's SIA2 service already solves that problem, and its cutout service already solves the "give me only the pixels around this position" problem. Using S3 would have meant rebuilding both. I kept S3 as a documented fallback and a future source for a cached preset index, not as the live path.
+
+
+I did not add PostgreSQL or PostGIS. The app has no user accounts, no annotations, no job history, and no local catalogue. The shareable URL is the state. If I add named workspaces, saved sessions, or asynchronous jobs, a small Postgres instance with PostGIS becomes reasonable. It would store job metadata and annotations, not the pixels.
+
+
+ASYNC JOBS AND VIDEO
+
+
+The research plan included a job API for video generation: create a job, check its status, fetch its result. I did not build it. The current viewer changes visits interactively; it does not render an MP4. A video job would need a queue, a worker, an object store, and a cleanup policy. That is a different product.
+
+
+If I build it, the design is straightforward:
+
+
+- The API creates a job record with the field, visits, bands, stretch, and output format.
+- A queue consumer fetches the cutouts, aligns them, renders frames, and writes the result to R2 or S3.
+- The status route reports progress and errors.
+- The result route returns a signed URL with an expiry.
+- The job record is the source of truth; the object store holds the bytes.
+
+
+That is the point where a database is not optional. The current app does not need it.
+
+
+DEPLOYMENT AND OPERATIONS
+
+
+The build is vite build plus a postbuild step that packages the Worker. Wrangler points at src/worker/index.ts and serves static assets through the ASSETS binding. The Worker handles API routes first, then falls through to the asset handler for the single-page app.
+
+
+The health route is intentionally cheap. It reports that the service is alive and does not call upstream. That makes it a liveness check, not a dependency check. A separate canary probes SIA2, TAP, S3, and the cutout service if I want to distinguish "the app is up" from "IRSA is up."
+
+
+The logs are structured JSON for API and asset errors. They include the request ID, path, status, code, and a truncated detail. They do not log the full upstream body or any user data. There is no user data to log.
+
+
+WHAT I WOULD CHANGE AT SCALE
+
+
+If this became a public service with thousands of users, I would add:
+
+
+- A durable cutout cache keyed by product URI, centre, and size, with a size budget and an eviction policy.
+- A preset index for the most-used fields, so an IRSA discovery outage does not break the landing experience.
+- A queue for coadds, difference images, and video, with a Postgres job table.
+- A canary that distinguishes SIA2, TAP, cutout, and S3 health.
+- A real integration test that runs against a recorded FITS fixture and a mock SIA response.
+
+
+I would not move the FITS parsing to the server. The browser already has the bytes, and the parser is the part that makes the viewer feel immediate. The server should stay a proxy. That is the design I would defend at any scale, even if the infrastructure around it changes.
+
+
+REFERENCES
+
+
+Akeson, R., Dubois-Felsmann, G. P., Crill, B. P., et al. 2026a. The SPHEREx Image and Spectrophotometry Processing Pipeline. ApJS, 285, 67. doi:10.3847/1538-4365/ae8843.
+Akeson, R., Faisst, A., Masters, D., et al. 2026b. SPHEREx Explanatory Supplement. SSDC-DP-017, version 2.1. Caltech/IPAC. https://irsa.ipac.caltech.edu/data/SPHEREx/docs/SPHEREx_Expsupp.pdf
+Bock, J. J., Aboobaker, A. M., Adamo, J., et al. 2026. The SPHEREx Satellite Mission. ApJ, 999, 139. doi:10.3847/1538-4357/ae2be2.
+Hanisch, R. J., Farris, A., Greisen, E. W., et al. 2001. Definition of the Flexible Image Transport System (FITS). A&A, 376, 359-380. doi:10.1051/0004-6361:20010923.
+Calabretta, M. R., & Greisen, E. W. 2002. Representations of celestial coordinates in FITS. A&A, 395, 1077-1122. doi:10.1051/0004-6361:20021327.
+Greisen, E. W., Calabretta, M. R., Valdes, F. G., & Allen, S. L. 2006. Representations of spectral coordinates in FITS. A&A, 446, 747-771. doi:10.1051/0004-6361:20053818.
+Jacob, J. C., Katz, D. S., Berriman, G. B., et al. 2010. Montage: a grid portal and software toolkit for science-grade astronomical image mosaicking. International Journal of Computational Science and Engineering, 4, 73-87.
+Robitaille, T., Deil, C., & Ginsburg, A. 2020. reproject: Python-based astronomical image reprojection. Astrophysics Source Code Library, ascl:2011.023.
+Astropy Collaboration, Price-Whelan, A. M., Lim, P. L., et al. 2022. The Astropy Project: Sustaining and Growing a Community-oriented Open-source Project and the Latest Major Release (v5.0) of the Core Package. ApJ, 935, 167. doi:10.3847/1538-4357/ac7c74.
+Gorski, K. M., Hivon, E., Banday, A. J., et al. 2005. HEALPix: A Framework for High-Resolution Discretization and Fast Analysis of Data Distributed on the Sphere. ApJ, 622, 759-771. doi:10.1086/427976.
+Wilkinson, M. D., Dumontier, M., Aalbersberg, I. J., et al. 2016. The FAIR Guiding Principles for scientific data management and stewardship. Scientific Data, 3, 160018. doi:10.1038/sdata.2016.18.
+Gaia Collaboration, Vallenari, A., Brown, A. G. A., et al. 2023. Gaia Data Release 3. Summary of the content and survey properties. A&A, 674, A1. doi:10.1051/0004-6361/202243940.
+Cutri, R. M., Wright, E. L., Conrow, T., et al. 2013. Explanatory Supplement to the AllWISE Data Release Products. IPAC/Caltech.
+
+
+DATA AND DOCUMENTATION
+
+
+IRSA SIA2: https://irsa.ipac.caltech.edu/ibe/sia.html
+IRSA TAP: https://irsa.ipac.caltech.edu/docs/program_interface/TAP.html
+SPHEREx cutout tool: https://irsa.ipac.caltech.edu/data/SPHEREx/docs/cutout_tool.html
+IRSA cloud access: https://irsa.ipac.caltech.edu/cloud_access/
+Cloudflare Workers limits: https://developers.cloudflare.com/workers/platform/limits
+Cloudflare Cache API: https://developers.cloudflare.com/workers/runtime-apis/cache
