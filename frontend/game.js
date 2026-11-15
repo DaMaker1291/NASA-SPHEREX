@@ -1,8 +1,9 @@
 const MAX_DIFFERENCES = 5;
 const CANVAS_SIZE = 480;
 const HIT_RADIUS = 0.066;
+const MIN_HIT_PX = 44;
 const HINT_MS = 3200;
-const MISS_MS = 720;
+const CLICK_MS = 850;
 
 const el = {
   board: document.getElementById('gameBoard'),
@@ -36,8 +37,8 @@ const state = {
   hints: 0,
   hintIndex: -1,
   hintTimer: 0,
-  missMark: null,
-  missTimer: 0,
+  clickMark: null,
+  clickTimer: 0,
   revealed: false,
   busy: true,
   lastPairKey: '',
@@ -223,8 +224,29 @@ function analyzePair(imageA, imageB) {
           if (differences[(y + dy) * width + x + dx] >= threshold) support += 1;
         }
       }
-      if (support < 4) continue;
-      peaks.push({ x, y, score: value });
+      if (support < 6) continue;
+
+      // Rank visible blobs rather than single noisy pixels, and center the
+      // target on the weighted middle of the change so a click on the star or
+      // smudge the player can actually see lands on the candidate.
+      let blobScore = 0;
+      let weightedX = 0;
+      let weightedY = 0;
+      let weight = 0;
+      for (let dy = -3; dy <= 3; dy += 1) {
+        for (let dx = -3; dx <= 3; dx += 1) {
+          const sample = differences[(y + dy) * width + x + dx];
+          if (sample < threshold * 0.7) continue;
+          blobScore += sample;
+          const sampleWeight = Math.max(1, sample - threshold * 0.5);
+          weightedX += (x + dx) * sampleWeight;
+          weightedY += (y + dy) * sampleWeight;
+          weight += sampleWeight;
+        }
+      }
+      const centerX = weight ? weightedX / weight : x;
+      const centerY = weight ? weightedY / weight : y;
+      peaks.push({ x: centerX, y: centerY, score: blobScore, peak: value });
     }
   }
 
@@ -245,7 +267,7 @@ function analyzePair(imageA, imageB) {
   return { candidates, threshold, medianDifference, mad };
 }
 
-function drawMarkers(context) {
+function drawMarkers(context, side) {
   const radius = 19;
   state.candidates.forEach((candidate, index) => {
     const x = candidate.x * CANVAS_SIZE;
@@ -291,22 +313,33 @@ function drawMarkers(context) {
     }
   }
 
-  if (state.missMark) {
-    const { x, y } = state.missMark;
+  if (state.clickMark && state.clickMark.side === side) {
+    const { x, y, hit } = state.clickMark;
+    const px = x * CANVAS_SIZE;
+    const py = y * CANVAS_SIZE;
     context.save();
-    context.strokeStyle = '#ff9eaa';
-    context.lineWidth = 2.2;
+    context.strokeStyle = hit ? '#8df0c9' : '#ff9eaa';
+    context.lineWidth = 2;
     context.beginPath();
-    context.moveTo(x * CANVAS_SIZE - 8, y * CANVAS_SIZE - 8);
-    context.lineTo(x * CANVAS_SIZE + 8, y * CANVAS_SIZE + 8);
-    context.moveTo(x * CANVAS_SIZE + 8, y * CANVAS_SIZE - 8);
-    context.lineTo(x * CANVAS_SIZE - 8, y * CANVAS_SIZE + 8);
+    context.arc(px, py, hit ? 14 : 10, 0, Math.PI * 2);
     context.stroke();
+    context.beginPath();
+    if (hit) {
+      context.fillStyle = '#8df0c9';
+      context.arc(px, py, 3, 0, Math.PI * 2);
+      context.fill();
+    } else {
+      context.moveTo(px - 7, py - 7);
+      context.lineTo(px + 7, py + 7);
+      context.moveTo(px + 7, py - 7);
+      context.lineTo(px - 7, py + 7);
+      context.stroke();
+    }
     context.restore();
   }
 }
 
-function drawPanel(canvas, image) {
+function drawPanel(canvas, image, side) {
   const context = canvas.getContext('2d');
   context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
   context.fillStyle = '#050a11';
@@ -314,12 +347,12 @@ function drawPanel(canvas, image) {
   if (image) {
     context.drawImage(image, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
   }
-  drawMarkers(context);
+  drawMarkers(context, side);
 }
 
 function draw() {
-  drawPanel(el.canvasA, state.imageA);
-  drawPanel(el.canvasB, state.imageB);
+  drawPanel(el.canvasA, state.imageA, 'A');
+  drawPanel(el.canvasB, state.imageB, 'B');
 }
 
 function stamp(frame) {
@@ -355,9 +388,22 @@ function updateRoundCopy(group, first, second) {
 
 function clearTimers() {
   clearTimeout(state.hintTimer);
-  clearTimeout(state.missTimer);
+  clearTimeout(state.clickTimer);
   state.hintIndex = -1;
-  state.missMark = null;
+  state.clickMark = null;
+}
+
+function flashClick(x, y, side, hit) {
+  state.clickMark = { x, y, side, hit };
+  clearTimeout(state.clickTimer);
+  const mark = state.clickMark;
+  state.clickTimer = setTimeout(() => {
+    if (state.clickMark === mark) {
+      state.clickMark = null;
+      draw();
+    }
+  }, CLICK_MS);
+  draw();
 }
 
 async function newRound() {
@@ -429,26 +475,32 @@ function handleGuess(event) {
   const x = (event.clientX - rect.left) / rect.width;
   const y = (event.clientY - rect.top) / rect.height;
   if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  const side = canvas === el.canvasA ? 'A' : 'B';
+  const radius = Math.max(HIT_RADIUS, MIN_HIT_PX / Math.max(1, Math.min(rect.width, rect.height)));
 
-  const alreadyFound = state.candidates.findIndex((candidate, index) => (
-    state.found.has(index) && Math.hypot(x - candidate.x, y - candidate.y) <= HIT_RADIUS
-  ));
-  if (alreadyFound >= 0) {
-    setStatus(`Difference ${alreadyFound + 1} is already found. Look for another one.`, 'success');
-    return;
-  }
-
-  const hit = state.candidates.findIndex((candidate, index) => (
-    !state.found.has(index) && Math.hypot(x - candidate.x, y - candidate.y) <= HIT_RADIUS
-  ));
+  let hit = -1;
+  let hitDistance = Infinity;
+  let alreadyFound = -1;
+  let foundDistance = Infinity;
+  state.candidates.forEach((candidate, index) => {
+    const distance = Math.hypot(x - candidate.x, y - candidate.y);
+    if (state.found.has(index)) {
+      if (distance <= radius && distance < foundDistance) {
+        alreadyFound = index;
+        foundDistance = distance;
+      }
+    } else if (distance <= radius && distance < hitDistance) {
+      hit = index;
+      hitDistance = distance;
+    }
+  });
 
   if (hit >= 0) {
     state.found.add(hit);
     clearTimeout(state.hintTimer);
     state.hintIndex = -1;
-    state.missMark = null;
-    draw();
     updateScore();
+    flashClick(x, y, side, true);
     if (state.found.size === state.candidates.length) {
       setStatus(`All ${state.candidates.length} real differences found. Load a new pair to keep going.`, 'success');
     } else {
@@ -458,19 +510,16 @@ function handleGuess(event) {
     return;
   }
 
+  if (alreadyFound >= 0) {
+    flashClick(x, y, side, true);
+    setStatus(`Difference ${alreadyFound + 1} is already found. Look for another one.`, 'success');
+    return;
+  }
+
   state.misses += 1;
   state.hintIndex = -1;
-  const mark = { x, y };
-  state.missMark = mark;
-  clearTimeout(state.missTimer);
-  state.missTimer = setTimeout(() => {
-    if (state.missMark === mark) {
-      state.missMark = null;
-      draw();
-    }
-  }, MISS_MS);
-  draw();
   updateScore();
+  flashClick(x, y, side, false);
   setStatus(`Not that one. ${state.misses} miss${state.misses === 1 ? '' : 'es'} — look for a star or smudge that changes between A and B.`, 'warn');
 }
 
