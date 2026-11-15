@@ -112,12 +112,21 @@ async function loadIndex() {
   return response.json();
 }
 
+function isPlayableFrame(frame) {
+  const width = Number(frame?.measurement?.width);
+  const height = Number(frame?.measurement?.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return true;
+  if (Math.min(width, height) < 120) return false;
+  const ratio = width / height;
+  return ratio >= 0.85 && ratio <= 1.15;
+}
+
 function buildGroups(index) {
   const groups = [];
   for (const field of index.fields || []) {
     const byDetector = new Map();
     for (const frame of field.frames || []) {
-      if (!frame.png) continue;
+      if (!frame.png || !isPlayableFrame(frame)) continue;
       const detector = frame.detector || frame.band || 'SPHEREx';
       const rows = byDetector.get(detector) || [];
       rows.push(frame);
