@@ -141,6 +141,7 @@ export type CutoutRaster = {
   band: string
   obsid: string
   center: { ra: number; dec: number } | null
+  orientationDeg: number | null
   wcsCorners: WcsCorners | null
   sky: ReturnType<typeof skyContext> | null
 }
@@ -173,6 +174,15 @@ export async function rasterizeCutout(
   const exposure = numberValue(image.header, 'EXPTIME', Number.NaN)
   const center = skyAt(image, (image.width - 1) / 2, (image.height - 1) / 2)
   const centerSky = center ? skyContext(center.ra, center.dec) : null
+  const pc11 = numberValue(image.header, 'PC1_1', Number.NaN)
+  const pc21 = numberValue(image.header, 'PC2_1', Number.NaN)
+  const cd11 = numberValue(image.header, 'CD1_1', Number.NaN)
+  const cd21 = numberValue(image.header, 'CD2_1', Number.NaN)
+  const orientation = Number.isFinite(pc11) && Number.isFinite(pc21)
+    ? Math.atan2(pc21, pc11)
+    : Number.isFinite(cd11) && Number.isFinite(cd21)
+      ? Math.atan2(cd21, cd11)
+      : Number.NaN
   // PNG rows are written from the FITS array in storage order, so the top of
   // the displayed image is the last FITS row. Expose corners in display order
   // so the browser can turn a screen position back into a real sky position.
@@ -216,6 +226,7 @@ export async function rasterizeCutout(
     band: textValue(image.header, 'BAND'),
     obsid: textValue(image.header, 'OBSID'),
     center,
+    orientationDeg: Number.isFinite(orientation) ? (orientation * 180) / Math.PI : null,
     wcsCorners,
     sky: centerSky,
   }

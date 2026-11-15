@@ -120,8 +120,102 @@ function isPlayableFrame(frame) {
   const height = Number(frame?.measurement?.height);
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return true;
   if (Math.min(width, height) < 120) return false;
-  const ratio = width / height;
-  return ratio >= 0.85 && ratio <= 1.15;
+  return Math.abs(width - height) <= 2;
+}
+
+function frameOrientation(frame) {
+  const value = Number(frame?.measurement?.orientationDeg);
+  return Number.isFinite(value) ? value : null;
+}
+
+function rotateImage180(image) {
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  context.translate(width, height);
+  context.rotate(Math.PI);
+  context.drawImage(image, 0, 0, width, height);
+  return canvas;
+}
+
+function lumaPlane(image, width, height) {
+  const data = imageData(image, width, height);
+  const values = new Float32Array(width * height);
+  for (let index = 0; index < values.length; index += 1) {
+    const offset = index * 4;
+    values[index] = 0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2];
+  }
+  return values;
+}
+
+function estimateShift(a, b, width, height) {
+  const margin = Math.max(8, Math.round(Math.min(width, height) * 0.06));
+  let best = { dx: 0, dy: 0, error: Infinity };
+  let zeroError = Infinity;
+  for (let dy = -4; dy <= 4; dy += 1) {
+    for (let dx = -4; dx <= 4; dx += 1) {
+      let sum = 0;
+      let count = 0;
+      for (let y = margin; y < height - margin; y += 2) {
+        for (let x = margin; x < width - margin; x += 2) {
+          const bx = x + dx;
+          const by = y + dy;
+          if (bx < margin || bx >= width - margin || by < margin || by >= height - margin) continue;
+          sum += Math.abs(a[y * width + x] - b[by * width + bx]);
+          count += 1;
+        }
+      }
+      if (!count) continue;
+      const error = sum / count;
+      if (dx === 0 && dy === 0) zeroError = error;
+      if (error < best.error) best = { dx, dy, error };
+    }
+  }
+  return { ...best, zeroError };
+}
+
+function shiftImage(image, dx, dy) {
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#050a11';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, dx, dy);
+  return canvas;
+}
+
+function alignPairImages(imageA, imageB, first, second) {
+  const orientationA = frameOrientation(first);
+  const orientationB = frameOrientation(second);
+  let aligned = imageB;
+  let rotated = false;
+  if (orientationA !== null && orientationB !== null) {
+    const delta = Math.abs((((orientationA - orientationB + 540) % 360) - 180));
+    if (delta > 135) {
+      aligned = rotateImage180(imageB);
+      rotated = true;
+    }
+  }
+
+  const width = imageA.naturalWidth || imageA.width;
+  const height = imageA.naturalHeight || imageA.height;
+  if (!width || !height) return { imageB: aligned, rotated, shifted: false };
+  const a = lumaPlane(imageA, width, height);
+  const b = lumaPlane(aligned, width, height);
+  const shift = estimateShift(a, b, width, height);
+  const useful = shift.zeroError - shift.error;
+  const shifted = (shift.dx !== 0 || shift.dy !== 0)
+    && Math.abs(shift.dx) <= 3
+    && Math.abs(shift.dy) <= 3
+    && useful > shift.zeroError * 0.005;
+  if (shifted) aligned = shiftImage(aligned, shift.dx, shift.dy);
+  return { imageB: aligned, rotated, shifted };
 }
 
 function buildGroups(index) {
@@ -179,6 +273,8 @@ function analyzePair(imageA, imageB) {
   const pixelsA = imageData(imageA, width, height);
   const pixelsB = imageData(imageB, width, height);
   const count = width * height;
+  const lumaA = new Float32Array(count);
+  const lumaB = new Float32Array(count);
   const differences = new Float32Array(count);
   const border = Math.max(4, Math.round(Math.min(width, height) * 0.045));
   const samples = [];
@@ -187,9 +283,11 @@ function analyzePair(imageA, imageB) {
     for (let x = 0; x < width; x += 1) {
       const index = y * width + x;
       const offset = index * 4;
-      const lumaA = 0.2126 * pixelsA[offset] + 0.7152 * pixelsA[offset + 1] + 0.0722 * pixelsA[offset + 2];
-      const lumaB = 0.2126 * pixelsB[offset] + 0.7152 * pixelsB[offset + 1] + 0.0722 * pixelsB[offset + 2];
-      const difference = Math.abs(lumaA - lumaB);
+      const valueA = 0.2126 * pixelsA[offset] + 0.7152 * pixelsA[offset + 1] + 0.0722 * pixelsA[offset + 2];
+      const valueB = 0.2126 * pixelsB[offset] + 0.7152 * pixelsB[offset + 1] + 0.0722 * pixelsB[offset + 2];
+      const difference = Math.abs(valueA - valueB);
+      lumaA[index] = valueA;
+      lumaB[index] = valueB;
       differences[index] = difference;
       if (x >= border && x < width - border && y >= border && y < height - border) samples.push(difference);
     }
@@ -202,6 +300,81 @@ function analyzePair(imageA, imageB) {
   const threshold = Math.max(22, medianDifference + 5.5 * Math.max(mad, 2.5));
   const suppression = Math.max(12, Math.round(Math.min(width, height) * 0.085));
   const peaks = [];
+
+  // A candidate must change the light inside a small aperture, not merely
+  // move a star by a pixel. The annulus gives a local sky background, and the
+  // shift test rejects the dipole pattern left by pointing jitter.
+  function measureChange(centerX, centerY) {
+    const cx = Math.round(centerX);
+    const cy = Math.round(centerY);
+    const aperture = 3;
+    const annulusInner = 5;
+    const annulusOuter = 7;
+    let sumA = 0;
+    let sumB = 0;
+    let pixels = 0;
+    const skyA = [];
+    const skyB = [];
+    for (let dy = -annulusOuter; dy <= annulusOuter; dy += 1) {
+      const y = cy + dy;
+      if (y < 0 || y >= height) continue;
+      for (let dx = -annulusOuter; dx <= annulusOuter; dx += 1) {
+        const x = cx + dx;
+        if (x < 0 || x >= width) continue;
+        const distance = Math.hypot(dx, dy);
+        const index = y * width + x;
+        if (distance <= aperture) {
+          sumA += lumaA[index];
+          sumB += lumaB[index];
+          pixels += 1;
+        } else if (distance >= annulusInner && distance <= annulusOuter) {
+          skyA.push(lumaA[index]);
+          skyB.push(lumaB[index]);
+        }
+      }
+    }
+    if (!pixels || !skyA.length) return null;
+    const backgroundA = median(skyA);
+    const backgroundB = median(skyB);
+    const fluxA = Math.max(0, sumA - pixels * backgroundA);
+    const fluxB = Math.max(0, sumB - pixels * backgroundB);
+    const delta = fluxB - fluxA;
+    const contrast = Math.abs(delta) / Math.max(1, Math.max(fluxA, fluxB));
+    const noise = Math.max(mad, 2.5) * Math.sqrt(pixels);
+    const snr = Math.abs(delta) / noise;
+    if (Math.abs(delta) < 60 || snr < 6 || contrast < 0.4) return null;
+
+    const core = 3;
+    let zeroError = 0;
+    let bestError = Infinity;
+    let bestDx = 0;
+    let bestDy = 0;
+    for (let shiftY = -2; shiftY <= 2; shiftY += 1) {
+      for (let shiftX = -2; shiftX <= 2; shiftX += 1) {
+        let error = 0;
+        for (let dy = -core; dy <= core; dy += 1) {
+          for (let dx = -core; dx <= core; dx += 1) {
+            const x = cx + dx;
+            const y = cy + dy;
+            const shiftedX = x + shiftX;
+            const shiftedY = y + shiftY;
+            if (x < 0 || x >= width || y < 0 || y >= height) continue;
+            if (shiftedX < 0 || shiftedX >= width || shiftedY < 0 || shiftedY >= height) continue;
+            error += Math.abs(lumaA[y * width + x] - lumaB[shiftedY * width + shiftedX]);
+          }
+        }
+        if (shiftX === 0 && shiftY === 0) zeroError = error;
+        if (error < bestError) {
+          bestError = error;
+          bestDx = shiftX;
+          bestDy = shiftY;
+        }
+      }
+    }
+    const shiftedMatch = (bestDx !== 0 || bestDy !== 0) && zeroError > 0 && bestError < zeroError * 0.55;
+    if (shiftedMatch) return null;
+    return { x: centerX, y: centerY, score: Math.abs(delta), contrast, snr, fluxA, fluxB };
+  }
 
   for (let y = border; y < height - border; y += 1) {
     for (let x = border; x < width - border; x += 1) {
@@ -252,17 +425,28 @@ function analyzePair(imageA, imageB) {
     }
   }
 
-  peaks.sort((a, b) => b.score - a.score);
-  const candidates = [];
+  const measured = [];
   for (const peak of peaks) {
-    if (candidates.some((candidate) => Math.hypot(candidate.pixelX - peak.x, candidate.pixelY - peak.y) < suppression)) continue;
-    candidates.push({
-      pixelX: peak.x,
-      pixelY: peak.y,
-      x: peak.x / width,
-      y: peak.y / height,
-      score: peak.score,
+    const change = measureChange(peak.x, peak.y);
+    if (!change) continue;
+    measured.push({
+      pixelX: change.x,
+      pixelY: change.y,
+      x: change.x / width,
+      y: change.y / height,
+      score: change.score,
+      contrast: change.contrast,
+      snr: change.snr,
+      fluxA: change.fluxA,
+      fluxB: change.fluxB,
     });
+  }
+
+  measured.sort((a, b) => b.score - a.score);
+  const candidates = [];
+  for (const candidate of measured) {
+    if (candidates.some((existing) => Math.hypot(existing.pixelX - candidate.pixelX, existing.pixelY - candidate.pixelY) < suppression)) continue;
+    candidates.push(candidate);
     if (candidates.length >= MAX_DIFFERENCES) break;
   }
 
@@ -377,7 +561,7 @@ function wavelengthLabel(frame) {
   return `${((low + high) / 2).toFixed(2)} μm`;
 }
 
-function updateRoundCopy(group, first, second) {
+function updateRoundCopy(group, first, second, rotated = false) {
   const wave = wavelengthLabel(first);
   el.roundMeta.textContent = `REAL VISIT PAIR · RA ${group.field.ra.toFixed(3)}° · DEC ${group.field.dec >= 0 ? '+' : ''}${group.field.dec.toFixed(3)}°`;
   el.roundTitle.textContent = `${fieldName(group.field)} · ${group.detector}${wave ? ` · ${wave}` : ''}`;
@@ -385,7 +569,7 @@ function updateRoundCopy(group, first, second) {
   el.dateB.textContent = stamp(second);
   el.canvasA.setAttribute('aria-label', `Visit A from ${stamp(first)}. Click a difference in either visit.`);
   el.canvasB.setAttribute('aria-label', `Visit B from ${stamp(second)}. Click a difference in either visit.`);
-  el.source.textContent = `Real SPHEREx DR1 mirror · ${group.frames.length} visits available in this field · differences computed locally.`;
+  el.source.textContent = `Real SPHEREx DR1 mirror · ${group.frames.length} visits available in this field · differences computed locally.${rotated ? ' Visit B aligned to visit A before comparison.' : ''}`;
 }
 
 function clearTimers() {
@@ -442,10 +626,12 @@ async function newRound() {
       const key = `${first.png}|${second.png}`;
       if (key === state.lastPairKey && state.groups.length > 1) continue;
       setLoading(true, `Loading ${group.detector} visits…`);
-      const [imageA, imageB] = await Promise.all([loadImage(first), loadImage(second)]);
+      const [imageA, loadedB] = await Promise.all([loadImage(first), loadImage(second)]);
+      const aligned = alignPairImages(imageA, loadedB, first, second);
+      const imageB = aligned.imageB;
       const analysis = analyzePair(imageA, imageB);
       if (analysis.candidates.length < 2) continue;
-      selected = { group, first, second, imageA, imageB, analysis, key };
+      selected = { group, first, second, imageA, imageB, analysis, rotated: aligned.rotated, shifted: aligned.shifted, key };
     }
 
     if (!selected) throw new Error('No real visit pair with measurable differences was found. Try again.');
@@ -455,7 +641,7 @@ async function newRound() {
     state.imageA = selected.imageA;
     state.imageB = selected.imageB;
     state.candidates = selected.analysis.candidates;
-    updateRoundCopy(selected.group, selected.first, selected.second);
+    updateRoundCopy(selected.group, selected.first, selected.second, selected.rotated || selected.shifted);
     draw();
     updateScore();
     setStatus(`Find ${state.candidates.length} real change${state.candidates.length === 1 ? '' : 's'} between the two visits. Click a star or smudge in either image.`);

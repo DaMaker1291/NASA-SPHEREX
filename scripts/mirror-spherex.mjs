@@ -228,6 +228,7 @@ function measurementFromRaster(raster, product, field, cutout) {
     flagged: raster.flaggedPixels,
     ra: raster.center?.ra ?? null,
     dec: raster.center?.dec ?? null,
+    orientationDeg: raster.orientationDeg ?? null,
     waveMin: raster.wave?.minWavelength ?? null,
     waveMax: raster.wave?.maxWavelength ?? null,
     waveBwMin: raster.wave?.minBandwidth ?? null,

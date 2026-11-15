@@ -80,7 +80,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.3173
           },
           "fits": "fields/default-d1/fits/2025W17_4B_0187_1-D1-ac0b88eaf11dc4d569f1d8c7.fits",
           "fitsBytes": 570240,
@@ -132,7 +133,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.318
           },
           "fits": "fields/default-d1/fits/2025W20_1C_0211_1-D1-ab029ca8f0c4bf3110283eae.fits",
           "fitsBytes": 570240,
@@ -184,7 +186,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 160.6529
           },
           "fits": "fields/default-d1/fits/2025W45_2A_0369_2-D1-c591156b6154881bf1a4314b.fits",
           "fitsBytes": 213120,
@@ -236,7 +239,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 161.2117
           },
           "fits": "fields/default-d1/fits/2025W45_2A_0620_1-D1-b6e50acf6ad3c163c614506a.fits",
           "fitsBytes": 570240,
@@ -288,7 +292,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 159.3832
           },
           "fits": "fields/default-d1/fits/2025W46_2A_0290_1-D1-4344e18a67096fc3ef15d2ae.fits",
           "fitsBytes": 167040,
@@ -340,7 +345,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 160.1618
           },
           "fits": "fields/default-d1/fits/2025W46_2A_0486_1-D1-0a70411ce879af03439e6374.fits",
           "fitsBytes": 570240,
@@ -392,7 +398,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 159.7346
           },
           "fits": "fields/default-d1/fits/2025W47_1A_0133_1-D1-5598cb4a9aaafb03812f8b90.fits",
           "fitsBytes": 109440,
@@ -444,7 +451,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 159.4157
           },
           "fits": "fields/default-d1/fits/2025W47_1A_0565_1-D1-627fd5423e03dbc4d208d8b8.fits",
           "fitsBytes": 167040,
@@ -496,7 +504,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.3396
           },
           "fits": "fields/default-d1/fits/2026W19_1A_1248_2-D1-452cb1795716cdca258a3114.fits",
           "fitsBytes": 305280,
@@ -548,7 +557,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.328
           },
           "fits": "fields/default-d1/fits/2026W19_2A_0228_1-D1-71c9396700cdbba0dba1de7c.fits",
           "fitsBytes": 570240,
@@ -600,7 +610,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.223
           },
           "fits": "fields/default-d1/fits/2026W19_2A_0458_1-D1-076f027e79fcbbdb071c263a.fits",
           "fitsBytes": 570240,
@@ -652,7 +663,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.1826
           },
           "fits": "fields/default-d1/fits/2026W19_2A_0889_1-D1-07c8359ec8707f57b8d3d400.fits",
           "fitsBytes": 570240,
@@ -735,7 +747,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.5509
           },
           "fits": "fields/default-d2/fits/2025W17_4B_0351_1-D2-b4e41c60a20bdd9b27875864.fits",
           "fitsBytes": 581760,
@@ -787,7 +800,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.4315
           },
           "fits": "fields/default-d2/fits/2025W18_1B_0338_1-D2-bd97a3d8f160e5cc6ac40874.fits",
           "fitsBytes": 581760,
@@ -839,7 +853,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.8342
           },
           "fits": "fields/default-d2/fits/2025W47_1A_0371_2-D2-a62c51f525d693b81438fd49.fits",
           "fitsBytes": 247680,
@@ -891,7 +906,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.7981
           },
           "fits": "fields/default-d2/fits/2025W47_1A_0616_1-D2-e91230348d852c5615593882.fits",
           "fitsBytes": 581760,
@@ -943,7 +959,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.6768
           },
           "fits": "fields/default-d2/fits/2025W47_1A_0724_1-D2-4faf9a9319f8169b4c846ee5.fits",
           "fitsBytes": 581760,
@@ -995,7 +1012,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.6001
           },
           "fits": "fields/default-d2/fits/2025W47_2A_0249_1-D2-daad889c72035b327484bc5f.fits",
           "fitsBytes": 581760,
@@ -1047,7 +1065,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.5041
           },
           "fits": "fields/default-d2/fits/2025W47_2A_0341_1-D2-9e21cf28cebd1d64c9e7cf7c.fits",
           "fitsBytes": 581760,
@@ -1099,7 +1118,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.5302
           },
           "fits": "fields/default-d2/fits/2026W18_2A_0374_1-D2-237c7e241ba7812ede3bb727.fits",
           "fitsBytes": 581760,
@@ -1151,7 +1171,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.4209
           },
           "fits": "fields/default-d2/fits/2026W19_1A_0616_1-D2-1bd4a76e6b52973c798f698d.fits",
           "fitsBytes": 581760,
@@ -1203,7 +1224,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.3329
           },
           "fits": "fields/default-d2/fits/2026W19_1A_1045_1-D2-b365b1f1c76d6b01c58406c3.fits",
           "fitsBytes": 581760,
@@ -1255,7 +1277,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.5854
           },
           "fits": "fields/default-d2/fits/2026W19_1A_1091_1-D2-b5a1405d0e532f4f2e3c3376.fits",
           "fitsBytes": 547200,
@@ -1307,7 +1330,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.2371
           },
           "fits": "fields/default-d2/fits/2026W19_2A_0047_1-D2-d88b417cdbdba47184b4c2c6.fits",
           "fitsBytes": 581760,
@@ -1390,7 +1414,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.5475
           },
           "fits": "fields/default-d3/fits/2025W47_2A_0103_1-D3-ce20b595d9a7f52a5d98b386.fits",
           "fitsBytes": 118080,
@@ -1442,7 +1467,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.4226
           },
           "fits": "fields/default-d3/fits/2025W47_2A_0207_1-D3-2f521a272862249c9439820a.fits",
           "fitsBytes": 567360,
@@ -1494,7 +1520,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.5511
           },
           "fits": "fields/default-d3/fits/2025W47_2A_0406_1-D3-166a91523025dd44305f2f7d.fits",
           "fitsBytes": 567360,
@@ -1546,7 +1573,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.158
           },
           "fits": "fields/default-d3/fits/2025W47_2A_0614_1-D3-b105095a65c3ae5e91c412b9.fits",
           "fitsBytes": 567360,
@@ -1598,7 +1626,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.9604
           },
           "fits": "fields/default-d3/fits/2025W48_1A_0019_1-D3-921f79f53777b69eabea6c44.fits",
           "fitsBytes": 567360,
@@ -1650,7 +1679,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.4385
           },
           "fits": "fields/default-d3/fits/2025W48_1A_0255_1-D3-13dcc908d814ffafa6c8a528.fits",
           "fitsBytes": 567360,
@@ -1702,7 +1732,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.1868
           },
           "fits": "fields/default-d3/fits/2026W17_1B_0519_1-D3-bfe99703a213653b873d1839.fits",
           "fitsBytes": 578880,
@@ -1754,7 +1785,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.0683
           },
           "fits": "fields/default-d3/fits/2026W18_1A_0614_1-D3-1e5ab22575754650f2aa4c7d.fits",
           "fitsBytes": 578880,
@@ -1806,7 +1838,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.3067
           },
           "fits": "fields/default-d3/fits/2026W18_2A_0079_1-D3-bab17649079fdee90c08ad55.fits",
           "fitsBytes": 290880,
@@ -1858,7 +1891,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -22.8956
           },
           "fits": "fields/default-d3/fits/2026W18_2A_0094_1-D3-0f50c2c3cf8a494369c36012.fits",
           "fitsBytes": 567360,
@@ -1910,7 +1944,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -22.7218
           },
           "fits": "fields/default-d3/fits/2026W18_2A_0169_1-D3-9c3076cdc6b99c86a18f6898.fits",
           "fitsBytes": 567360,
@@ -1962,7 +1997,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.2358
           },
           "fits": "fields/default-d3/fits/2026W18_2A_0555_1-D3-7a843174a6b9c2b87a88c6e1.fits",
           "fitsBytes": 567360,
@@ -2045,7 +2081,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.408
           },
           "fits": "fields/default-d4/fits/2025W17_4B_0187_1-D4-e8d5a2ea3dcfeab1d3ecbb50.fits",
           "fitsBytes": 567360,
@@ -2097,7 +2134,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -18.5217
           },
           "fits": "fields/default-d4/fits/2025W20_1C_0211_1-D4-523af194663699e88b731c21.fits",
           "fitsBytes": 567360,
@@ -2149,7 +2187,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 160.5638
           },
           "fits": "fields/default-d4/fits/2025W45_2A_0369_2-D4-63d4ca0158823e86b860d347.fits",
           "fitsBytes": 244800,
@@ -2201,7 +2240,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 160.4565
           },
           "fits": "fields/default-d4/fits/2025W45_2A_0577_1-D4-8d04038e28e8183248d415f5.fits",
           "fitsBytes": 567360,
@@ -2253,7 +2293,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 160.1404
           },
           "fits": "fields/default-d4/fits/2025W46_2A_0238_1-D4-b7b61534140bd9f790611e95.fits",
           "fitsBytes": 567360,
@@ -2305,7 +2346,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 159.6593
           },
           "fits": "fields/default-d4/fits/2025W46_2A_0415_4-D4-79b144c5659cd95013c22357.fits",
           "fitsBytes": 83520,
@@ -2357,7 +2399,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 159.5973
           },
           "fits": "fields/default-d4/fits/2025W47_1A_0133_1-D4-86420d953dcf9cd6975cd749.fits",
           "fitsBytes": 95040,
@@ -2409,7 +2452,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 159.2649
           },
           "fits": "fields/default-d4/fits/2025W47_1A_0565_1-D4-789412ccd7cf5938b06bee9b.fits",
           "fitsBytes": 152640,
@@ -2461,7 +2505,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.3604
           },
           "fits": "fields/default-d4/fits/2026W19_2A_0152_1-D4-3a93f3ec72d92d8225a503d3.fits",
           "fitsBytes": 567360,
@@ -2513,7 +2558,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.3846
           },
           "fits": "fields/default-d4/fits/2026W19_2A_0228_1-D4-f905243fae5f49b73027a9ad.fits",
           "fitsBytes": 567360,
@@ -2565,7 +2611,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.2553
           },
           "fits": "fields/default-d4/fits/2026W19_2A_0458_1-D4-a767518f7c91c1830dea34e0.fits",
           "fitsBytes": 567360,
@@ -2617,7 +2664,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -19.2699
           },
           "fits": "fields/default-d4/fits/2026W19_2A_0889_1-D4-8ae162c17cb349088ece0dc6.fits",
           "fitsBytes": 567360,
@@ -2700,7 +2748,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.8133
           },
           "fits": "fields/default-d5/fits/2025W17_4B_0351_1-D5-9dc2f9bce02f1e4888452669.fits",
           "fitsBytes": 567360,
@@ -2752,7 +2801,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.6858
           },
           "fits": "fields/default-d5/fits/2025W18_1B_0338_1-D5-a6e0bc14f2546f53daef0c2f.fits",
           "fitsBytes": 578880,
@@ -2804,7 +2854,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.3932
           },
           "fits": "fields/default-d5/fits/2025W47_1A_0371_2-D5-74e958158562fcd65d1cef7c.fits",
           "fitsBytes": 290880,
@@ -2856,7 +2907,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.4929
           },
           "fits": "fields/default-d5/fits/2025W47_1A_0616_1-D5-3b084f1513439590ba2ebe24.fits",
           "fitsBytes": 567360,
@@ -2908,7 +2960,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.5803
           },
           "fits": "fields/default-d5/fits/2025W47_1A_0724_1-D5-3fa67075700bacee293c2c58.fits",
           "fitsBytes": 578880,
@@ -2960,7 +3013,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.3303
           },
           "fits": "fields/default-d5/fits/2025W47_2A_0249_1-D5-5eb2698c9f8026534a7de4ef.fits",
           "fitsBytes": 578880,
@@ -3012,7 +3066,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 158.1943
           },
           "fits": "fields/default-d5/fits/2025W47_2A_0341_1-D5-5cdefd28eed62e9d1217128e.fits",
           "fitsBytes": 578880,
@@ -3064,7 +3119,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.8222
           },
           "fits": "fields/default-d5/fits/2026W18_2A_0374_1-D5-75efa3cbce196d1a735ca401.fits",
           "fitsBytes": 578880,
@@ -3116,7 +3172,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.7106
           },
           "fits": "fields/default-d5/fits/2026W19_1A_0616_1-D5-628dbc6342160c3e47174c1a.fits",
           "fitsBytes": 578880,
@@ -3168,7 +3225,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.667
           },
           "fits": "fields/default-d5/fits/2026W19_1A_1045_1-D5-771b4212e3da02745488c16b.fits",
           "fitsBytes": 578880,
@@ -3220,7 +3278,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.7452
           },
           "fits": "fields/default-d5/fits/2026W19_1A_1091_1-D5-c8e64182f013d25b5b9f0087.fits",
           "fitsBytes": 567360,
@@ -3272,7 +3331,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -21.5041
           },
           "fits": "fields/default-d5/fits/2026W19_2A_0047_1-D5-432dae75a7051a462492af0c.fits",
           "fitsBytes": 567360,
@@ -3355,7 +3415,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.5052
           },
           "fits": "fields/default-d6/fits/2025W47_2A_0103_1-D6-121cf669550ec3392799cdc1.fits",
           "fitsBytes": 152640,
@@ -3407,7 +3468,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.3161
           },
           "fits": "fields/default-d6/fits/2025W47_2A_0207_1-D6-4a7e6efc525c03b59a76f426.fits",
           "fitsBytes": 567360,
@@ -3459,7 +3521,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.4212
           },
           "fits": "fields/default-d6/fits/2025W47_2A_0406_1-D6-a367b6c65d4abb1412bed53c.fits",
           "fitsBytes": 567360,
@@ -3511,7 +3574,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.3827
           },
           "fits": "fields/default-d6/fits/2025W47_2A_0614_1-D6-f566130740b46f9a4442c958.fits",
           "fitsBytes": 567360,
@@ -3563,7 +3627,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.2435
           },
           "fits": "fields/default-d6/fits/2025W48_1A_0019_1-D6-b53a30efc7e2beb6adfa70b3.fits",
           "fitsBytes": 567360,
@@ -3615,7 +3680,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": 157.3225
           },
           "fits": "fields/default-d6/fits/2025W48_1A_0255_1-D6-c0435d2afa950cb29d77ee72.fits",
           "fitsBytes": 567360,
@@ -3667,7 +3733,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.1352
           },
           "fits": "fields/default-d6/fits/2026W18_1A_0614_1-D6-74fe88d40fd43d474d046aaa.fits",
           "fitsBytes": 567360,
@@ -3719,7 +3786,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.4554
           },
           "fits": "fields/default-d6/fits/2026W18_2A_0079_1-D6-4daaf6e12a341dde1ff5631b.fits",
           "fitsBytes": 325440,
@@ -3771,7 +3839,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -22.9762
           },
           "fits": "fields/default-d6/fits/2026W18_2A_0094_1-D6-f2707fa3ffc66f6ed2be85c3.fits",
           "fitsBytes": 567360,
@@ -3823,7 +3892,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.0735
           },
           "fits": "fields/default-d6/fits/2026W18_2A_0169_1-D6-a6daeaac5ab4c0ecc41878fa.fits",
           "fitsBytes": 567360,
@@ -3875,7 +3945,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.3488
           },
           "fits": "fields/default-d6/fits/2026W18_2A_0555_1-D6-a9d253347ff5ec84b967ad77.fits",
           "fitsBytes": 567360,
@@ -3927,7 +3998,8 @@
             "constellationSymbol": "Leo",
             "cutoutSize": "0.300d",
             "palette": "iridescent",
-            "stretch": "asinh"
+            "stretch": "asinh",
+            "orientationDeg": -23.2719
           },
           "fits": "fields/default-d6/fits/2026W20_1A_0799_1-D6-581f73f63e68efa0d46537d5.fits",
           "fitsBytes": 567360,
