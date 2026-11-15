@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   angularSeparation,
+  healpixNest,
   luma,
   normalizeRa,
   robustChangeThreshold,
@@ -31,6 +32,13 @@ test('right-ascension wrapping keeps the viewer on the same sky', () => {
   assert.equal(unwrapRa(350, 10), -10)
   assert.equal(unwrapRa(10, 350), 370)
   assert.equal(unwrapRa(180, 0), 180)
+})
+
+test('HEALPix NESTED lookup matches the documented SPHEREx HiPS example', () => {
+  assert.equal(healpixNest(60.8109955, 51.3404038, 5), 445)
+  assert.equal(healpixNest(60.8109955, 51.3404038, 5), 445)
+  assert.equal(healpixNest(Number.NaN, 0, 5), null)
+  assert.equal(healpixNest(0, 91, 5), null)
 })
 
 test('luma weights match the change finder channel formula', () => {

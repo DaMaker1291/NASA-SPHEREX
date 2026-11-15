@@ -1,6 +1,6 @@
 // SPHEREx Explorer frontend.
 // Real IRSA frames are loaded through the same-origin backend. Local PNGs stay local.
-import { angularSeparation, luma, normalizeRa, robustChangeThreshold, unwrapRa } from './math.js';
+import { angularSeparation, healpixNest, luma, normalizeRa, robustChangeThreshold, unwrapRa } from './math.js';
 
 const $ = (id) => document.getElementById(id);
 const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
@@ -22,6 +22,10 @@ const el = {
   hdToggle: $('hdToggle'), hdToggleLab: $('hdToggleLab'), stageResolution: $('stageResolution'), fullscreen: $('fullscreen'),
   appToggle: $('appToggle'), navMapApp: $('navMapApp'), appToolbar: $('appToolbar'), appHome: $('appHome'),
   appLive: $('appLive'), appLiveText: $('appLiveText'),
+  detailRoute: $('detailRoute'), sourceStatusSummary: $('sourceStatusSummary'), sourceStatusList: $('sourceStatusList'),
+  sourceCheckedAt: $('sourceCheckedAt'), sourceRefresh: $('sourceRefresh'),
+  hipsContextImage: $('hipsContextImage'), hipsContextMeta: $('hipsContextMeta'),
+  hipsContextLink: $('hipsContextLink'), hipsContextFallback: $('hipsContextFallback'),
   appDetails: $('appDetails'), appSequence: $('appSequence'), appTools: $('appTools'), appShare: $('appShare'), appExit: $('appExit'),
   appDetailsClose: $('appDetailsClose'), appToolsClose: $('appToolsClose'), sequenceClose: $('sequenceClose'), appScrim: $('appScrim'),
   mapSearchForm: $('mapSearchForm'), mapSearch: $('mapSearch'), navBack: $('navBack'), navForward: $('navForward'), minimapToggle: $('minimapToggle'),
@@ -419,6 +423,12 @@ function updateDetails(frame) {
   el.detailSource.textContent = frame.mosaic
     ? 'NASA/JPL-Caltech all-sky mosaic'
     : frame.real ? 'IRSA SPHEREx DR1' : 'Local PNG files';
+  const route = pixelRouteLabel(frame, analysis);
+  el.detailRoute.textContent = route;
+  if (frame.real && !frame.mosaic) {
+    el.stageBadge.hidden = false;
+    el.stageBadge.textContent = /^S3 DIRECT/.test(route) ? 'S3 DIRECT · REAL FITS' : realBadge;
+  }
   el.detailFrame.textContent = frame.label;
   el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
   const displayWidth = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
@@ -1382,7 +1392,7 @@ function loadVerificationGaia(frame, analysis) {
     })
     .catch(error => {
       if (labState.verifyGaiaKey === key) {
-        setVerificationGaia('unavailable', `Gaia DR3 could not be reached (${error.message}). Not counted as an agreement.`);
+        setVerificationGaia('unavailable', `ESA Gaia DR3 could not be reached (${error.message}). Gaia is independent of IRSA, so an IRSA outage is not the cause of this specific failure. Not counted as an agreement.`);
       }
     });
 }
@@ -1499,7 +1509,11 @@ function updateVerification() {
   for (const check of checks) el.verificationList.append(verificationRow(check));
   el.verifySourceSia.textContent = frame.sourceLabel || 'IRSA SIA2 · SPHEREx DR1';
   el.verifySiaDetail.textContent = `${frame.date || '—'} · ${frame.detector} · ${frame.obsid || 'OBSID pending'}`;
-  el.verifySourceFits.textContent = analysis ? 'IRSA FITS cutout' : 'IRSA FITS cutout · pending';
+  el.verifySourceFits.textContent = analysis
+    ? (analysis.dataFallback === 's3-direct' || /NASA IRSA S3/i.test(analysis.dataSource || '')
+      ? 'NASA IRSA S3 · direct FITS'
+      : 'IRSA FITS cutout')
+    : 'IRSA FITS cutout · pending';
   const activeWidth = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
   const activeHeight = hdMode && frame.hdHeight ? frame.hdHeight : frame.height;
   el.verifyFitsDetail.textContent = analysis
@@ -1618,6 +1632,8 @@ function readFrameHeaders(response) {
     eclipticLon: number('X-Frame-Ecliptic-Lon'),
     eclipticLat: number('X-Frame-Ecliptic-Lat'),
     cutoutSize: response.headers.get('X-Cutout-Size') || '',
+    dataSource: response.headers.get('X-Data-Source') || '',
+    dataFallback: response.headers.get('X-Data-Fallback') || '',
     palette: response.headers.get('X-Frame-Palette') || '',
     stretch: response.headers.get('X-Frame-Stretch') || '',
     wcsCorners: parseWcsCorners(response.headers.get('X-Frame-WCS-Corners'))
@@ -1843,6 +1859,151 @@ function updateVisitNotice() {
   el.visitNoticeText.textContent = noCoverage
     ? 'This is the 2025 30° all-sky mosaic context, not a visit. IRSA has no per-visit coverage for this exact patch, so there are no visits to play. Try another patch, or load the verified Leo field.'
     : 'This is the 2025 30° all-sky mosaic context, not a visit or a time series. IRSA is not responding and this patch has no verified local visit frames. The verified Leo field stays available offline.';
+}
+
+function pixelRouteLabel(frame, analysis = null) {
+  if (!frame) return '—';
+  if (frame.mosaic) return 'Local NASA/JPL-Caltech mosaic · context only';
+  if (frame.mirror) return 'Local verified mirror · real FITS';
+  if (!frame.real) return 'Local PNG upload · not archive pixels';
+  const source = analysis?.dataSource || '';
+  if (analysis?.dataFallback === 's3-direct' || /NASA IRSA S3/i.test(source)) {
+    return `S3 DIRECT · ${source.replace(/^NASA IRSA S3 · direct /, '') || 'real FITS byte ranges'}`;
+  }
+  if (/IRSA SPHEREx cutout/i.test(source)) return 'IRSA cutout service · real FITS';
+  if (frame.loadError) return 'Unavailable · no real pixels returned';
+  if (!analysis) return 'Resolving IRSA cutout → S3 fallback…';
+  return source || 'IRSA · real FITS';
+}
+
+const SOURCE_NAMES = {
+  sia: ['SIA2 · DR1', 'Visit discovery'],
+  'sia-qr3': ['SIA2 · QR3', 'Visit discovery'],
+  tap: ['IRSA TAP', 'Artifact and plane discovery'],
+  s3: ['NASA IRSA S3', 'Direct FITS byte ranges'],
+  hips: ['SPHEREx HiPS cube', 'All-sky context only'],
+  gaia: ['ESA Gaia DR3 TAP', 'Independent catalogue overlay']
+};
+
+const HIPS_CONTEXT_FRAMES = {
+  D1: { frame: 9, wavelength: '0.932 μm' },
+  D2: { frame: 25, wavelength: '1.346 μm' },
+  D3: { frame: 44, wavelength: '2.089 μm' },
+  D4: { frame: 62, wavelength: '3.293 μm' },
+  D5: { frame: 79, wavelength: '4.220 μm' },
+  D6: { frame: 97, wavelength: '4.843 μm' }
+};
+let hipsContextToken = 0;
+
+function updateHipsContext(field) {
+  if (!el.hipsContextImage || !field || !Number.isFinite(field.ra) || !Number.isFinite(field.dec)) return;
+  const pixel = healpixNest(field.ra, field.dec, 5);
+  if (pixel === null) return;
+  const context = HIPS_CONTEXT_FRAMES[detector] || HIPS_CONTEXT_FRAMES.D2;
+  const directory = Math.floor(pixel / 10000) * 10000;
+  const suffix = context.frame === 0 ? '' : `_${context.frame}`;
+  const url = `https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube/Norder5/Dir${directory}/Npix${pixel}/Npix${pixel}${suffix}.png`;
+  const token = ++hipsContextToken;
+  el.hipsContextLink.href = url;
+  el.hipsContextImage.hidden = true;
+  if (el.hipsContextFallback) {
+    el.hipsContextFallback.hidden = false;
+    el.hipsContextFallback.textContent = 'Loading HiPS context tile…';
+  }
+  el.hipsContextMeta.textContent = `${detector} · frame ${context.frame} · ${context.wavelength} · HiPS Norder 5 / Npix ${pixel} · 1.8° context`;
+  el.hipsContextImage.onload = () => {
+    if (token !== hipsContextToken) return;
+    el.hipsContextImage.hidden = false;
+    if (el.hipsContextFallback) el.hipsContextFallback.hidden = true;
+  };
+  el.hipsContextImage.onerror = () => {
+    if (token !== hipsContextToken) return;
+    el.hipsContextImage.hidden = true;
+    if (el.hipsContextFallback) {
+      el.hipsContextFallback.hidden = false;
+      el.hipsContextFallback.textContent = 'HiPS tile unavailable. Visit data is unaffected.';
+    }
+    el.hipsContextMeta.textContent = 'HiPS context unavailable for this tile; nothing was substituted.';
+  };
+  el.hipsContextImage.src = url;
+}
+
+let sourceHealthLoading = false;
+
+function sourceHealthRow(source) {
+  const [name, role] = SOURCE_NAMES[source.id] || [source.label || source.id, 'Upstream source'];
+  const row = document.createElement('li');
+  row.className = `source-row ${source.ok ? 'ok' : 'down'}`;
+  const dot = document.createElement('span');
+  dot.className = 'source-dot';
+  const body = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = name;
+  const detail = document.createElement('p');
+  const status = source.ok ? 'reachable' : source.status ? `HTTP ${source.status}` : (source.detail || 'unavailable');
+  const latency = Number.isFinite(source.latencyMs) ? ` · ${source.latencyMs} ms` : '';
+  detail.textContent = `${role} · ${status}${latency}`;
+  body.append(title, detail);
+  row.append(dot, body);
+  return row;
+}
+
+function renderSourceHealth(data) {
+  if (!el.sourceStatusList || !el.sourceStatusSummary) return;
+  el.sourceStatusList.replaceChildren();
+  const sources = Array.isArray(data?.sources) ? data.sources : [];
+  for (const source of sources) el.sourceStatusList.append(sourceHealthRow(source));
+  const discovery = Boolean(data?.discoveryOk);
+  const pixels = Boolean(data?.pixelsOk);
+  const reachable = sources.filter(source => source.ok).length;
+  const allReachable = sources.length > 0 && reachable === sources.length;
+  el.sourceStatusSummary.textContent = allReachable
+    ? `All ${sources.length} probes are reachable. Live discovery, real pixel stores and Gaia are online.`
+    : `${reachable} of ${sources.length} probes reachable. Discovery is ${discovery ? 'available' : 'degraded'}; real pixel stores are ${pixels ? 'available' : 'degraded'}. Check the individual rows before assuming a route is live.`;
+  el.sourceStatusSummary.className = `source-summary ${allReachable ? 'state-ok' : 'state-degraded'}`;
+  const checked = data?.checkedAt ? new Date(data.checkedAt) : null;
+  el.sourceCheckedAt.textContent = checked && !Number.isNaN(checked.getTime())
+    ? `Probed ${checked.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · the API caches results for about 15 seconds.`
+    : 'Probe time unavailable.';
+}
+
+async function loadSourceHealth() {
+  if (sourceHealthLoading) return;
+  sourceHealthLoading = true;
+  if (el.sourceRefresh) { el.sourceRefresh.disabled = true; el.sourceRefresh.textContent = 'Checking…'; }
+  if (el.sourceStatusSummary) {
+    el.sourceStatusSummary.className = 'source-summary';
+    el.sourceStatusSummary.textContent = 'Checking IRSA, S3, HiPS and ESA Gaia…';
+  }
+  try {
+    const response = await fetchWithTimeout('/api/health/sources', { headers: { Accept: 'application/json' }, cache: 'no-store' }, 20_000);
+    if (!response.ok) throw new Error(`source health returned ${response.status}`);
+    renderSourceHealth(await response.json());
+  } catch (error) {
+    if (el.sourceStatusList) {
+      el.sourceStatusList.replaceChildren();
+      const row = document.createElement('li');
+      row.className = 'source-row down';
+      const dot = document.createElement('span');
+      dot.className = 'source-dot';
+      const body = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = 'Source probe unavailable';
+      const detail = document.createElement('p');
+      detail.textContent = `${error.message}. The viewer still attempts real archive data.`;
+      body.append(title, detail);
+      row.append(dot, body);
+      el.sourceStatusList.append(row);
+    }
+    if (el.sourceStatusSummary) {
+      el.sourceStatusSummary.className = 'source-summary state-degraded';
+      el.sourceStatusSummary.textContent = 'Could not read source health. Archive requests still use real data only.';
+    }
+    if (el.sourceCheckedAt) el.sourceCheckedAt.textContent = 'No probe result.';
+  } finally {
+    sourceHealthLoading = false;
+    if (el.sourceRefresh) { el.sourceRefresh.disabled = false; el.sourceRefresh.textContent = 'Recheck now'; }
+  }
 }
 
 function setLoading(isLoading) {
@@ -2190,6 +2351,7 @@ async function loadRealFrames(options = {}) {
   const record = options?.record !== false;
   let field;
   try { field = readField(); } catch (error) { notify(error.message); return; }
+  updateHipsContext(field);
 
   const request = ++loadRequest;
   activeLoadController?.abort();
@@ -2273,6 +2435,7 @@ async function loadRealFrames(options = {}) {
 
     detector = payload.detector || detector;
     el.detector.value = detector;
+    updateHipsContext(field);
     const realFrames = payload.frames.map(frame => ({
       label: `${frame.date} · ${frame.detector}`,
       src: frame.pngUrl,
@@ -2840,6 +3003,7 @@ el.minimapZoomIn?.addEventListener('click', () => setMinimapZoom(allSky.view.zoo
 el.minimapZoomOut?.addEventListener('click', () => setMinimapZoom(allSky.view.zoom / 1.35));
 el.visitNoticeRetry?.addEventListener('click', () => loadRealFrames());
 el.visitNoticeAction?.addEventListener('click', () => setTarget('spherex', true));
+el.sourceRefresh?.addEventListener('click', () => loadSourceHealth());
 el.copyLink.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(window.location.href);
@@ -4052,4 +4216,5 @@ initLab();
 initAllSkyMap();
 render();
 loadRealFrames();
+loadSourceHealth();
 if (shouldOpenMapApp) enterMapApp({ quiet: true });

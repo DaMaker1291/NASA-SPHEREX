@@ -1,4 +1,4 @@
-export type SourceId = 'sia' | 'sia-qr3' | 'tap' | 's3' | 'hips'
+export type SourceId = 'sia' | 'sia-qr3' | 'tap' | 's3' | 'hips' | 'gaia'
 
 export type SourceProbe = {
   id: SourceId
@@ -30,6 +30,8 @@ const S3_PROBE =
   'https://nasa-irsa-spherex.s3.us-east-1.amazonaws.com/?list-type=2&max-keys=1&prefix=dr1/level2/'
 const HIPS_PROBE =
   'https://nasa-irsa-spherex.s3.us-east-1.amazonaws.com/dr1/hips5_cube/hips_20261026/Norder5/Dir0/Npix0_cube.fits'
+const GAIA_PROBE =
+  'https://gea.esac.esa.int/tap-server/tap/availability'
 
 let cache: { at: number; value: SourceHealth } | null = null
 let inFlight: Promise<SourceHealth> | null = null
@@ -82,7 +84,8 @@ async function buildHealth(): Promise<SourceHealth> {
     probe('sia-qr3', 'SIA2 discovery · QR3', SIA_QR3_PROBE, 'text/csv'),
     probe('tap', 'IRSA TAP (catalog)', TAP_PROBE, 'text/csv'),
     probe('s3', 'S3 bucket', S3_PROBE, 'application/xml'),
-    probe('hips', 'HIPS cube', HIPS_PROBE, 'application/fits', true),
+    probe('hips', 'SPHEREx HiPS cube · context only', HIPS_PROBE, 'application/fits', true),
+    probe('gaia', 'ESA Gaia DR3 TAP · independent catalogue', GAIA_PROBE, 'text/plain'),
   ])
   const discoveryOk = sources.some(
     (source) => (source.id === 'sia' || source.id === 'sia-qr3' || source.id === 'tap') && source.ok,

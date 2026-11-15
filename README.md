@@ -73,6 +73,16 @@ The Worker source is `src/worker/index.ts`, `src/worker/irsa.ts` and
 `src/worker/http.ts`. The client data layer is `src/lib/real.ts`; the viewer is
 `src/components/RealSky.tsx` and `src/pages/Tool.tsx`.
 
+The Data sources section also loads the current field's IRSA SPHEREx DR1 HiPS PNG tile at a wavelength chosen from the active detector. The tile is a fixed-stretch mosaic context image, explicitly separate from visit playback. Its HEALPix NESTED tile lookup is covered by a unit test against IRSA's documented example.
+
+`GET /api/health/sources` probes the real upstream routes independently: SIA2 DR1, SIA2 QR3, IRSA TAP, the public NASA IRSA S3 bucket, the SPHEREx HiPS cube, and ESA Gaia TAP. The viewer's Data sources panel renders these results and labels cached indexes, direct S3 pixels, local mirrors and the all-sky mosaic separately. HiPS is reported as context-only and is not mixed into visit playback. Gaia remains an independent ESA catalogue overlay; its availability does not depend on IRSA.
+
+`scripts/build-s3-index.mjs` builds a bounded position index directly from real S3 FITS headers. It lists at most `--limit` objects (default 250), reads one header window per HDU with HTTP byte ranges, and omits objects without usable RA/Dec instead of guessing. It is not a full archive crawl:
+
+```sh
+npm run index:s3 -- --limit 250 --concurrency 4 --prefix dr1/level2/
+```
+
 `GET /api/spherex/brief` returns a compact field briefing computed from the same
 SIA2 rows: visit count, detector products, bands, date span, cadence and an
 estimated full-frame download size. `GET /api/spherex/summary` fetches one real
@@ -120,6 +130,7 @@ does not generate demo pixels.
   (`X-Raster-Cache`), and cutout summaries in a 64-entry cache
   (`X-Summary-Cache`). This avoids repeatedly downloading and reparsing the
   same IRSA product for the PNG, summary and spectrum paths.
+- **Source health** — `/api/health/sources` separates discovery (SIA2/TAP) from real pixel stores (S3/HiPS) and also probes ESA Gaia. A degraded provider does not imply the others failed; the UI prints each result rather than collapsing them into one badge.
 - **Failure handling** — a failed field enters a 30 s per-key cooldown, while
   infrastructure failures add a short 8 s service-wide circuit breaker. One bad
   field therefore cannot poison unrelated SIA2 or catalogue searches.
