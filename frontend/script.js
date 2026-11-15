@@ -13,8 +13,11 @@ const el = {
   empty: $('emptyState'), emptyEyebrow: $('emptyEyebrow'), emptyTitle: $('emptyTitle'), emptyMessage: $('emptyMessage'),
   stageLoading: $('stageLoading'), stageBadge: $('stageBadge'), viewerTitle: $('viewerTitle'),
   stageDate: $('stageDate'), stageMode: $('stageMode'), filmstrip: $('filmstrip'),
-  zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), resetView: $('resetView'), zoomLevel: $('zoomLevel'), copyLink: $('copyLink'),
+  zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomNative: $('zoomNative'), resetView: $('resetView'), zoomLevel: $('zoomLevel'), copyLink: $('copyLink'),
   hdToggle: $('hdToggle'), hdToggleLab: $('hdToggleLab'), stageResolution: $('stageResolution'), fullscreen: $('fullscreen'),
+  mapSearchForm: $('mapSearchForm'), mapSearch: $('mapSearch'), navBack: $('navBack'), navForward: $('navForward'), minimapToggle: $('minimapToggle'),
+  skyMinimapWrap: $('skyMinimapWrap'), skyMinimap: $('skyMinimap'), minimapField: $('minimapField'),
+  mapCursor: $('mapCursor'), mapScaleBar: $('mapScaleBar'), mapScaleText: $('mapScaleText'), mapCompass: $('mapCompass'), mapHelp: $('mapHelp'),
   paletteSelect: $('paletteSelect'), stretchSelect: $('stretchSelect'), sharpPixels: $('sharpPixels'),
   bandRail: $('bandRail'), wavelengthBandName: $('wavelengthBandName'), wavelengthRange: $('wavelengthRange'),
   wavelengthBandwidth: $('wavelengthBandwidth'), wavelengthPixelScale: $('wavelengthPixelScale'), wavelengthFrames: $('wavelengthFrames'),
@@ -88,8 +91,14 @@ let differenceToken = 0;
 
 let frames = [];
 let frameIndex = 0, interval = null, blinkMode = false, comparisonOpen = false;
-let zoom = 1, panX = 0, panY = 0, isDragging = false, dragStart = null;
+const MAX_ZOOM = 12;
+let zoom = 1, panX = 0, panY = 0;
 let detector = 'D2', palette = 'iridescent', stretch = 'asinh', hdMode = false;
+const activePointers = new Map();
+let singleGesture = null, pinchGesture = null;
+const navHistory = [];
+let navIndex = -1;
+let minimapPointer = null;
 let constellationRequest = 0, constellationData = null;
 let ownedObjectUrls = [];
 let toastTimeout = null, loadingReal = false, sky = null, realBadge = 'LIVE IRSA • REAL FITS';
@@ -106,8 +115,8 @@ function parseRa(value) {
   if (!text) return Number.NaN;
   if (!/[\s]/.test(text)) return Number(text);
   const parts = text.split(' ').map(Number);
-  if (parts.length !== 3 || parts.some(part => !Number.isFinite(part))) return Number.NaN;
-  const [hours, minutes, seconds] = parts;
+  if (![2, 3].includes(parts.length) || parts.some(part => !Number.isFinite(part))) return Number.NaN;
+  const [hours, minutes, seconds = 0] = parts;
   if (hours < 0 || hours >= 24 || minutes < 0 || minutes >= 60 || seconds < 0 || seconds >= 60) return Number.NaN;
   return (hours + minutes / 60 + seconds / 3600) * 15;
 }
@@ -120,8 +129,8 @@ function parseDec(value) {
   const text = normalized.replace(/[°d'"′″hms]/gi, ' ').replace(/[:]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!/[\s]/.test(text)) return Number(text);
   const parts = text.split(' ').map(Number);
-  if (parts.length !== 3 || parts.some(part => !Number.isFinite(part))) return Number.NaN;
-  const [degrees, minutes, seconds] = parts.map(Math.abs);
+  if (![2, 3].includes(parts.length) || parts.some(part => !Number.isFinite(part))) return Number.NaN;
+  const [degrees, minutes, seconds = 0] = parts.map(Math.abs);
   if (degrees > 90 || minutes >= 60 || seconds >= 60) return Number.NaN;
   return (negative ? -1 : 1) * (degrees + minutes / 60 + seconds / 3600);
 }
@@ -462,6 +471,358 @@ function angularSeparation(ra1, dec1, ra2, dec2) {
   return 2 * Math.asin(Math.min(1, Math.sqrt(a))) / rad;
 }
 
+// Sky navigation: map-like zoom, pan, point-to-sky conversion and history.
+function normalizeRa(ra) {
+  return ((ra % 360) + 360) % 360;
+}
+
+function unwrapRa(ra, reference) {
+  let value = ra;
+  while (value - reference > 180) value -= 360;
+  while (value - reference < -180) value += 360;
+  return value;
+}
+
+function activeFrameAnalysis() {
+  const frame = frames[frameIndex];
+  if (!frame) return null;
+  return hdMode && frame.hdObjectUrl ? frame.hdAnalysis : frame.analysis || frame.displayAnalysis;
+}
+
+function imageBaseRect() {
+  const frame = frames[frameIndex];
+  const stageWidth = Math.max(1, el.stage.clientWidth);
+  const stageHeight = Math.max(1, el.stage.clientHeight);
+  const width = hdMode && frame?.hdWidth ? frame.hdWidth : frame?.width || el.image.naturalWidth || stageWidth;
+  const height = hdMode && frame?.hdHeight ? frame.hdHeight : frame?.height || el.image.naturalHeight || stageHeight;
+  const aspect = width / Math.max(1, height);
+  let contentWidth = stageWidth;
+  let contentHeight = stageWidth / aspect;
+  if (contentHeight > stageHeight) {
+    contentHeight = stageHeight;
+    contentWidth = stageHeight * aspect;
+  }
+  return {
+    width: contentWidth,
+    height: contentHeight,
+    left: (stageWidth - contentWidth) / 2,
+    top: (stageHeight - contentHeight) / 2,
+    stageWidth,
+    stageHeight
+  };
+}
+
+function clampPan() {
+  const base = imageBaseRect();
+  const maxX = Math.max(0, (base.width * zoom - base.stageWidth) / 2);
+  const maxY = Math.max(0, (base.height * zoom - base.stageHeight) / 2);
+  panX = Math.max(-maxX, Math.min(maxX, panX));
+  panY = Math.max(-maxY, Math.min(maxY, panY));
+}
+
+function bilinearSky(corners, fractionX, fractionY) {
+  if (!corners) return null;
+  const reference = (corners.topLeft.ra + corners.topRight.ra + corners.bottomLeft.ra + corners.bottomRight.ra) / 4;
+  const interpolate = (a, b, t) => ({
+    ra: unwrapRa(a.ra, reference) * (1 - t) + unwrapRa(b.ra, reference) * t,
+    dec: a.dec * (1 - t) + b.dec * t
+  });
+  const top = interpolate(corners.topLeft, corners.topRight, fractionX);
+  const bottom = interpolate(corners.bottomLeft, corners.bottomRight, fractionX);
+  return {
+    ra: normalizeRa(top.ra * (1 - fractionY) + bottom.ra * fractionY),
+    dec: Math.max(-90, Math.min(90, top.dec * (1 - fractionY) + bottom.dec * fractionY))
+  };
+}
+
+function currentSkyCenter() {
+  const frame = frames[frameIndex];
+  const analysis = activeFrameAnalysis();
+  const ra = Number.isFinite(analysis?.ra) ? analysis.ra : Number.isFinite(frame?.ra) ? frame.ra : parseRa(el.ra.value);
+  const dec = Number.isFinite(analysis?.dec) ? analysis.dec : Number.isFinite(frame?.dec) ? frame.dec : parseDec(el.dec.value);
+  return {
+    ra: Number.isFinite(ra) ? normalizeRa(ra) : 150,
+    dec: Number.isFinite(dec) ? dec : 19.5
+  };
+}
+
+function skyAtStagePoint(clientX, clientY) {
+  const frame = frames[frameIndex];
+  if (!frame) return null;
+  const rect = el.stage.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const centerX = rect.width / 2;
+  const centerY = rect.height / 2;
+  const imageX = (x - centerX - panX) / zoom + centerX;
+  const imageY = (y - centerY - panY) / zoom + centerY;
+  const base = imageBaseRect();
+  const fractionX = (imageX - base.left) / base.width;
+  const fractionY = (imageY - base.top) / base.height;
+  if (fractionX < 0 || fractionX > 1 || fractionY < 0 || fractionY > 1) return null;
+  const analysis = activeFrameAnalysis();
+  if (analysis?.wcsCorners) {
+    const skyPoint = bilinearSky(analysis.wcsCorners, fractionX, fractionY);
+    if (skyPoint) return { ...skyPoint, exact: true };
+  }
+  const center = currentSkyCenter();
+  const fov = Number(frame.fov) || Number(el.fov.value) || 0.3;
+  const cosDec = Math.max(0.08, Math.cos(center.dec * Math.PI / 180));
+  return {
+    ra: normalizeRa(center.ra - (fractionX - 0.5) * fov / cosDec),
+    dec: Math.max(-90, Math.min(90, center.dec + (0.5 - fractionY) * fov)),
+    exact: false
+  };
+}
+
+function formatAngle(degrees) {
+  if (!Number.isFinite(degrees)) return '—';
+  if (Math.abs(degrees) < 1) return `${(degrees * 60).toFixed(1)}′`;
+  return `${degrees.toFixed(2)}°`;
+}
+
+function niceScaleAngle(value) {
+  const steps = [0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 45, 90];
+  let chosen = steps[0];
+  for (const step of steps) if (step <= value) chosen = step;
+  return chosen;
+}
+
+function updateMapScale() {
+  const frame = frames[frameIndex];
+  if (!frame) {
+    el.mapScaleText.textContent = 'No field';
+    return;
+  }
+  const base = imageBaseRect();
+  const fov = Number(frame.fov) || Number(el.fov.value) || 0.3;
+  const degreesPerPixel = fov / Math.max(1, base.width * zoom);
+  const target = 46 * degreesPerPixel;
+  const chosen = niceScaleAngle(target);
+  el.mapScaleBar.style.width = `${Math.max(22, Math.min(76, chosen / Math.max(1e-9, degreesPerPixel)))}px`;
+  el.mapScaleText.textContent = formatAngle(chosen);
+  el.mapHelp.textContent = zoom > 1.01
+    ? 'Drag to pan · scroll to zoom · double-click to move'
+    : 'Scroll to zoom · double-click to move · drag to explore';
+}
+
+function updateCompass() {
+  const analysis = activeFrameAnalysis();
+  if (!analysis?.wcsCorners) {
+    el.mapCompass.style.setProperty('--compass-rotation', '0deg');
+    return;
+  }
+  const center = bilinearSky(analysis.wcsCorners, 0.5, 0.5);
+  const right = bilinearSky(analysis.wcsCorners, 0.56, 0.5);
+  if (!center || !right) return;
+  const east = (unwrapRa(right.ra, center.ra) - center.ra) * Math.cos(center.dec * Math.PI / 180);
+  const north = right.dec - center.dec;
+  const bearing = Math.atan2(east, north) * 180 / Math.PI;
+  el.mapCompass.style.setProperty('--compass-rotation', `${90 - bearing}deg`);
+}
+
+function minimapCoordinates(point) {
+  const width = el.skyMinimap.width || 420;
+  const height = el.skyMinimap.height || 210;
+  return {
+    x: (1 - normalizeRa(point.ra) / 360) * width,
+    y: (0.5 - point.dec / 180) * height
+  };
+}
+
+function drawMinimap() {
+  const canvas = el.skyMinimap;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = '#050b13';
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = 'rgba(105, 142, 176, .18)';
+  context.fillStyle = 'rgba(137, 164, 190, .55)';
+  context.font = '14px ui-monospace, SFMono-Regular, Menlo, monospace';
+  context.lineWidth = 1;
+  for (let ra = 0; ra <= 360; ra += 30) {
+    const x = (1 - ra / 360) * width;
+    context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke();
+    if (ra % 90 === 0) context.fillText(`${ra / 15}h`, Math.min(width - 18, x + 3), 11);
+  }
+  for (let dec = -60; dec <= 60; dec += 30) {
+    const y = (0.5 - dec / 180) * height;
+    context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
+    context.fillText(`${dec > 0 ? '+' : ''}${dec}°`, 3, Math.max(9, y - 3));
+  }
+  context.strokeStyle = 'rgba(242,187,109,.28)';
+  context.beginPath(); context.moveTo(0, height / 2); context.lineTo(width, height / 2); context.stroke();
+  for (const [key, target] of Object.entries(targets)) {
+    if (key === 'custom' || !Number.isFinite(target.ra) || !Number.isFinite(target.dec)) continue;
+    const point = minimapCoordinates(target);
+    const selected = el.target.value === key;
+    context.beginPath();
+    context.arc(point.x, point.y, selected ? 4 : 2.5, 0, Math.PI * 2);
+    context.fillStyle = selected ? '#f2bb6d' : 'rgba(160, 199, 228, .78)';
+    context.fill();
+    if (selected) {
+      context.fillStyle = '#f7e3c1';
+      context.fillText(target.label.split(' · ')[0], Math.min(width - 70, point.x + 6), Math.max(10, point.y - 5));
+    }
+  }
+  const frame = frames[frameIndex];
+  if (frame) {
+    const center = currentSkyCenter();
+    const point = minimapCoordinates(center);
+    const fov = Number(frame.fov) || 0.3;
+    const radius = Math.max(5, (fov / 360) * width);
+    context.strokeStyle = '#f2bb6d';
+    context.lineWidth = 1.3;
+    context.beginPath(); context.arc(point.x, point.y, radius, 0, Math.PI * 2); context.stroke();
+    context.beginPath(); context.moveTo(point.x - 8, point.y); context.lineTo(point.x + 8, point.y); context.stroke();
+    context.beginPath(); context.moveTo(point.x, point.y - 8); context.lineTo(point.x, point.y + 8); context.stroke();
+    el.minimapField.textContent = `RA ${center.ra.toFixed(2)} · Dec ${center.dec.toFixed(2)}`;
+  } else {
+    el.minimapField.textContent = 'IAU J2000';
+  }
+  if (minimapPointer) {
+    const point = minimapCoordinates(minimapPointer);
+    context.strokeStyle = '#71d4d8';
+    context.lineWidth = 1.5;
+    context.beginPath(); context.arc(point.x, point.y, 6, 0, Math.PI * 2); context.stroke();
+  }
+}
+
+function updateMapCenter() {
+  if (!frames[frameIndex]) {
+    el.mapCursor.textContent = 'Load a sky field to navigate';
+    return;
+  }
+  const center = currentSkyCenter();
+  el.mapCursor.textContent = `Centre ${formatRaHms(center.ra)} · ${formatDecDms(center.dec)}`;
+}
+
+function updateMapUI() {
+  updateMapScale();
+  updateCompass();
+  updateMapCenter();
+  drawMinimap();
+}
+
+function sameNavigationField(a, b) {
+  return Math.abs(a.ra - b.ra) < 1e-4 && Math.abs(a.dec - b.dec) < 1e-4 && Math.abs(a.fov - b.fov) < 1e-4;
+}
+
+function updateNavButtons() {
+  el.navBack.disabled = navIndex <= 0;
+  el.navForward.disabled = navIndex < 0 || navIndex >= navHistory.length - 1;
+}
+
+function recordNavigation(field, key) {
+  const entry = { ra: field.ra, dec: field.dec, fov: field.fov, key: key || 'custom' };
+  if (navIndex >= 0 && sameNavigationField(navHistory[navIndex], entry) && navHistory[navIndex].key === entry.key) return;
+  navHistory.splice(navIndex + 1);
+  navHistory.push(entry);
+  if (navHistory.length > 40) navHistory.shift();
+  navIndex = navHistory.length - 1;
+  updateNavButtons();
+}
+
+function goHistory(delta) {
+  if (loadingReal) { notify('Wait for the current sky field to finish loading.'); return; }
+  const next = navIndex + delta;
+  const entry = navHistory[next];
+  if (!entry) return;
+  navIndex = next;
+  el.target.value = entry.key;
+  el.ra.value = entry.ra.toFixed(5);
+  el.dec.value = entry.dec.toFixed(5);
+  el.fov.value = String(entry.fov);
+  updateTargetMeta(targets[entry.key] || targets.custom);
+  updateNavButtons();
+  loadRealFrames({ record: false });
+}
+
+function navigateToField(field, source = 'Selected sky position') {
+  if (!Number.isFinite(field.ra) || !Number.isFinite(field.dec)) return;
+  const ra = normalizeRa(field.ra);
+  const dec = Math.max(-90, Math.min(90, field.dec));
+  el.target.value = 'custom';
+  el.ra.value = ra.toFixed(5);
+  el.dec.value = dec.toFixed(5);
+  if (Number.isFinite(field.fov)) el.fov.value = String(field.fov);
+  updateTargetMeta(targets.custom);
+  el.viewerTitle.textContent = source;
+  el.fieldConstellation.textContent = 'CUSTOM SKY · SPHEREX DR1';
+  el.fieldMeta.textContent = `${coordinateText(ra, dec)} · ${Number(el.fov.value).toFixed(2)}° field`;
+  notify(`Navigating to ${coordinateText(ra, dec)}.`);
+  loadRealFrames();
+}
+
+function navigateToSky(point, source = 'Selected sky position') {
+  if (!point) return;
+  navigateToField(point, source);
+}
+
+function findNamedPlace(query) {
+  const normalized = query.toLowerCase().replace(/[’']/g, '').replace(/[−–—]/g, '-').replace(/\s+/g, ' ').trim();
+  const aliases = [
+    ['barnard', 'barnard'], ['epsilon indi', 'epsindi'], ['eps indi', 'epsindi'], ['indi b', 'epsindi'],
+    ['wise 0855', 'wise0855'], ['wise0855', 'wise0855'], ['0855', 'wise0855'],
+    ['rw aur', 'rwaur'], ['rw aurigae', 'rwaur'], ['rwaur', 'rwaur'],
+    ['r dra', 'rdra'], ['r draconis', 'rdra'], ['rdra', 'rdra'],
+    ['wide field', 'spherex'], ['leo', 'spherex'], ['spherex', 'spherex']
+  ];
+  for (const [needle, key] of aliases) if (normalized.includes(needle)) return key;
+  return null;
+}
+
+function parsePlaceQuery(query) {
+  const named = findNamedPlace(query);
+  if (named) return { kind: 'target', key: named };
+  let raText = '';
+  let decText = '';
+  const comma = query.split(',').map(part => part.trim()).filter(Boolean);
+  if (comma.length === 2) {
+    [raText, decText] = comma;
+  } else {
+    const tokens = query.trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 2) [raText, decText] = tokens;
+    else if (tokens.length === 6) [raText, decText] = [tokens.slice(0, 3).join(' '), tokens.slice(3).join(' ')];
+  }
+  if (!raText || !decText) return null;
+  const ra = parseRa(raText);
+  const dec = parseDec(decText);
+  if (!Number.isFinite(ra) || ra < 0 || ra > 360 || !Number.isFinite(dec) || dec < -90 || dec > 90) return null;
+  return { kind: 'coordinates', ra, dec };
+}
+
+function submitMapSearch(event) {
+  event.preventDefault();
+  const query = el.mapSearch.value.trim();
+  if (!query) { el.mapSearch.focus(); return; }
+  const place = parsePlaceQuery(query);
+  if (!place) {
+    notify('Search a named target or two coordinates, e.g. “R Draconis” or “248.17, 66.75”.');
+    return;
+  }
+  if (place.kind === 'target') {
+    setTarget(place.key, true);
+    notify(`Jumping to ${targets[place.key].label}.`);
+  } else {
+    navigateToField({ ra: place.ra, dec: place.dec, fov: Number(el.fov.value) }, 'Searched sky position');
+  }
+  el.mapSearch.blur();
+}
+
+function minimapSkyFromEvent(event) {
+  const rect = el.skyMinimap.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+  const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+  return {
+    ra: normalizeRa((1 - x / rect.width) * 360),
+    dec: Math.max(-90, Math.min(90, 90 - (y / rect.height) * 180))
+  };
+}
+
 function verificationRow(check) {
   const item = document.createElement('li');
   item.className = `verify-row ${check.state}`;
@@ -556,6 +917,14 @@ function updateVerification() {
   el.checksumValue.textContent = frame.sha256 || 'Waiting for the real PNG payload.';
 }
 
+function parseWcsCorners(value) {
+  if (!value) return null;
+  const points = value.split(';').map(part => part.split(',').map(Number));
+  if (points.length !== 4 || points.some(point => point.length !== 2 || point.some(item => !Number.isFinite(item)))) return null;
+  const [topLeft, topRight, bottomLeft, bottomRight] = points.map(([ra, dec]) => ({ ra, dec }));
+  return { topLeft, topRight, bottomLeft, bottomRight };
+}
+
 function readFrameHeaders(response) {
   const number = (name) => {
     const raw = response.headers.get(name);
@@ -596,7 +965,8 @@ function readFrameHeaders(response) {
     eclipticLat: number('X-Frame-Ecliptic-Lat'),
     cutoutSize: response.headers.get('X-Cutout-Size') || '',
     palette: response.headers.get('X-Frame-Palette') || '',
-    stretch: response.headers.get('X-Frame-Stretch') || ''
+    stretch: response.headers.get('X-Frame-Stretch') || '',
+    wcsCorners: parseWcsCorners(response.headers.get('X-Frame-WCS-Corners'))
   };
   return {
     ...headers,
@@ -819,8 +1189,9 @@ async function loadPNGFiles(files) {
   if (valid.length < 2) notify('Load at least 2 observations to see changes over time.');
 }
 
-async function loadRealFrames() {
+async function loadRealFrames(options = {}) {
   if (loadingReal) return;
+  const record = options?.record !== false;
   let field;
   try { field = readField(); } catch (error) { notify(error.message); return; }
 
@@ -832,7 +1203,7 @@ async function loadRealFrames() {
   notify('Finding real SPHEREx visits for this patch.');
   try {
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '8', v: '9',
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '8', v: '10',
       detector, palette, stretch
     });
     const controller = new AbortController();
@@ -882,9 +1253,11 @@ async function loadRealFrames() {
       ? `${payload.sky.constellation.name.toUpperCase()} · SPHEREX DR1`
       : target?.constellation ? `${target.constellation.toUpperCase()} · SPHEREX DR1` : 'SPHEREX DR1 FIELD';
     el.fieldMeta.textContent = `${coordinateText(field.ra, field.dec)} · ${field.fov.toFixed(2)}° field`;
+    if (record) recordNavigation(field, el.target.value);
     void loadFrameSet(realFrames);
     updateUrl(field, el.target.value);
     updateBandUI();
+    updateMapUI();
     loadConstellation(payload.sky || null, field.ra, field.dec);
     updateVerification();
     notify(`Loaded ${realFrames.length} real visits in ${detector}. Press play, blink, or difference.`);
@@ -970,6 +1343,8 @@ function render() {
   const f = frames[frameIndex];
   if (!f) {
     el.image.hidden = true; el.differenceCanvas.hidden = true; el.empty.hidden = false;
+    drawMinimap();
+    updateMapCenter();
     el.frameLabel.textContent = 'No images loaded'; el.frameCount.textContent = '0 / 0';
     el.stageDate.textContent = 'No visit loaded';
     el.stageMode.textContent = 'LIVE FRAME';
@@ -993,7 +1368,7 @@ function render() {
   el.image.onload = () => {
     el.stageLoading.hidden = true;
     if (!f.width) { f.width = el.image.naturalWidth; f.height = el.image.naturalHeight; }
-    if (frames[frameIndex] === f) updateDetails(f);
+    if (frames[frameIndex] === f) { updateDetails(f); updateTransform(); drawMinimap(); }
   };
   el.image.onerror = () => { el.stageLoading.hidden = true; notify('That IRSA FITS cutout could not be loaded as a PNG.'); };
   el.frameLabel.textContent = f.date ? `${f.date} · ${f.detector || 'SPHEREx'}` : f.label;
@@ -1011,6 +1386,9 @@ function render() {
   updateBandUI();
   updateVerification();
   updateLab();
+  updateTransform();
+  drawMinimap();
+  updateMapCenter();
 }
 
 function nextFrame() { if (!frames.length) return; if (differenceMode) clearDifference(); frameIndex = (frameIndex + 1) % frames.length; render(); }
@@ -1128,17 +1506,47 @@ function toggleDifference() {
   showDifference();
 }
 
-function setZoom(value) {
-  zoom = Math.max(1, Math.min(8, value));
-  if (zoom === 1) { panX = 0; panY = 0; }
+function setZoom(value, anchor = null) {
+  const nextZoom = Math.max(1, Math.min(MAX_ZOOM, value));
+  const oldZoom = zoom;
+  if (anchor && nextZoom !== oldZoom) {
+    const rect = el.stage.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const anchorX = Math.max(0, Math.min(rect.width, anchor.x)) - centerX;
+    const anchorY = Math.max(0, Math.min(rect.height, anchor.y)) - centerY;
+    panX = anchorX - ((anchorX - panX) / oldZoom) * nextZoom;
+    panY = anchorY - ((anchorY - panY) / oldZoom) * nextZoom;
+  }
+  zoom = nextZoom;
+  if (zoom <= 1.0001) { zoom = 1; panX = 0; panY = 0; }
   updateTransform();
 }
+
 function updateTransform() {
+  clampPan();
   el.transform.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
   el.zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
   el.image.classList.toggle('pixelated', Boolean(el.sharpPixels?.checked) && zoom > 1.05);
+  el.stage.classList.toggle('is-navigating', zoom > 1.01);
+  updateMapScale();
+  updateCompass();
 }
-function resetView() { zoom = 1; panX = 0; panY = 0; updateTransform(); }
+
+function resetView() {
+  zoom = 1; panX = 0; panY = 0;
+  updateTransform();
+}
+
+function zoomToNative() {
+  const frame = frames[frameIndex];
+  if (!frame) { resetView(); return; }
+  const base = imageBaseRect();
+  const pixels = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
+  if (!Number.isFinite(pixels) || !base.width) { notify('Native pixel scale is not available yet.'); return; }
+  setZoom(Math.max(1, Math.min(MAX_ZOOM, pixels / base.width)));
+  notify(`Showing ${Math.round(zoom * 100)}% — one image pixel per screen pixel at this window size.`);
+}
 
 el.target.addEventListener('change', () => {
   const key = el.target.value;
@@ -1203,7 +1611,39 @@ el.showCompare.addEventListener('click', toggleComparison);
 el.crosshairCheck.addEventListener('change', () => { el.crosshair.hidden = !el.crosshairCheck.checked || differenceMode; });
 el.zoomIn.addEventListener('click', () => setZoom(zoom * 1.25));
 el.zoomOut.addEventListener('click', () => setZoom(zoom / 1.25));
+el.zoomNative.addEventListener('click', zoomToNative);
 el.resetView.addEventListener('click', resetView);
+el.mapSearchForm.addEventListener('submit', submitMapSearch);
+el.navBack.addEventListener('click', () => goHistory(-1));
+el.navForward.addEventListener('click', () => goHistory(1));
+el.minimapToggle.addEventListener('click', () => {
+  const visible = el.skyMinimapWrap.classList.toggle('is-hidden');
+  el.minimapToggle.setAttribute('aria-pressed', String(!visible));
+  el.minimapToggle.textContent = visible ? 'Map' : 'Hide map';
+  if (!visible) drawMinimap();
+});
+el.skyMinimap.addEventListener('pointerdown', event => {
+  event.preventDefault();
+  event.stopPropagation();
+  minimapPointer = minimapSkyFromEvent(event);
+  try { el.skyMinimap.setPointerCapture(event.pointerId); } catch { /* synthetic events have no capture target */ }
+  drawMinimap();
+});
+el.skyMinimap.addEventListener('pointermove', event => {
+  if (!minimapPointer) return;
+  event.preventDefault();
+  minimapPointer = minimapSkyFromEvent(event);
+  el.mapCursor.textContent = `Map ${formatRaHms(minimapPointer.ra)} · ${formatDecDms(minimapPointer.dec)}`;
+  drawMinimap();
+});
+el.skyMinimap.addEventListener('pointerup', event => {
+  if (!minimapPointer) return;
+  const point = minimapSkyFromEvent(event);
+  minimapPointer = null;
+  drawMinimap();
+  navigateToSky(point, 'Sky-map navigation');
+});
+el.skyMinimap.addEventListener('pointercancel', () => { minimapPointer = null; drawMinimap(); });
 el.copyLink.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(window.location.href);
@@ -1220,22 +1660,147 @@ el.fullscreen.addEventListener('click', async () => {
     notify(`Full screen is unavailable: ${error.message}`);
   }
 });
+function stageLocalPoint(event) {
+  const rect = el.stage.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top, rect };
+}
+
+function beginPinch() {
+  const points = [...activePointers.values()];
+  if (points.length < 2) return;
+  const [a, b] = points;
+  pinchGesture = {
+    distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+    midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    zoom,
+    panX,
+    panY
+  };
+  singleGesture = null;
+}
+
+function movePinch() {
+  const points = [...activePointers.values()];
+  if (points.length < 2 || !pinchGesture) return;
+  const [a, b] = points;
+  const distance = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+  const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const targetZoom = Math.max(1, Math.min(MAX_ZOOM, pinchGesture.zoom * distance / pinchGesture.distance));
+  const centerX = el.stage.clientWidth / 2;
+  const centerY = el.stage.clientHeight / 2;
+  panX = midpoint.x - centerX - ((pinchGesture.midpoint.x - centerX - pinchGesture.panX) / pinchGesture.zoom) * targetZoom;
+  panY = midpoint.y - centerY - ((pinchGesture.midpoint.y - centerY - pinchGesture.panY) / pinchGesture.zoom) * targetZoom;
+  zoom = targetZoom;
+  updateTransform();
+}
+
+function stopStageGesture() {
+  singleGesture = null;
+  pinchGesture = null;
+  activePointers.clear();
+  el.stage.classList.remove('dragging');
+}
+
 el.stage.addEventListener('wheel', e => {
-  if (!frames.length) return;
-  e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+  if (!frames.length || e.target.closest('.sky-minimap')) return;
+  e.preventDefault();
+  const local = stageLocalPoint(e);
+  setZoom(zoom * (e.deltaY < 0 ? 1.14 : 1 / 1.14), local);
 }, { passive: false });
+
 el.stage.addEventListener('pointerdown', e => {
-  if (!frames.length || zoom === 1 || e.target.closest('button')) return;
-  isDragging = true; dragStart = { x: e.clientX - panX, y: e.clientY - panY };
-  el.stage.setPointerCapture(e.pointerId); el.stage.classList.add('dragging');
+  if (!frames.length || e.target.closest('.sky-minimap, button, a, input, select, textarea')) return;
+  const local = stageLocalPoint(e);
+  activePointers.set(e.pointerId, local);
+  try { el.stage.setPointerCapture(e.pointerId); } catch { /* synthetic events have no capture target */ }
+  el.stage.classList.add('dragging');
+  if (activePointers.size === 1) {
+    pinchGesture = null;
+    singleGesture = {
+      pointerId: e.pointerId,
+      start: local,
+      panX,
+      panY,
+      mode: zoom > 1.01 ? 'pan' : 'navigate',
+      moved: false
+    };
+  } else if (activePointers.size === 2) {
+    beginPinch();
+  }
 });
+
 el.stage.addEventListener('pointermove', e => {
-  if (!isDragging) return;
-  panX = e.clientX - dragStart.x; panY = e.clientY - dragStart.y; updateTransform();
+  const local = stageLocalPoint(e);
+  const point = skyAtStagePoint(e.clientX, e.clientY);
+  if (point) {
+    el.mapCursor.textContent = `${point.exact ? '' : '≈ '}RA ${formatRaHms(point.ra)} · Dec ${formatDecDms(point.dec)}`;
+  }
+  if (!activePointers.has(e.pointerId)) return;
+  activePointers.set(e.pointerId, local);
+  if (activePointers.size >= 2) {
+    if (!pinchGesture) beginPinch();
+    movePinch();
+    return;
+  }
+  if (!singleGesture) return;
+  const dx = local.x - singleGesture.start.x;
+  const dy = local.y - singleGesture.start.y;
+  if (Math.hypot(dx, dy) > 3) singleGesture.moved = true;
+  if (singleGesture.mode === 'pan') {
+    panX = singleGesture.panX + dx;
+    panY = singleGesture.panY + dy;
+    updateTransform();
+  } else if (singleGesture.moved) {
+    el.transform.style.transform = `translate(${dx}px, ${dy}px) scale(1)`;
+    el.mapCursor.textContent = 'Release to move this sky field';
+  }
 });
-function stopDrag() { isDragging = false; el.stage.classList.remove('dragging'); }
-el.stage.addEventListener('pointerup', stopDrag);
-el.stage.addEventListener('pointercancel', stopDrag);
+
+el.stage.addEventListener('pointerup', e => {
+  const gesture = singleGesture;
+  const local = stageLocalPoint(e);
+  activePointers.delete(e.pointerId);
+  if (pinchGesture) {
+    if (activePointers.size < 2) { pinchGesture = null; singleGesture = null; el.stage.classList.remove('dragging'); }
+    return;
+  }
+  if (!gesture) { el.stage.classList.remove('dragging'); return; }
+  const dx = local.x - gesture.start.x;
+  const dy = local.y - gesture.start.y;
+  singleGesture = null;
+  el.stage.classList.remove('dragging');
+  if (gesture.mode === 'navigate' && Math.hypot(dx, dy) > 24) {
+    const rect = el.stage.getBoundingClientRect();
+    const point = skyAtStagePoint(rect.left + rect.width / 2 + (gesture.start.x - local.x), rect.top + rect.height / 2 + (gesture.start.y - local.y));
+    if (point) navigateToSky(point, 'Drag navigation');
+    else resetView();
+  } else if (gesture.mode === 'navigate') {
+    resetView();
+  } else {
+    updateTransform();
+  }
+});
+
+el.stage.addEventListener('pointercancel', e => { activePointers.delete(e.pointerId); stopStageGesture(); resetView(); });
+el.stage.addEventListener('pointerleave', () => { if (!activePointers.size) updateMapCenter(); });
+el.stage.addEventListener('dblclick', e => {
+  if (!frames.length || e.target.closest('.sky-minimap, button, a, input, select, textarea')) return;
+  const point = skyAtStagePoint(e.clientX, e.clientY);
+  if (!point) { notify('Double-click inside the image to move the field.'); return; }
+  const center = currentSkyCenter();
+  const separation = angularSeparation(center.ra, center.dec, point.ra, point.dec);
+  if (separation !== null && separation < 0.0008) { notify('The field is already centred here.'); return; }
+  navigateToSky(point, 'Double-click navigation');
+});
+
+window.addEventListener('resize', () => { clampPan(); updateTransform(); drawMinimap(); });
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea, select, button') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(zoom * 1.25); }
+  else if (e.key === '-' || e.key === '_') { e.preventDefault(); setZoom(zoom / 1.25); }
+  else if (e.key === '0') { e.preventDefault(); resetView(); }
+});
+updateNavButtons();
 
 // Field lab: user-facing mail, learning prompts and real-data games.
 const lab = {

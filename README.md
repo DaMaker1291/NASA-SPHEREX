@@ -238,6 +238,30 @@ GET /api/spherex/frames?ra=76.95625&dec=30.40111&fov=0.3&limit=8
 GET /api/spherex/frames?ra=248.1675&dec=66.755&fov=0.3&limit=8
 ```
 
+## Map-like sky navigation
+
+The viewer behaves like a map over real SPHEREx cutouts:
+
+- **Scroll** zooms toward the cursor, with 12× headroom and a **1:1** native-pixel shortcut.
+- **Drag** pans when zoomed in. At fit scale, dragging the field left/right/up/down
+  moves to the adjacent sky and loads a new real IRSA field.
+- **Double-click** reads the published WCS corners of the displayed cutout and
+  recentres on that exact sky position.
+- **Pinch** on touch devices preserves the midpoint under your fingers.
+- **All-sky map** in the corner shows the real positions of the five targets and
+  the current field. Click or drag it to travel anywhere in J2000 coordinates.
+- **Search** accepts named targets or coordinates such as `248.17, 66.75` and
+  `16h 32m 20s, +66 45`.
+- **Back / forward** restores previous sky positions.
+- The compass is derived from the cutout WCS orientation, the scale bar from the
+  current field width and zoom, and the coordinates under the pointer from the
+  four WCS corners exposed by the raster endpoint.
+
+The WCS corners come from real `RA---TAN` FITS geometry (`skyAt` in
+`src/lib/fits.ts`) and are returned as `X-Frame-WCS-Corners` in display order:
+top-left, top-right, bottom-left, bottom-right. No synthetic star field is
+drawn behind the observations.
+
 ## Wavelength workspace
 
 The viewer exposes all six real SPHEREx detector bands. The band chips and the

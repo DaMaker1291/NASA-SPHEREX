@@ -116,6 +116,14 @@ async function encodePng(width: number, height: number, rgba: Uint8Array) {
   return png
 }
 
+export type SkyCorner = { ra: number; dec: number }
+export type WcsCorners = {
+  topLeft: SkyCorner
+  topRight: SkyCorner
+  bottomLeft: SkyCorner
+  bottomRight: SkyCorner
+}
+
 export type CutoutRaster = {
   png: Uint8Array
   width: number
@@ -133,6 +141,7 @@ export type CutoutRaster = {
   band: string
   obsid: string
   center: { ra: number; dec: number } | null
+  wcsCorners: WcsCorners | null
   sky: ReturnType<typeof skyContext> | null
 }
 
@@ -164,6 +173,16 @@ export async function rasterizeCutout(
   const exposure = numberValue(image.header, 'EXPTIME', Number.NaN)
   const center = skyAt(image, (image.width - 1) / 2, (image.height - 1) / 2)
   const centerSky = center ? skyContext(center.ra, center.dec) : null
+  // PNG rows are written from the FITS array in storage order, so the top of
+  // the displayed image is the last FITS row. Expose corners in display order
+  // so the browser can turn a screen position back into a real sky position.
+  const topLeft = skyAt(image, 0, image.height - 1)
+  const topRight = skyAt(image, image.width - 1, image.height - 1)
+  const bottomLeft = skyAt(image, 0, 0)
+  const bottomRight = skyAt(image, image.width - 1, 0)
+  const wcsCorners = topLeft && topRight && bottomLeft && bottomRight
+    ? { topLeft, topRight, bottomLeft, bottomRight }
+    : null
 
   const rgba = new Uint8Array(image.width * image.height * 4)
   for (let index = 0; index < pixels.length; index += 1) {
@@ -197,6 +216,7 @@ export async function rasterizeCutout(
     band: textValue(image.header, 'BAND'),
     obsid: textValue(image.header, 'OBSID'),
     center,
+    wcsCorners,
     sky: centerSky,
   }
 }

@@ -309,7 +309,7 @@ app.get('/api/spherex/frames', async (c) => {
     const query = (uri: string) =>
       `/api/spherex/png?${new URLSearchParams({
         uri, ra: String(ra), dec: String(dec), fov: String(fov),
-        palette, stretch, v: '6',
+        palette, stretch, v: '7',
       }).toString()}`
 
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
@@ -409,6 +409,12 @@ app.get('/api/spherex/png', async (c) => {
     if (raster.center) {
       c.header('X-Frame-Ra', String(raster.center.ra))
       c.header('X-Frame-Dec', String(raster.center.dec))
+    }
+    if (raster.wcsCorners) {
+      const { topLeft, topRight, bottomLeft, bottomRight } = raster.wcsCorners
+      c.header('X-Frame-WCS-Corners', [topLeft, topRight, bottomLeft, bottomRight]
+        .map((corner) => `${corner.ra.toFixed(7)},${corner.dec.toFixed(7)}`)
+        .join(';'))
     }
     if (raster.sky) {
       c.header('X-Frame-Constellation', asciiHeader(raster.sky.constellation.name))

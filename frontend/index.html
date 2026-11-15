@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-17">
-  <script defer src="script.js?v=next-24"></script>
+  <link rel="stylesheet" href="style.css?v=next-18">
+  <script defer src="script.js?v=next-30"></script>
 </head>
 <body>
   <header class="site-header">
@@ -117,11 +117,33 @@
             <span id="zoomLevel" class="zoom-level">100%</span>
             <button id="zoomIn" class="icon-button" type="button" title="Zoom in" aria-label="Zoom in">+</button>
             <button id="resetView" class="text-button" type="button">Reset</button>
+            <button id="zoomNative" class="text-button" type="button" title="Show one image pixel per screen pixel">1:1</button>
             <button id="copyLink" class="text-button" type="button">Copy link</button>
             <button id="hdToggle" class="text-button" type="button" disabled>HD window</button>
             <button id="fullscreen" class="text-button" type="button">Full screen</button>
             <a class="jump-query" href="#queryPanel">Coordinates ↓</a>
             <label class="marker-toggle" for="showCrosshair"><input id="showCrosshair" type="checkbox" checked> Centre marker</label>
+          </div>
+        </div>
+
+        <div class="map-nav">
+          <form id="mapSearchForm" class="map-search" role="search">
+            <span class="map-search-icon" aria-hidden="true">⌖</span>
+            <input id="mapSearch" type="search" list="placeList" placeholder="Search a place or RA, Dec — e.g. 248.17, 66.75" autocomplete="off" spellcheck="false" aria-label="Search the sky">
+            <datalist id="placeList">
+              <option value="Barnard’s Star"></option>
+              <option value="Epsilon Indi B"></option>
+              <option value="WISE 0855−0714"></option>
+              <option value="RW Aurigae"></option>
+              <option value="R Draconis"></option>
+              <option value="Wide field Leo"></option>
+            </datalist>
+            <button class="map-go" type="submit">Go</button>
+          </form>
+          <div class="map-history" aria-label="Navigation history">
+            <button id="navBack" class="icon-button" type="button" title="Back" aria-label="Previous sky position" disabled>←</button>
+            <button id="navForward" class="icon-button" type="button" title="Forward" aria-label="Next sky position" disabled>→</button>
+            <button id="minimapToggle" class="text-button" type="button" aria-pressed="true">Hide map</button>
           </div>
         </div>
 
@@ -143,12 +165,24 @@
             <small>Querying IRSA SIA2 and preparing detector cutouts</small>
           </div>
           <div id="crosshair" class="crosshair" aria-hidden="true"><span></span></div>
+          <div id="skyMinimapWrap" class="sky-minimap" aria-label="All-sky navigation map">
+            <div class="minimap-head"><span>ALL-SKY MAP</span><span id="minimapField">IAU J2000</span></div>
+            <canvas id="skyMinimap" width="420" height="210" aria-label="All-sky map. Click to move the field."></canvas>
+            <div class="minimap-foot">Click or drag to change place</div>
+          </div>
           <div id="stageBadge" class="stage-badge" hidden>LIVE IRSA · REAL FITS</div>
           <div class="stage-hud">
             <span id="stageDate">No visit loaded</span>
             <span id="stageResolution">NATIVE CUTOUT</span>
             <span id="stageMode">LIVE FRAME</span>
           </div>
+        </div>
+
+        <div class="map-meta" aria-label="Map position and scale">
+          <span id="mapCompass" class="map-compass" title="WCS north"><i>N</i><b>↑</b></span>
+          <span id="mapCursor" class="map-coordinates">Move over the image to read real sky coordinates</span>
+          <span class="map-scale"><i id="mapScaleBar"></i><span id="mapScaleText">0.30°</span></span>
+          <span id="mapHelp" class="map-help">Drag to pan · scroll to zoom · double-click to move</span>
         </div>
 
         <div class="transport">
