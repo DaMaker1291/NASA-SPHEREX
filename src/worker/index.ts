@@ -14,6 +14,7 @@ import {
 } from './irsa'
 import { ApiError, TtlCache, queryEnum, queryNumber, validateIrsaProductUri } from './http'
 import { rasterizeCutoutCached } from './imaging'
+import { fetchS3HipsPlane } from './s3'
 import { findSpherexInS3Index } from './s3-index'
 import { skyContext, skyNeighborhood } from './sky'
 import { getSourceHealth } from './sources'
@@ -469,6 +470,9 @@ app.get('/api/spherex/png', async (c) => {
     if (cached) return withCacheState(cached, 'HIT')
 
     const preferS3 = c.req.query('preferS3') === '1'
+    // Use the same real image, variance, zodi and WCS-WAVE planes for the
+    // interactive PNG as the FITS route; both now crop S3 rows instead of
+    // downloading the full 60 MB product.
     const cutout = await getCutout(uri, ra, dec, fov, sizeOverride, preferS3)
     let rasterResult
     try {
@@ -478,7 +482,7 @@ app.get('/api/spherex/png', async (c) => {
         { palette, stretch },
       )
     } catch {
-      throw new ApiError(502, 'IRSA returned a cutout the service could not rasterize.', 'BAD_UPSTREAM_RESPONSE')
+      throw new ApiError(502, 'The archive returned a cutout the service could not rasterize.', 'BAD_UPSTREAM_RESPONSE')
     }
     const raster = rasterResult.raster
 
@@ -502,7 +506,9 @@ app.get('/api/spherex/png', async (c) => {
     c.header('X-Frame-Mean', String(raster.stats.mean))
     c.header('X-Frame-Variance-Median', String(raster.varianceStats?.median ?? ''))
     c.header('X-Frame-Zodi-Median', String(raster.zodiStats?.median ?? ''))
-    c.header('X-Frame-Flagged', String(raster.flaggedPixels))
+    // The fast PNG path reads only the IMAGE plane, so do not claim "0 flags"
+    // when the flag HDU was intentionally not fetched.
+    c.header('X-Frame-Flagged', raster.varianceStats ? String(raster.flaggedPixels) : '')
     c.header('X-Frame-Pixel-Scale', String(raster.pixelScale ?? ''))
     c.header('X-Frame-Wave-Min', String(raster.wave?.minWavelength ?? ''))
     c.header('X-Frame-Wave-Max', String(raster.wave?.maxWavelength ?? ''))
@@ -552,12 +558,13 @@ app.get('/api/spherex/cutout', async (c) => {
     const cached = await edgeMatch(c.req.raw)
     if (cached) return withCacheState(cached, 'HIT')
 
-    const data = await getCutout(uri, ra, dec, fov)
+    const preferS3 = c.req.query('preferS3') !== '0'
+    const data = await getCutout(uri, ra, dec, fov, undefined, preferS3)
     c.header('Content-Type', 'application/fits')
     c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
     c.header('X-Data-Source', asciiHeader(data.source))
     c.header('X-Data-Url', data.uri)
-    if (!data.source.startsWith('IRSA')) c.header('X-Data-Fallback', 's3-direct')
+    if (data.source.includes('S3')) c.header('X-Data-Fallback', 's3-direct')
     c.header('X-Cutout-Size', String(data.size))
     c.header('X-Cutout-Cache', data.cached ? 'HIT' : 'MISS')
     const response = c.body(data.buffer)
@@ -580,7 +587,8 @@ app.get('/api/spherex/summary', async (c) => {
     const cached = await edgeMatch(c.req.raw)
     if (cached) return withCacheState(cached, 'HIT')
 
-    const cutout = await getCutout(uri, ra, dec, fov)
+    const preferS3 = c.req.query('preferS3') !== '0'
+    const cutout = await getCutout(uri, ra, dec, fov, undefined, preferS3)
     const summaryKey = `${cutout.uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${fov.toFixed(3)}`
     let summary = summaryCache.get(summaryKey)
     let summaryCached = Boolean(summary)
@@ -588,22 +596,27 @@ app.get('/api/spherex/summary', async (c) => {
       try {
         summary = summarizeCutout(cutout.buffer)
       } catch {
-        throw new ApiError(502, 'IRSA returned a cutout the Worker could not summarize.', 'BAD_UPSTREAM_RESPONSE')
+        throw new ApiError(502, 'The archive returned a cutout the Worker could not summarize.', 'BAD_UPSTREAM_RESPONSE')
       }
       summaryCache.set(summaryKey, summary)
     }
     const sky = summary.center ? skyContext(summary.center.ra, summary.center.dec) : skyContext(ra, dec)
 
     c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
+    const fromS3 = cutout.source.includes('S3')
     c.header('X-Data-Source', asciiHeader(`${cutout.source} header summary`))
-    if (!cutout.source.startsWith('IRSA')) c.header('X-Data-Fallback', 's3-direct')
+    if (fromS3) c.header('X-Data-Fallback', 's3-direct')
     c.header('X-Cutout-Cache', cutout.cached ? 'HIT' : 'MISS')
     c.header('X-Summary-Cache', summaryCached ? 'HIT' : 'MISS')
     const response = c.json({
       source: {
-        label: 'IRSA SPHEREx level-2 cutout · server-side FITS summary',
+        label: fromS3
+          ? 'NASA IRSA S3 · SPHEREx level-2 cutout · FITS summary'
+          : 'IRSA SPHEREx level-2 cutout · server-side FITS summary',
         url: cutout.uri,
-        method: 'IRSA cutout service · real IMAGE, FLAGS and WCS-WAVE',
+        method: fromS3
+          ? 'S3 byte-range product · real IMAGE, FLAGS and WCS-WAVE'
+          : 'IRSA cutout service · real IMAGE, FLAGS and WCS-WAVE',
       },
       uri: cutout.uri,
       cutoutSize: cutout.size,
@@ -631,11 +644,12 @@ app.get('/api/spherex/spectrum', async (c) => {
     const cached = await edgeMatch(c.req.raw)
     if (cached) return withCacheState(cached, 'HIT')
 
+    const preferS3 = c.req.query('preferS3') !== '0'
     const segments = []
     const errors: string[] = []
     for (let index = 0; index < uris.length; index += SPECTRUM_CONCURRENCY) {
       const batch = uris.slice(index, index + SPECTRUM_CONCURRENCY)
-      const results = await Promise.allSettled(batch.map((uri) => getSpectrum(uri, ra, dec)))
+      const results = await Promise.allSettled(batch.map((uri) => getSpectrum(uri, ra, dec, preferS3)))
       for (const result of results) {
         if (result.status === 'fulfilled') segments.push(result.value)
         else errors.push(publicReason(result.reason))
@@ -646,12 +660,16 @@ app.get('/api/spherex/spectrum', async (c) => {
       throw new ApiError(502, errors[0] ?? 'No real spectra were returned.', 'NO_SPECTRA', { errors })
     }
 
+    const fromS3 = segments.some((segment) => segment.source?.includes('S3'))
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
-    c.header('X-Data-Source', 'IRSA SPHEREx level-2 cutouts')
+    c.header('X-Data-Source', asciiHeader(fromS3 ? 'NASA IRSA S3 - SPHEREx level-2 cutouts' : 'IRSA SPHEREx level-2 cutouts'))
+    if (fromS3) c.header('X-Data-Fallback', 's3-direct')
     const response = c.json({
       source: {
-        label: 'IRSA SPHEREx level-2 cutouts · real pixel aperture',
-        url: 'https://irsa.ipac.caltech.edu/',
+        label: fromS3
+          ? 'NASA IRSA S3 · SPHEREx level-2 cutouts · real pixel aperture'
+          : 'IRSA SPHEREx level-2 cutouts · real pixel aperture',
+        url: fromS3 ? 'https://nasa-irsa-spherex.s3.us-east-1.amazonaws.com' : 'https://irsa.ipac.caltech.edu/',
         method: '24,2040 pixel strip · 5-pixel aperture · WCS-WAVE',
       },
       ra,
@@ -659,6 +677,39 @@ app.get('/api/spherex/spectrum', async (c) => {
       segments,
       errors,
     })
+    edgeStore(c, response)
+    return withCacheState(response, 'MISS')
+  } catch (error) {
+    return apiError(c, error)
+  }
+})
+
+app.get('/api/hips/tile', async (c) => {
+  try {
+    const pixel = queryNumber(c.req.query('pixel'), { label: 'pixel', min: 0, max: 12 * 4 ** 5 - 1 })
+    const frame = queryNumber(c.req.query('frame'), { label: 'frame', min: 0, max: 101 })
+    if (!Number.isInteger(pixel) || !Number.isInteger(frame)) {
+      throw new ApiError(400, 'pixel and frame must be integers.', 'INVALID_QUERY')
+    }
+    const palette = queryEnum(c.req.query('palette'), ['iridescent', 'gold', 'ice', 'mono'] as const, 'iridescent')
+    const stretch = queryEnum(c.req.query('stretch'), ['linear', 'asinh', 'log'] as const, 'asinh')
+
+    const cached = await edgeMatch(c.req.raw)
+    if (cached) return withCacheState(cached, 'HIT')
+
+    const plane = await fetchS3HipsPlane(pixel, frame)
+    const raster = await rasterizeCutoutCached(
+      `hips:${pixel}:${frame}:${palette}:${stretch}`,
+      plane.buffer,
+      { palette, stretch },
+    )
+    c.header('Content-Type', 'image/png')
+    c.header('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400')
+    c.header('X-Data-Source', 'NASA IRSA S3 - HiPS cube plane')
+    c.header('X-Data-Fallback', 's3-direct')
+    c.header('X-Hips-Pixel', String(pixel))
+    c.header('X-Hips-Frame', String(frame))
+    const response = c.body(raster.raster.png.buffer as ArrayBuffer)
     edgeStore(c, response)
     return withCacheState(response, 'MISS')
   } catch (error) {

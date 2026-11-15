@@ -498,7 +498,7 @@ function updateBandUI() {
   el.wavelengthFrames.textContent = frames.filter(item => item.real).length
     ? `${frames.length} · ${detector}`
     : '0';
-  el.bandSummary.textContent = `IRSA returned ${frames.length || 0} real ${detector} visits for this field. The measured range comes from the FITS WCS-WAVE table.`;
+  el.bandSummary.textContent = `The archive returned ${frames.length || 0} real ${detector} visits for this field. The measured range comes from the FITS WCS-WAVE table.`;
   for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
     chip.classList.toggle('active', chip.dataset.band === detector);
     chip.setAttribute('aria-pressed', String(chip.dataset.band === detector));
@@ -557,7 +557,7 @@ function applyDisplayFilters() {
   stretch = el.stretchSelect.value;
   syncQuickFilters();
   if (frames.some(frame => frame.real)) loadRealFrames();
-  else notify('Load a real IRSA field to apply archive display filters.');
+  else notify('Load a real archive field to apply archive display filters.');
 }
 
 function openFilterWorkspace() {
@@ -1428,7 +1428,7 @@ function updateVerification() {
     el.verifySourceSia.textContent = 'NASA/JPL-Caltech SPHEREx All Sky Map 2025';
     el.verifySiaDetail.textContent = 'Local mosaic · 2025';
     el.verifySourceFits.textContent = 'No FITS cutout';
-    el.verifyFitsDetail.textContent = 'A visit cutout requires IRSA discovery.';
+    el.verifyFitsDetail.textContent = 'A visit cutout requires archive discovery.';
     labState.verifyGaiaKey = '';
     setVerificationGaia('idle', 'Gaia context is available only for a real visit cutout.');
     return;
@@ -1440,7 +1440,7 @@ function updateVerification() {
     state: fitsDate && siaDate === fitsDate ? 'verified' : fitsDate ? 'note' : 'pending',
     title: 'Visit date agrees',
     detail: fitsDate
-      ? `SIA2 ${siaDate || '—'} · FITS DATE-AVG ${fitsDate}`
+      ? `Discovery ${siaDate || '—'} · FITS DATE-AVG ${fitsDate}`
       : 'FITS DATE-AVG has not arrived yet.'
   });
   const fitsDetector = analysis?.detector || analysis?.band || '';
@@ -1448,7 +1448,7 @@ function updateVerification() {
   checks.push({
     state: fitsDetector ? normalizeDetector(fitsDetector) === normalizeDetector(frame.detector) ? 'verified' : 'note' : 'pending',
     title: 'Detector agrees',
-    detail: fitsDetector ? `SIA2 ${frame.detector} · FITS detector ${fitsDetector}` : 'FITS DETECTOR header not available.'
+    detail: fitsDetector ? `Discovery ${frame.detector} · FITS detector ${fitsDetector}` : 'FITS DETECTOR header not available.'
   });
   const idMatch = analysis?.obsid && frame.obsid
     ? analysis.obsid === frame.obsid || analysis.obsid.includes(frame.obsid) || frame.obsid.includes(analysis.obsid)
@@ -1456,7 +1456,7 @@ function updateVerification() {
   checks.push({
     state: idMatch === null ? 'pending' : idMatch ? 'verified' : 'note',
     title: 'Observation identity agrees',
-    detail: analysis?.obsid ? `SIA2 ${frame.obsid || '—'} · FITS ${analysis.obsid}` : 'FITS OBSID header not available.'
+    detail: analysis?.obsid ? `Discovery ${frame.obsid || '—'} · FITS ${analysis.obsid}` : 'FITS OBSID header not available.'
   });
   const separation = angularSeparation(Number(frame.ra), Number(frame.dec), analysis?.ra, analysis?.dec);
   const wideActive = hdMode && Boolean(frame.hdObjectUrl);
@@ -1507,13 +1507,13 @@ function updateVerification() {
   el.verificationScore.textContent = `${verified} / ${available} checks agree`;
   el.verificationScore.className = `verify-score ${verified === available && available ? 'good' : available ? 'mixed' : ''}`;
   for (const check of checks) el.verificationList.append(verificationRow(check));
-  el.verifySourceSia.textContent = frame.sourceLabel || 'IRSA SIA2 · SPHEREx DR1';
+  el.verifySourceSia.textContent = frame.sourceLabel || 'Archive discovery · SPHEREx DR1';
   el.verifySiaDetail.textContent = `${frame.date || '—'} · ${frame.detector} · ${frame.obsid || 'OBSID pending'}`;
   el.verifySourceFits.textContent = analysis
     ? (analysis.dataFallback === 's3-direct' || /NASA IRSA S3/i.test(analysis.dataSource || '')
       ? 'NASA IRSA S3 · direct FITS'
-      : 'IRSA FITS cutout')
-    : 'IRSA FITS cutout · pending';
+      : 'Archive FITS cutout')
+    : 'Archive FITS cutout · pending';
   const activeWidth = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
   const activeHeight = hdMode && frame.hdHeight ? frame.hdHeight : frame.height;
   el.verifyFitsDetail.textContent = analysis
@@ -1560,8 +1560,8 @@ function buildVerificationReceipt() {
       constellation: analysis.constellation || null
     } : null,
     sources: {
-      sia2: { label: frame.sourceLabel || 'IRSA SIA2 · SPHEREx DR1', detail: `${frame.date || '—'} · ${frame.detector || '—'} · ${frame.obsid || '—'}` },
-      fits: { label: 'IRSA FITS cutout', detail: `${frame.uri || '—'}` },
+      sia2: { label: frame.sourceLabel || 'Archive discovery · SPHEREx DR1', detail: `${frame.date || '—'} · ${frame.detector || '—'} · ${frame.obsid || '—'}` },
+      fits: { label: analysis?.dataFallback === 's3-direct' ? 'NASA IRSA S3 · direct FITS' : 'Archive FITS cutout', detail: `${frame.uri || '—'}` },
       iau: { label: 'IAU constellation engine', detail: 'Independent J2000 geometry at the cutout centre.' },
       gaia: gaia ? { label: 'Gaia DR3 · ESA Gaia Archive TAP', query: { ra: gaia.ra, dec: gaia.dec, radiusDeg: 0.02 }, count: gaia.count, nearest: gaia.nearest ? { ra: gaia.nearest.ra, dec: gaia.nearest.dec, mag: gaia.nearest.mag, separationArcsec: gaia.nearest.separation * 3600 } : null } : null
     },
@@ -1843,15 +1843,15 @@ function updateVisitWindow() {
   const count = dated.length;
   el.visitWindowText.textContent = `${count} loaded visit${count === 1 ? '' : 's'} · ${range}`;
   el.visitWindowDetail.textContent = frames.every(frame => frame.mirror)
-    ? `The bundled mirror is a real-data sample of ${count} verified visit${count === 1 ? '' : 's'} for this field and detector, not every SPHEREx observation. The window above is exactly those visits. It stops at its last selected visit and is not automatically extended as new data arrives; run the mirror ingestor to refresh it. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A live IRSA query can return more visits.`
-    : `IRSA returned these ${count} visit${count === 1 ? '' : 's'} for this query (the viewer asks for up to 24). The window above is exactly those visits. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A different field or release can have a different window.`;
+    ? `The bundled mirror is a real-data sample of ${count} verified visit${count === 1 ? '' : 's'} for this field and detector, not every SPHEREx observation. The window above is exactly those visits. It stops at its last selected visit and is not automatically extended as new data arrives; run the mirror ingestor to refresh it. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A live archive query can return more visits.`
+    : `The archive returned these ${count} visit${count === 1 ? '' : 's'} for this query (the viewer asks for up to 24). The window above is exactly those visits. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A different field or release can have a different window.`;
 }
 
 function updateVisitNotice() {
   if (!el.visitNotice) return;
   const frame = frames[frameIndex];
   const contextOnly = frames.length === 1 && Boolean(frame?.mosaic);
-  const checking = /checking IRSA/i.test(el.sourceLabel.textContent || '');
+  const checking = /checking (?:IRSA|archive)/i.test(el.sourceLabel.textContent || '');
   el.visitNotice.hidden = !contextOnly || loadingReal || checking;
   if (!contextOnly) return;
   const noCoverage = /no (?:indexed )?coverage|not covered|outside.*coverage/i.test(el.sourceLabel.textContent || '');
@@ -1868,12 +1868,12 @@ function pixelRouteLabel(frame, analysis = null) {
   if (!frame.real) return 'Local PNG upload · not archive pixels';
   const source = analysis?.dataSource || '';
   if (analysis?.dataFallback === 's3-direct' || /NASA IRSA S3/i.test(source)) {
-    return `S3 DIRECT · ${source.replace(/^NASA IRSA S3 · direct /, '') || 'real FITS byte ranges'}`;
+    return `S3 DIRECT · ${source.replace(/^NASA IRSA S3 (?:·|-) direct /, '') || 'real FITS byte ranges'}`;
   }
-  if (/IRSA SPHEREx cutout/i.test(source)) return 'IRSA cutout service · real FITS';
+  if (/IRSA SPHEREx cutout/i.test(source)) return 'Archive cutout service · real FITS';
   if (frame.loadError) return 'Unavailable · no real pixels returned';
-  if (!analysis) return 'Resolving IRSA cutout → S3 fallback…';
-  return source || 'IRSA · real FITS';
+  if (!analysis) return 'Reading the S3 cutout…';
+  return source || 'Archive · real FITS';
 }
 
 const SOURCE_NAMES = {
@@ -1900,9 +1900,13 @@ function updateHipsContext(field) {
   const pixel = healpixNest(field.ra, field.dec, 5);
   if (pixel === null) return;
   const context = HIPS_CONTEXT_FRAMES[detector] || HIPS_CONTEXT_FRAMES.D2;
-  const directory = Math.floor(pixel / 10000) * 10000;
-  const suffix = context.frame === 0 ? '' : `_${context.frame}`;
-  const url = `https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube/Norder5/Dir${directory}/Npix${pixel}/Npix${pixel}${suffix}.png`;
+  const url = `/api/hips/tile?${new URLSearchParams({
+    pixel: String(pixel),
+    frame: String(context.frame),
+    palette: 'iridescent',
+    stretch: 'asinh',
+    v: '1'
+  }).toString()}`;
   const token = ++hipsContextToken;
   el.hipsContextLink.href = url;
   el.hipsContextImage.hidden = true;
@@ -2019,7 +2023,7 @@ function setLoading(isLoading) {
 
 function updateAppLive(state = 'live') {
   if (!el.appLive) return;
-  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', s3: 'S3 INDEX', offline: 'IRSA QUERY FAILED', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
+  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', s3: 'S3 INDEX', offline: 'ARCHIVE QUERY FAILED', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
   if (el.appLiveText) el.appLiveText.textContent = labels[state] || labels.live;
   el.appLive.dataset.state = state;
 }
@@ -2374,7 +2378,7 @@ async function loadRealFrames(options = {}) {
   el.empty.hidden = true;
   el.sourceLabel.classList.remove('error');
   el.sourceLabel.textContent = 'Checking verified local mirror…';
-  notify('Checking the verified local mirror before contacting IRSA.');
+  notify('Checking the verified local mirror before contacting the archive.');
   let mirror = null;
   let mosaicShown = false;
   try {
@@ -2384,7 +2388,7 @@ async function loadRealFrames(options = {}) {
       return;
     }
     if (mirror) {
-      showMirrorField(mirror, field, { record, note: 'refreshing IRSA…' });
+      showMirrorField(mirror, field, { record, note: 'refreshing archive…' });
       el.stageLoading.hidden = true;
       // The mirror is usable now; the IRSA request is the background refresh.
       setLoading(false);
@@ -2404,11 +2408,11 @@ async function loadRealFrames(options = {}) {
       // Show the real local all-sky mosaic immediately, then replace it with
       // per-visit FITS frames if IRSA answers. The mosaic is context only, not
       // a substitute for a visit and never carries a visit measurement.
-      mosaicShown = await showMosaicField(field, 'checking IRSA…');
+      mosaicShown = await showMosaicField(field, 'checking archive…');
       if (request !== loadRequest) return;
       if (mosaicShown) {
         setLoading(false);
-        notify('Showing the real local all-sky mosaic while IRSA is checked.');
+        notify('Showing the real local all-sky mosaic while the archive is checked.');
       } else {
         el.sourceLabel.textContent = 'Querying the S3 archive for real visits…';
         notify('Finding real SPHEREx visits for this patch.');
@@ -2428,7 +2432,7 @@ async function loadRealFrames(options = {}) {
     }
     if (request !== loadRequest) return;
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `IRSA frame discovery returned ${response.status}.`);
+    if (!response.ok) throw new Error(payload.error || `Archive frame discovery returned ${response.status}.`);
     if (Array.isArray(payload.frames) && payload.frames.length === 0 && payload.coverage?.observed === false) {
       if (mosaicShown) {
         updateAppLive('mosaic');
@@ -2464,7 +2468,7 @@ async function loadRealFrames(options = {}) {
       dec: payload.field?.dec ?? field.dec,
       analysis: null,
       measurementError: null,
-      sourceLabel: payload.source?.label || 'IRSA SIA2 · SPHEREx DR1',
+      sourceLabel: payload.source?.label || 'Archive discovery · SPHEREx DR1',
       real: true
     }));
     sky = payload.sky || null;
@@ -2535,14 +2539,14 @@ async function loadRealFrames(options = {}) {
       if (isDefaultField) {
         emptyDefaultFallback = false;
         el.emptyReal.textContent = 'Load this field';
-        setEmptyState('IRSA DID NOT RESPOND', 'The discovery request failed', `${archiveError} This is a request-level timeout, not a confirmed IRSA-wide outage; try again in a moment.`);
+        setEmptyState('ARCHIVE DID NOT RESPOND', 'The discovery request failed', `${archiveError} This is a request-level timeout, not a confirmed archive outage; try again in a moment.`);
       } else {
         emptyDefaultFallback = true;
         el.emptyReal.textContent = 'Load verified default field';
-        setEmptyState('IRSA DISCOVERY UNAVAILABLE', 'This field needs IRSA discovery', `${archiveError} This request did not reach the discovery service; it is not a confirmed IRSA-wide outage. The verified default field (RA 150°, Dec +19.5°) is still available offline; the other presets need IRSA's discovery service.`);
+        setEmptyState('ARCHIVE DISCOVERY UNAVAILABLE', 'This field needs archive discovery', `${archiveError} This request did not reach the discovery service; it is not a confirmed archive outage. The verified default field (RA 150°, Dec +19.5°) is still available offline; the other presets need the S3 archive's discovery service.`);
       }
     }
-    notify(`IRSA request failed: ${archiveError}`);
+    notify(`Archive request failed: ${archiveError}`);
   } finally {
     if (request === loadRequest) {
       setLoading(false);
@@ -2609,7 +2613,7 @@ function updateHDControls() {
 
 function toggleHD() {
   const current = frames[frameIndex];
-  if (!current?.real || !current?.remoteSrc) { notify('The wide window requires a live IRSA frame.'); return; }
+  if (!current?.real || !current?.remoteSrc) { notify('The wide window requires a live archive frame.'); return; }
   hdMode = !hdMode;
   updateHDControls();
   if (hdMode) loadHDFrame(current);
@@ -2649,7 +2653,7 @@ function render() {
     if (!f.width) { f.width = el.image.naturalWidth; f.height = el.image.naturalHeight; }
     if (frames[frameIndex] === f) { updateDetails(f); updateTransform(); drawMinimap(); }
   };
-  el.image.onerror = () => { el.stageLoading.hidden = true; notify('That IRSA FITS cutout could not be loaded as a PNG.'); };
+  el.image.onerror = () => { el.stageLoading.hidden = true; notify('That archive FITS cutout could not be loaded as a PNG.'); };
   el.frameLabel.textContent = f.date ? `${f.date} · ${f.detector || 'SPHEREx'}` : f.label;
   el.frameCount.textContent = `${frameIndex + 1} / ${frames.length}`;
   el.timeline.value = String(frameIndex);
@@ -3322,7 +3326,7 @@ function setGameSource(pool) {
   } else if (pool.source === 'loading') {
     text = 'Loading measured visits for the games…';
   } else {
-    text = 'No measured visits are available. Reconnect IRSA or load measured FITS frames to play.';
+    text = 'No measured visits are available. Reconnect the archive or load measured FITS frames to play.';
   }
   lab.gamesSource.textContent = text;
 }
@@ -3924,7 +3928,7 @@ function newLearnQuestion() {
       question: 'Which detector produced this frame?',
       options,
       correct: data.band,
-      explanation: `This frame is labeled ${data.band} in its SIA2 and FITS metadata.`
+      explanation: `This frame is labeled ${data.band} in its discovery and FITS metadata.`
     });
   }
 

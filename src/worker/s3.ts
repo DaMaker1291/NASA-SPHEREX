@@ -373,45 +373,224 @@ function dataBlockBytes(header: Record<string, string>) {
   return Math.ceil(bytes / BLOCK) * BLOCK
 }
 
-async function fetchS3SelectedHdus(url: string) {
+type S3Layout = {
+  offset: number
+  headerBytes: number
+  dataBytes: number
+  name: string
+  header: Record<string, string>
+}
+
+async function s3Layouts(url: string) {
   const size = await s3Head(url)
-  const layouts: Array<{ offset: number; headerBytes: number; dataBytes: number; name: string }> = []
+  const layouts: S3Layout[] = []
   let at = 0
   while (at + BLOCK <= size && layouts.length < 64) {
     const header = await s3Range(url, at, Math.min(size - 1, at + HEADER_WINDOW - 1))
     const parsed = headerFromPrefix(header)
     const name = parsed.header.EXTNAME || (layouts.length === 0 ? 'PRIMARY' : `HDU ${layouts.length}`)
     const dataBytes = dataBlockBytes(parsed.header)
-    layouts.push({ offset: at, headerBytes: parsed.headerBytes, dataBytes, name: name.toUpperCase() })
+    layouts.push({ offset: at, headerBytes: parsed.headerBytes, dataBytes, name: name.toUpperCase(), header: parsed.header })
     const next = at + parsed.headerBytes + dataBytes
     if (next <= at) throw new Error('FITS HDU layout did not advance.')
     at = next
   }
+  return layouts
+}
 
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (const layout of layouts) {
-    if (layout.name !== 'PRIMARY' && !CUTOUT_HDUS.has(layout.name)) continue
-    const length = layout.headerBytes + layout.dataBytes
-    if (length < BLOCK) continue
-    const bytes = await s3Range(url, layout.offset, layout.offset + length - 1)
-    const chunk = new Uint8Array(bytes)
-    chunks.push(chunk)
-    total += chunk.byteLength
+async function fetchS3WaveTableTail(url: string) {
+  // The WCS-WAVE binary table sits at the end of a level-2 product. Reading
+  // the last block window preserves the measured wavelength range on the fast
+  // PNG path without fetching the full 60 MB file.
+  const size = await s3Head(url)
+  const window = Math.min(size, 65_536)
+  if (window < BLOCK) return null
+  const tail = new Uint8Array(await s3Range(url, size - window, size - 1))
+  const ascii = new TextDecoder('latin1').decode(tail)
+  let cursor = ascii.length
+  while (cursor > 0) {
+    const at = ascii.lastIndexOf('XTENSION', cursor - 1)
+    if (at < 0 || (size - window + at) % BLOCK !== 0) {
+      if (at < 0) break
+      cursor = at
+      continue
+    }
+    try {
+      const parsed = headerFromPrefix(tail.slice(at).buffer)
+      const name = (parsed.header.EXTNAME || '').toUpperCase()
+      if (name.includes('WCS')) {
+        const length = parsed.headerBytes + dataBlockBytes(parsed.header)
+        if (at + length <= tail.length) return tail.slice(at, at + length)
+        return new Uint8Array(await s3Range(url, size - window + at, size - window + at + length - 1))
+      }
+    } catch {
+      // Keep looking for an earlier extension header.
+    }
+    cursor = at
   }
-  if (!chunks.length) throw new Error('The S3 product has no cutout HDUs.')
-  const output = new Uint8Array(total)
+  return null
+}
+
+function numericHeader(layout: S3Layout): FitsHeader {
+  const header: FitsHeader = new Map()
+  for (const [key, value] of Object.entries(layout.header)) {
+    const numeric = Number(value)
+    header.set(key, value !== '' && Number.isFinite(numeric) ? numeric : value)
+  }
+  return header
+}
+
+async function fetchS3Cropped(url: string, ra: number, dec: number, size: string, imageOnly: boolean) {
+  const layouts = await s3Layouts(url)
+  const selected = layouts.filter((layout) => layout.name === 'IMAGE' || (!imageOnly && CUTOUT_HDUS.has(layout.name) && (layout.header.XTENSION || '').toUpperCase() === 'IMAGE'))
+  if (!selected.length) throw new Error('The S3 product has no cutout HDUs.')
+
+  const primary: FitsHeader = new Map()
+  primary.set('SIMPLE', true)
+  primary.set('BITPIX', 8)
+  primary.set('NAXIS', 0)
+  primary.set('EXTEND', true)
+
+  const images = await Promise.all(selected.map(async (layout) => {
+    const width = Number(layout.header.NAXIS1)
+    const height = Number(layout.header.NAXIS2)
+    const depth = Number(layout.header.NAXIS3 ?? 1)
+    const bitPix = Number(layout.header.BITPIX)
+    const bytesPerPixel = Math.abs(bitPix) / 8
+    if (!Number.isInteger(width) || !Number.isInteger(height) || depth !== 1 || ![1, 2, 4, 8].includes(bytesPerPixel)) {
+      throw new Error('The S3 image layout is not a single 2D plane.')
+    }
+    const header = numericHeader(layout)
+    const hdu: FitsHdu = { index: 0, name: layout.name, width, height, depth, bitPix, dataStart: 0, dataBytes: 0, header }
+    const rect = cropRect(hdu, ra, dec, size)
+    const rowBytes = width * bytesPerPixel
+    const start = layout.offset + layout.headerBytes + rect.y0 * rowBytes
+    const band = await s3Range(url, start, start + rect.height * rowBytes - 1)
+    const bandHdu: FitsHdu = { ...hdu, dataStart: 0, dataBytes: band.byteLength }
+    const data = cropImageData(band, bandHdu, { ...rect, y0: 0 })
+    return [headerBlock(imageHeader(hdu, rect.width, rect.height, rect.x0, rect.y0)), data]
+  }))
+  const waveTable = await fetchS3WaveTableTail(url)
+
+  const chunks: Uint8Array[] = [headerBlock(primary)]
+  for (const image of images) chunks.push(...image)
+  if (waveTable) chunks.push(waveTable)
+  return joinChunks(chunks)
+}
+
+async function fetchS3SelectedHdus(url: string, imageOnly = false) {
+  const layouts = await s3Layouts(url)
+
+  const selected = layouts.filter((layout) => layout.name === 'PRIMARY' || layout.name === 'IMAGE' || (!imageOnly && CUTOUT_HDUS.has(layout.name)))
+  if (!selected.length) throw new Error('The S3 product has no cutout HDUs.')
+
+  // Read the independent HDU byte ranges in parallel. The old sequential walk
+  // paid a full S3 round trip for every extension, which dominated the first
+  // cutout latency on Render.
+  const chunks = await Promise.all(selected.map(async (layout) => {
+    const length = layout.headerBytes + layout.dataBytes
+    if (length < BLOCK) return new Uint8Array()
+    return new Uint8Array(await s3Range(url, layout.offset, layout.offset + length - 1))
+  }))
+  const output = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0))
   let offset = 0
   for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength }
   return output.buffer
 }
 
-export async function fetchS3Cutout(uri: string, ra: number, dec: number, size: string): Promise<S3Cutout> {
+const HIPS_PREFIX = 'dr1/hips5_cube/hips_20261026/Norder5'
+const HIPS_ORDER = 5
+const HIPS_FRAMES = 102
+const HIPS_CACHE_TTL_MS = 15 * 60_000
+const hipsCache = new Map<string, { buffer: ArrayBuffer; width: number; height: number; key: string; url: string; at: number }>()
+
+export type S3HipsPlane = {
+  buffer: ArrayBuffer
+  width: number
+  height: number
+  key: string
+  url: string
+}
+
+/**
+ * Read one spectral plane from a real SPHEREx HiPS cube in S3. The bucket has
+ * FITS cubes, not the PNG tree IRSA's web server exposes, so the Worker wraps
+ * the selected 512x512 plane as a small FITS image and rasterizes it locally.
+ */
+export async function fetchS3HipsPlane(pixel: number, frame: number): Promise<S3HipsPlane> {
+  if (!Number.isInteger(pixel) || pixel < 0 || pixel >= 12 * 4 ** HIPS_ORDER) {
+    throw new ApiError(400, 'HiPS pixel is outside Norder 5.', 'OUT_OF_RANGE')
+  }
+  if (!Number.isInteger(frame) || frame < 0 || frame >= HIPS_FRAMES) {
+    throw new ApiError(400, `HiPS frame must be 0..${HIPS_FRAMES - 1}.`, 'OUT_OF_RANGE')
+  }
+
+  const cacheKey = `${pixel}:${frame}`
+  const cached = hipsCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < HIPS_CACHE_TTL_MS) return cached
+
+  const directory = Math.floor(pixel / 10_000) * 10_000
+  const key = `${HIPS_PREFIX}/Dir${directory}/Npix${pixel}_cube.fits`
+  const url = `${BUCKET}/${key}`
+  const primaryHeader = await s3Range(url, 0, HEADER_WINDOW - 1)
+  const primary = headerFromPrefix(primaryHeader)
+  // HiPS cubes have an empty primary HDU followed by the IMAGE extension.
+  const extensionOffset = Math.ceil(primary.headerBytes / BLOCK) * BLOCK
+  const extensionHeader = await s3Range(url, extensionOffset, extensionOffset + HEADER_WINDOW - 1)
+  const parsed = headerFromPrefix(extensionHeader)
+  const width = Number(parsed.header.NAXIS1)
+  const height = Number(parsed.header.NAXIS2)
+  const planes = Number(parsed.header.NAXIS3 ?? 1)
+  const bitPix = Number(parsed.header.BITPIX)
+  if (!Number.isInteger(width) || !Number.isInteger(height) || ![ -32, -64 ].includes(bitPix)) {
+    throw new Error('The S3 HiPS cube has an unsupported image layout.')
+  }
+  if (!Number.isInteger(planes) || frame >= planes) {
+    throw new ApiError(400, 'That spectral frame is outside this HiPS cube.', 'OUT_OF_RANGE')
+  }
+  const planeBytes = width * height * (Math.abs(bitPix) / 8)
+  if (planeBytes < BLOCK || planeBytes > MAX_RANGE_BYTES) throw new Error('The S3 HiPS plane is too large.')
+  const start = extensionOffset + parsed.headerBytes + frame * planeBytes
+  const plane = await s3Range(url, start, start + planeBytes - 1)
+
+  const imageHeader: FitsHeader = new Map()
+  imageHeader.set('SIMPLE', true)
+  imageHeader.set('BITPIX', bitPix)
+  imageHeader.set('NAXIS', 2)
+  imageHeader.set('NAXIS1', width)
+  imageHeader.set('NAXIS2', height)
+  imageHeader.set('EXTEND', true)
+  imageHeader.set('EXTNAME', 'IMAGE')
+  imageHeader.set('BUNIT', parsed.header.BUNIT || 'MJy/sr')
+  imageHeader.set('CTYPE1', 'RA---HPX')
+  imageHeader.set('CTYPE2', 'DEC--HPX')
+  imageHeader.set('ORDER', HIPS_ORDER)
+  imageHeader.set('NPIX', pixel)
+  const head = headerBlock(imageHeader)
+  const output = new Uint8Array(head.byteLength + Math.ceil(plane.byteLength / BLOCK) * BLOCK)
+  output.set(head)
+  output.set(new Uint8Array(plane), head.byteLength)
+
+  const result = { buffer: output.buffer, width, height, key, url }
+  if (hipsCache.size >= 24) {
+    const oldest = hipsCache.keys().next()
+    if (!oldest.done) hipsCache.delete(oldest.value)
+  }
+  hipsCache.set(cacheKey, { ...result, at: Date.now() })
+  return result
+}
+
+export async function fetchS3Cutout(uri: string, ra: number, dec: number, size: string, imageOnly = false): Promise<S3Cutout> {
   const key = s3KeyForUri(uri)
   if (!key) throw new ApiError(400, 'That product is not addressable through the public S3 bucket.', 'INVALID_URI')
   const url = `${BUCKET}/${key}`
   try {
-    const buffer = await fetchS3SelectedHdus(url)
+    try {
+      return { buffer: await fetchS3Cropped(url, ra, dec, size, imageOnly), key, url }
+    } catch {
+      // A non-standard image layout can still use the full selected-HDU path.
+    }
+    const buffer = await fetchS3SelectedHdus(url, imageOnly)
     return { buffer: cropS3Product(buffer, ra, dec, size), key, url }
   } catch (error) {
     throw new ApiError(502, `The S3 FITS product could not be read with byte ranges: ${error instanceof Error ? error.message : 'unknown error'}`, 'BAD_UPSTREAM_RESPONSE')

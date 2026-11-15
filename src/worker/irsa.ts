@@ -87,6 +87,7 @@ export type SpectrumSegment = {
   detector: string
   band: string
   uri: string
+  source?: string
   points: SpectrumPoint[]
   minLambda: number
   maxLambda: number
@@ -268,7 +269,7 @@ export async function findSpherex(ra: number, dec: number, fov: number): Promise
   if (Date.now() < keyCooldown || Date.now() < siaUnavailableUntil) {
     const stale = await lastGoodResult(cacheKey)
     if (stale) return stale
-    throw new ApiError(503, 'IRSA SIA2 is cooling down after a failed request; retry shortly.', 'UPSTREAM_BUSY')
+    throw new ApiError(503, 'Archive discovery is cooling down after a failed request; retry shortly.', 'UPSTREAM_BUSY')
   }
 
   return searchFlights.run(cacheKey, async () => {
@@ -291,7 +292,7 @@ export async function findSpherex(ra: number, dec: number, fov: number): Promise
         rememberCooldown(siaCooldowns, cacheKey, Date.now() + SIA_COOLDOWN_MS)
         const stale = await lastGoodResult(cacheKey)
         if (stale) return stale
-        throw error instanceof Error ? error : new ApiError(502, 'Both IRSA TAP and SIA2 failed.', 'UPSTREAM_UNAVAILABLE')
+        throw error instanceof Error ? error : new ApiError(502, 'Archive discovery failed.', 'UPSTREAM_UNAVAILABLE')
       }
       siaCooldowns.delete(cacheKey)
       siaUnavailableUntil = 0
@@ -344,7 +345,7 @@ async function fetchSiaRows(ra: number, dec: number, collection: string, budgetM
   const deadline = Date.now() + Math.max(0, budgetMs)
   const remaining = () => Math.max(0, deadline - Date.now())
   if (remaining() < 1_000) {
-    throw new ApiError(504, 'IRSA SIA2 overall deadline expired.', 'UPSTREAM_TIMEOUT')
+    throw new ApiError(504, 'Archive discovery deadline expired.', 'UPSTREAM_TIMEOUT')
   }
   const radius = 0.02
   const base = new URLSearchParams({
@@ -363,7 +364,7 @@ async function fetchSiaRows(ra: number, dec: number, collection: string, budgetM
       { headers: { Accept: 'text/csv' } },
       { attempts: 1, timeoutMs: Math.min(30_000, csvBudget), totalTimeoutMs: csvBudget },
     )
-    await assertUpstreamOk(response, 'IRSA SIA2')
+    await assertUpstreamOk(response, 'Archive discovery service')
     const text = await readTextLimited(response, MAX_SIA_BYTES)
     if (!/^\s*</.test(text)) {
       const rows = parseCsv(text)
@@ -378,7 +379,7 @@ async function fetchSiaRows(ra: number, dec: number, collection: string, budgetM
     const htmlBudget = remaining()
     if (htmlBudget < 1_000) {
       if (csvError instanceof ApiError) throw csvError
-      throw new ApiError(504, 'IRSA SIA2 overall deadline expired.', 'UPSTREAM_TIMEOUT')
+      throw new ApiError(504, 'Archive discovery deadline expired.', 'UPSTREAM_TIMEOUT')
     }
     const params = new URLSearchParams(base)
     params.set('RESPONSEFORMAT', 'HTML')
@@ -387,13 +388,13 @@ async function fetchSiaRows(ra: number, dec: number, collection: string, budgetM
       { headers: { Accept: 'text/html' } },
       { attempts: 1, timeoutMs: Math.min(12_000, htmlBudget), totalTimeoutMs: htmlBudget },
     )
-    await assertUpstreamOk(response, 'IRSA SIA2')
+    await assertUpstreamOk(response, 'Archive discovery service')
     const text = await readTextLimited(response, MAX_SIA_HTML_BYTES)
     return parseSiaHtml(text)
   } catch (htmlError) {
     if (csvError instanceof ApiError && csvError.status === 503) throw csvError
     if (htmlError instanceof ApiError) throw htmlError
-    throw csvError instanceof Error ? csvError : new ApiError(502, 'IRSA returned malformed SIA2 data.', 'BAD_UPSTREAM_RESPONSE')
+    throw csvError instanceof Error ? csvError : new ApiError(502, 'Archive discovery returned malformed data.', 'BAD_UPSTREAM_RESPONSE')
   }
 }
 
@@ -475,9 +476,9 @@ async function queryTap(ra: number, dec: number, fov: number): Promise<IrsaFind>
     { headers: { Accept: 'text/csv' } },
     { attempts: 1, timeoutMs: 12_000, totalTimeoutMs: 16_000 },
   )
-  await assertUpstreamOk(response, 'IRSA TAP')
+  await assertUpstreamOk(response, 'Archive discovery service')
   const text = await readTextLimited(response, MAX_SIA_BYTES)
-  if (/^\s*</.test(text)) throw new ApiError(502, 'IRSA TAP returned a non-CSV response.', 'BAD_UPSTREAM_RESPONSE')
+  if (/^\s*</.test(text)) throw new ApiError(502, 'Archive discovery returned a non-CSV response.', 'BAD_UPSTREAM_RESPONSE')
   const rows = parseCsv(text)
   const byTime = new Map<string, IrsaObservation>()
 
@@ -559,11 +560,11 @@ async function querySia(ra: number, dec: number, fov: number, cacheKey: string):
       // "not observed" claim.
       if (deadlineExpired) {
         if (lastError instanceof ApiError) throw lastError
-        throw new ApiError(504, `IRSA SIA2 did not answer within ${SIA_TOTAL_BUDGET_MS / 1000}s.`, 'UPSTREAM_TIMEOUT')
+        throw new ApiError(504, `Archive discovery did not answer within ${SIA_TOTAL_BUDGET_MS / 1000}s.`, 'UPSTREAM_TIMEOUT')
       }
       if (answeredEmpty && !lastError) return emptyFind(ra, dec, fov, `${sourceLabel} · no coverage`, `${sourceCollection} · POS circle · no rows`)
       if (lastError instanceof ApiError) throw lastError
-      throw new ApiError(502, 'IRSA returned no SIA2 products for that field.', 'NO_ROWS')
+      throw new ApiError(502, 'The archive returned no products for that field.', 'NO_ROWS')
     }
 
     const byTime = new Map<string, IrsaObservation>()
@@ -746,19 +747,19 @@ async function fetchCutout(uri: string, ra: number, dec: number, size: string) {
     { headers: { Accept: 'application/fits' } },
     { attempts: 3, timeoutMs: 20_000, totalTimeoutMs: 45_000 },
   )
-  await assertUpstreamOk(response, 'IRSA cutout service')
+  await assertUpstreamOk(response, 'Archive cutout service')
   const buffer = await readArrayBufferLimited(response, MAX_CUTOUT_BYTES)
   if (buffer.byteLength < BLOCK) {
-    throw new ApiError(502, 'IRSA returned an empty cutout.', 'BAD_UPSTREAM_RESPONSE')
+    throw new ApiError(502, 'The archive returned an empty cutout.', 'BAD_UPSTREAM_RESPONSE')
   }
   const head = decoder.decode(new Uint8Array(buffer, 0, 6))
   if (head !== 'SIMPLE') {
-    throw new ApiError(502, 'IRSA returned a non-FITS cutout.', 'BAD_UPSTREAM_RESPONSE')
+    throw new ApiError(502, 'The archive returned a non-FITS cutout.', 'BAD_UPSTREAM_RESPONSE')
   }
   try {
     return stripEpsf(buffer)
   } catch {
-    throw new ApiError(502, 'IRSA returned a malformed FITS cutout.', 'BAD_UPSTREAM_RESPONSE')
+    throw new ApiError(502, 'The archive returned a malformed FITS cutout.', 'BAD_UPSTREAM_RESPONSE')
   }
 }
 
@@ -792,10 +793,10 @@ function storeCutoutCache(key: string, buffer: ArrayBuffer, source: string) {
   cutoutCacheBytes += bytes
 }
 
-async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, size: string, preferS3 = false): Promise<CutoutBuffer> {
+async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, size: string, preferS3 = false, imageOnly = false): Promise<CutoutBuffer> {
   if (preferS3) {
     try {
-      const direct = await fetchS3Cutout(uri, ra, dec, size)
+      const direct = await fetchS3Cutout(uri, ra, dec, size, imageOnly)
       return { buffer: direct.buffer, source: `NASA IRSA S3 · direct ${direct.key.split('/')[0].toUpperCase()} product` }
     } catch (s3Error) {
       // The S3 index can point at a product whose sibling bytes are missing.
@@ -806,10 +807,10 @@ async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, siz
         return { buffer, source: 'IRSA SPHEREx cutout service' }
       } catch (primaryError) {
         const s3Detail = s3Error instanceof Error ? s3Error.message : 'S3 product failed.'
-        const primaryDetail = primaryError instanceof Error ? primaryError.message : 'IRSA cutout failed.'
+        const primaryDetail = primaryError instanceof Error ? primaryError.message : 'Archive cutout failed.'
         throw new ApiError(
           502,
-          `Both real cutout sources failed. S3: ${s3Detail} IRSA: ${primaryDetail}`,
+          `Both real cutout sources failed. S3: ${s3Detail} Archive: ${primaryDetail}`,
           'UPSTREAM_UNAVAILABLE',
         )
       }
@@ -829,42 +830,42 @@ async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, siz
       }
     }
   } else {
-    primaryError = new Error('IRSA cutout service is cooling down after a failed request.')
+    primaryError = new Error('The archive cutout service is cooling down after a failed request.')
   }
 
   try {
-    const direct = await fetchS3Cutout(uri, ra, dec, size)
+    const direct = await fetchS3Cutout(uri, ra, dec, size, imageOnly)
     return { buffer: direct.buffer, source: `NASA IRSA S3 · direct ${direct.key.split('/')[0].toUpperCase()} product` }
   } catch (s3Error) {
-    const primaryDetail = primaryError instanceof Error ? primaryError.message : 'IRSA cutout failed.'
+    const primaryDetail = primaryError instanceof Error ? primaryError.message : 'Archive cutout failed.'
     const s3Detail = s3Error instanceof Error ? s3Error.message : 'S3 product failed.'
     throw new ApiError(
       502,
-      `Both real cutout sources failed. IRSA: ${primaryDetail} S3: ${s3Detail}`,
+      `Both real cutout sources failed. Archive: ${primaryDetail} S3: ${s3Detail}`,
       'UPSTREAM_UNAVAILABLE',
     )
   }
 }
 
-async function getCutoutBuffer(uri: string, ra: number, dec: number, size: string, preferS3 = false) {
-  const key = `${uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${size}|${preferS3 ? 's3' : 'auto'}`
+async function getCutoutBuffer(uri: string, ra: number, dec: number, size: string, preferS3 = false, imageOnly = false) {
+  const key = `${uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${size}|${preferS3 ? 's3' : 'auto'}|${imageOnly ? 'image' : 'full'}`
   const cached = readCutoutCache(key)
   if (cached) return { ...cached, cached: true }
   const result = await cutoutFlights.run(key, async () => {
-    const fresh = await fetchCutoutWithFallback(uri, ra, dec, size, preferS3)
+    const fresh = await fetchCutoutWithFallback(uri, ra, dec, size, preferS3, imageOnly)
     storeCutoutCache(key, fresh.buffer, fresh.source)
     return fresh
   })
   return { ...result, cached: false }
 }
 
-export async function getCutout(uri: string, ra: number, dec: number, fov: number, sizeOverride?: string, preferS3 = false) {
+export async function getCutout(uri: string, ra: number, dec: number, fov: number, sizeOverride?: string, preferS3 = false, imageOnly = false) {
   const safeUri = validateIrsaProductUri(uri)
   if (!finite(ra) || ra < 0 || ra > 360 || !finite(dec) || dec < -90 || dec > 90) {
     throw new ApiError(400, 'Invalid cutout center.', 'OUT_OF_RANGE')
   }
   const size = clamp(fov, 0.02, 0.9).toFixed(3)
-  const result = await getCutoutBuffer(safeUri, ra, dec, sizeOverride ?? `${size}d`, preferS3)
+  const result = await getCutoutBuffer(safeUri, ra, dec, sizeOverride ?? `${size}d`, preferS3, imageOnly)
   return {
     buffer: result.buffer,
     size: Number(size),
@@ -970,22 +971,22 @@ function cropOffset(hdu: FitsHdu) {
   }
 }
 
-export async function getSpectrum(uri: string, ra: number, dec: number): Promise<SpectrumSegment> {
+export async function getSpectrum(uri: string, ra: number, dec: number, preferS3 = true): Promise<SpectrumSegment> {
   const safeUri = validateIrsaProductUri(uri)
   if (!finite(ra) || ra < 0 || ra > 360 || !finite(dec) || dec < -90 || dec > 90) {
     throw new ApiError(400, 'Invalid spectrum center.', 'OUT_OF_RANGE')
   }
-  const key = `${safeUri}|${ra.toFixed(6)}|${dec.toFixed(6)}`
+  const key = `${safeUri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${preferS3 ? 's3' : 'auto'}`
   const cached = spectrumCache.get(key)
   if (cached) return cached
 
   return spectrumFlights.run(key, async () => {
-    const { buffer } = await getCutoutBuffer(safeUri, ra, dec, '24,2040pix')
+    const { buffer, source } = await getCutoutBuffer(safeUri, ra, dec, '24,2040pix', preferS3)
     let fits: FitsFile
     try {
       fits = parseFits(buffer)
     } catch {
-      throw new ApiError(502, 'IRSA returned a malformed spectral FITS product.', 'BAD_UPSTREAM_RESPONSE')
+      throw new ApiError(502, 'The archive returned a malformed spectral FITS product.', 'BAD_UPSTREAM_RESPONSE')
     }
 
     const image = hduByName(fits, 'IMAGE')
@@ -1045,6 +1046,7 @@ export async function getSpectrum(uri: string, ra: number, dec: number): Promise
       detector: textValue(image.header, 'DETECTOR'),
       band: textValue(image.header, 'BAND', ''),
       uri: safeUri,
+      source,
       points: finitePoints,
       minLambda: Math.min(...finitePoints.map((point) => point.lambda)),
       maxLambda: Math.max(...finitePoints.map((point) => point.lambda)),

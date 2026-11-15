@@ -7,7 +7,7 @@
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
   <link rel="stylesheet" href="style.css?v=next-39">
-  <script type="module" src="script.js?v=next-72"></script>
+  <script type="module" src="script.js?v=next-73"></script>
 </head>
 <body>
   <header class="site-header">
@@ -102,7 +102,7 @@
         </div>
 
         <button id="loadReal" class="button primary full" type="button">Load real visits</button>
-        <p id="sourceLabel" class="source-label" role="status">Connecting to IRSA…</p>
+        <p id="sourceLabel" class="source-label" role="status">Connecting to the S3 archive…</p>
         <p class="visit-steps"><strong>How to view a visit:</strong> 1 choose a patch · 2 press <b>Load real visits</b> · 3 pick a visit in the strip or press <b>▶ Play visits</b>.</p>
         <div class="query-note">
           <span class="note-mark">i</span>
@@ -113,7 +113,7 @@
       <section class="viewer-panel" aria-label="Sky image viewer">
         <div id="appToolbar" class="app-toolbar" aria-label="Map application controls">
           <button id="appHome" class="app-brand" type="button" title="Leave the map app" aria-label="DRIFT — leave the map app"><img class="app-brand-logo" src="assets/drift-logo.svg" alt="DRIFT" width="88" height="30"><span class="app-brand-rule" aria-hidden="true"></span><strong>SPHEREx</strong><em>Explorer</em></button>
-          <span class="app-live" id="appLive"><span class="live-dot"></span> <span id="appLiveText">LIVE IRSA</span></span>
+          <span class="app-live" id="appLive"><span class="live-dot"></span> <span id="appLiveText">S3 INDEX</span></span>
           <div class="app-actions">
             <button id="appDetails" class="app-action" type="button" aria-expanded="false" aria-controls="infoPanel">Details</button>
             <button id="appSequence" class="app-action" type="button" aria-expanded="false" aria-controls="sequenceSheet">Sequence</button>
@@ -326,7 +326,7 @@
         <article><span>02</span><h3>Play the visits</h3><p>Press <strong>Load real visits</strong>, then <strong>▶ Play visits</strong> to cycle through real detector frames. Click any date in the filmstrip to inspect that visit.</p></article>
         <article><span>03</span><h3>Blink or subtract</h3><p><strong>Blink A / B</strong> toggles two visits. <strong>Difference</strong> subtracts them so changes in position or brightness become obvious.</p></article>
       </div>
-      <p class="how-note">The bundled mirror is a small real-data sample per detector, not the complete SPHEREx archive. The date window in the viewer belongs only to the visits actually loaded; a live IRSA query can return a different window.</p>
+      <p class="how-note">The bundled mirror is a small real-data sample per detector, not the complete SPHEREx archive. The date window in the viewer belongs only to the visits actually loaded; a live archive query can return a different window.</p>
     </section>
 
     <section id="data-sources" class="sources-section" aria-labelledby="sourcesTitle">
@@ -352,7 +352,7 @@
         <article class="source-key" aria-labelledby="sourceKeyTitle">
           <h3 id="sourceKeyTitle">Read the labels</h3>
           <dl>
-            <div><dt><span class="source-tag live">LIVE IRSA</span></dt><dd>Visit rows and FITS cutouts fetched from IRSA during this session.</dd></div>
+            <div><dt><span class="source-tag live">LIVE IRSA</span></dt><dd>Visit rows and FITS cutouts fetched from the archive during this session.</dd></div>
             <div><dt><span class="source-tag cached">CACHED IRSA</span></dt><dd>Last-known-good or bundled SPHEREx index data. Real archive rows, not a live query.</dd></div>
             <div><dt><span class="source-tag s3">S3 DIRECT</span></dt><dd>Real FITS pixels read with byte ranges from NASA IRSA's public S3 bucket when the cutout service fails.</dd></div>
             <div><dt><span class="source-tag hips">HIPS CONTEXT</span></dt><dd>The all-sky SPHEREx HiPS cube is context only. It is not a visit sequence and never replaces visit pixels.</dd></div>
@@ -363,16 +363,16 @@
       </div>
 
       <article class="hips-context-card" aria-labelledby="hipsContextTitle">
-        <a id="hipsContextLink" class="hips-context-frame" href="https://irsa.ipac.caltech.edu/data/hips/SPHEREx/spherex_allsky_cube/" target="_blank" rel="noreferrer" aria-label="Open the SPHEREx DR1 HiPS all-sky cube at IRSA">
+        <a id="hipsContextLink" class="hips-context-frame" href="/api/hips/tile" target="_blank" rel="noreferrer" aria-label="Open the S3-backed SPHEREx DR1 HiPS tile">
           <img id="hipsContextImage" alt="SPHEREx DR1 HiPS all-sky context tile for the current field" hidden>
           <span id="hipsContextFallback">Select a field to load its HiPS context tile.</span>
         </a>
         <div class="hips-context-copy">
           <p class="kicker">HIPS ALL-SKY CONTEXT</p>
           <h3 id="hipsContextTitle">A mosaic around the current field — not a visit.</h3>
-          <p>The live SPHEREx DR1 HiPS cube is a 102-frame all-sky mosaic. This card shows the single pre-rendered 1.8° tile containing the current field, at a wavelength chosen from the active detector. Its fixed 0–40 MJy sr⁻¹ asinh stretch is IRSA's visualization stretch, not a measurement of a visit.</p>
+          <p>The live SPHEREx DR1 HiPS cube is a 102-frame all-sky mosaic. This card shows the single S3-backed 1.8° tile containing the current field, rendered from the real cube plane at a wavelength chosen from the active detector. It is context, not a measurement of a visit.</p>
           <p id="hipsContextMeta" class="field-hint" role="status">Waiting for a field.</p>
-          <p class="source-checked">IRSA SPHEREx DR1 HiPS PNG tree · context only · never substituted for visit pixels.</p>
+          <p class="source-checked">NASA IRSA S3 · HiPS cube plane · context only · never substituted for visit pixels.</p>
         </div>
       </article>
 
@@ -432,7 +432,7 @@
               <div><dt>Pixel scale</dt><dd id="wavelengthPixelScale">—</dd></div>
               <div><dt>Visits in this band</dt><dd id="wavelengthFrames">0</dd></div>
             </dl>
-            <p id="bandSummary" class="desk-status" role="status">The band rail is populated from the real D1–D6 products returned by IRSA.</p>
+            <p id="bandSummary" class="desk-status" role="status">The band rail is populated from the real D1–D6 products returned by the archive.</p>
           </div>
           <div class="desk-card">
             <div class="desk-card-head"><h3>Display filters</h3><span class="kicker">PRESENTATION ONLY</span></div>
@@ -440,7 +440,7 @@
             <div class="field"><label for="paletteSelect">Palette</label><select id="paletteSelect"><option value="iridescent">Iridescent · default</option><option value="gold">Warm gold</option><option value="ice">Ice blue</option><option value="mono">Monochrome</option></select></div>
             <div class="field"><label for="stretchSelect">Intensity stretch</label><select id="stretchSelect"><option value="asinh">Asinh · balanced</option><option value="linear">Linear · direct</option><option value="log">Log · faint detail</option></select></div>
             <button id="hdToggleLab" class="button secondary full" type="button" disabled>Load 0.90° wide window</button>
-            <p class="field-hint">Loads a native-scale 0.90° cutout for a wider sky view. Near a detector edge IRSA may clip the window and shift its actual centre; the verification panel reports the measured WCS centre. Pixel detail is archive-limited by SPHEREx sampling, not invented by upscaling.</p>
+            <p class="field-hint">Loads a native-scale 0.90° cutout for a wider sky view. Near a detector edge the cutout may clip the window and shift its actual centre; the verification panel reports the measured WCS centre. Pixel detail is archive-limited by SPHEREx sampling, not invented by upscaling.</p>
             <label class="marker-toggle sharp-toggle" for="sharpPixels"><input id="sharpPixels" type="checkbox"> Sharpen native pixels when zoomed</label>
           </div>
         </div>
@@ -471,13 +471,13 @@
 
       <div class="lab-content" id="labVerify" role="tabpanel" hidden>
         <div class="verify-head">
-          <div><p class="kicker">CROSS-SOURCE RECEIPTS</p><h3>One frame, several independent checks.</h3><p class="desk-copy">The viewer keeps the SIA2 discovery row, the FITS cutout headers and the independent IAU geometry side by side. Amber means a value is unavailable or differs; green means the two sources agree.</p></div>
+          <div><p class="kicker">CROSS-SOURCE RECEIPTS</p><h3>One frame, several independent checks.</h3><p class="desk-copy">The viewer keeps the discovery row, the FITS cutout headers and the independent IAU geometry side by side. Amber means a value is unavailable or differs; green means the two sources agree.</p></div>
           <span id="verificationScore" class="verify-score">Waiting for data</span>
         </div>
         <ul id="verificationList" class="verification-list"><li class="verify-row pending"><span class="verify-dot"></span><div><strong>No frame loaded</strong><p>Load a real SPHEREx field to run the cross-checks.</p></div></li></ul>
         <div class="verify-sources">
-          <div class="source-box"><span class="kicker">SOURCE 1 · DISCOVERY</span><strong id="verifySourceSia">IRSA SIA2</strong><p id="verifySiaDetail">Visit row, date, observation ID and product URI.</p></div>
-          <div class="source-box"><span class="kicker">SOURCE 2 · PIXELS</span><strong id="verifySourceFits">IRSA FITS cutout</strong><p id="verifyFitsDetail">IMAGE, WCS, WCS-WAVE and detector headers.</p></div>
+          <div class="source-box"><span class="kicker">SOURCE 1 · DISCOVERY</span><strong id="verifySourceSia">Archive discovery</strong><p id="verifySiaDetail">Visit row, date, observation ID and product URI.</p></div>
+          <div class="source-box"><span class="kicker">SOURCE 2 · PIXELS</span><strong id="verifySourceFits">Archive FITS cutout</strong><p id="verifyFitsDetail">IMAGE, WCS, WCS-WAVE and detector headers.</p></div>
           <div class="source-box"><span class="kicker">SOURCE 3 · GEOMETRY</span><strong>IAU constellation engine</strong><p>Constellation membership computed from J2000 coordinates, not copied from IRSA.</p></div>
           <div class="source-box"><span class="kicker">SOURCE 4 · CATALOGUE</span><strong id="verifyGaia">Gaia DR3 · ESA TAP</strong><p id="verifyGaiaDetail">Independent catalogue context for the field centre.</p></div>
         </div>
