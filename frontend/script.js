@@ -365,8 +365,13 @@ function readFrameHeaders(response) {
 
 async function loadFrameData(frame) {
   try {
-    const response = await fetch(frame.src, { headers: { Accept: 'image/png' } });
-    if (!response.ok) throw new Error(`FITS frame returned ${response.status}.`);
+    let response;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(frame.src, { headers: { Accept: 'image/png' }, signal: AbortSignal.timeout(60_000) });
+      if (response.ok || ![429, 503, 504].includes(response.status) || attempt === 2) break;
+      await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
+    }
+    if (!response?.ok) throw new Error(`FITS frame returned ${response?.status ?? 'no response'}.`);
     const analysis = readFrameHeaders(response);
     const blob = await response.blob();
     if (!frames.includes(frame)) return;
