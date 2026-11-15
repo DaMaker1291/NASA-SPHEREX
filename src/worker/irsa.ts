@@ -16,6 +16,7 @@ const GAIA_TAP = 'https://gea.esac.esa.int/tap-server/tap/sync'
 const BLOCK = 2880
 const CARD = 80
 const MAX_SIA_BYTES = 1_500_000
+const MAX_SIA_HTML_BYTES = 4_000_000
 const MAX_CATALOG_BYTES = 2_000_000
 const MAX_CUTOUT_BYTES = 40 * 1024 * 1024
 const CUTOUT_CACHE_TTL_MS = 10 * 60_000
@@ -253,32 +254,85 @@ export async function findSpherex(ra: number, dec: number, fov: number): Promise
   })
 }
 
-async function querySia(ra: number, dec: number, fov: number, cacheKey: string): Promise<IrsaFind> {
-    const radius = clamp(fov / 2, 0.05, 0.8)
-    const params = new URLSearchParams({
-      COLLECTION: 'spherex_dr1',
-      POS: `circle ${ra.toFixed(6)} ${dec.toFixed(6)} ${radius.toFixed(4)}`,
-      RESPONSEFORMAT: 'CSV',
-      MAXREC: '300',
-    })
-    const url = `${IRSA}/SIA?${params.toString()}`
+function decodeHtml(value: string) {
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function parseSiaHtml(text: string): Array<Record<string, string>> {
+  const headerRow = text.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/i)?.[0] ?? ''
+  const headers = [...headerRow.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/gi)].map((match) => decodeHtml(match[1]))
+  if (!headers.length) throw new Error('SIA HTML had no table header.')
+  const rows: Array<Record<string, string>> = []
+  for (const rowMatch of text.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = [...rowMatch[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((match) => decodeHtml(match[1]))
+    if (cells.length !== headers.length) continue
+    const row: Record<string, string> = {}
+    headers.forEach((header, index) => { row[header] = cells[index] })
+    rows.push(row)
+  }
+  return rows
+}
+
+async function fetchSiaRows(ra: number, dec: number): Promise<Array<Record<string, string>>> {
+  // SIA is a coverage query: ask for products whose footprint overlaps the
+  // target point, not every product inside the display FOV. A 0.02-degree
+  // cone is enough for a valid cutout and avoids enormous SIA result sets.
+  const radius = 0.02
+  const base = new URLSearchParams({
+    COLLECTION: 'spherex_dr1',
+    POS: `circle ${ra.toFixed(6)} ${dec.toFixed(6)} ${radius.toFixed(4)}`,
+    MAXREC: '300',
+  })
+
+  let csvError: unknown = null
+  try {
+    const params = new URLSearchParams(base)
+    params.set('RESPONSEFORMAT', 'CSV')
     const response = await fetchWithRetry(
-      url,
+      `${IRSA}/SIA?${params.toString()}`,
       { headers: { Accept: 'text/csv' } },
       { attempts: 2, timeoutMs: 6_000, totalTimeoutMs: 12_000 },
     )
     await assertUpstreamOk(response, 'IRSA SIA2')
     const text = await readTextLimited(response, MAX_SIA_BYTES)
-    if (/^\s*</.test(text)) {
-      throw new ApiError(502, 'IRSA returned a non-CSV response.', 'BAD_UPSTREAM_RESPONSE')
-    }
+    if (!/^\s*</.test(text)) return parseCsv(text)
+    return parseSiaHtml(text)
+  } catch (error) {
+    csvError = error
+  }
 
-    let rows: Array<Record<string, string>>
-    try {
-      rows = parseCsv(text)
-    } catch {
-      throw new ApiError(502, 'IRSA returned malformed SIA2 CSV.', 'BAD_UPSTREAM_RESPONSE')
-    }
+  try {
+    const params = new URLSearchParams(base)
+    params.set('RESPONSEFORMAT', 'HTML')
+    const response = await fetchWithRetry(
+      `${IRSA}/SIA?${params.toString()}`,
+      { headers: { Accept: 'text/html' } },
+      { attempts: 2, timeoutMs: 8_000, totalTimeoutMs: 16_000 },
+    )
+    await assertUpstreamOk(response, 'IRSA SIA2')
+    const text = await readTextLimited(response, MAX_SIA_HTML_BYTES)
+    const rows = parseSiaHtml(text)
+    if (!rows.length) throw new ApiError(502, 'IRSA returned an empty SIA2 table.', 'NO_ROWS')
+    return rows
+  } catch (htmlError) {
+    if (csvError instanceof ApiError && csvError.status === 503) throw csvError
+    if (htmlError instanceof ApiError) throw htmlError
+    throw csvError instanceof Error ? csvError : new ApiError(502, 'IRSA returned malformed SIA2 data.', 'BAD_UPSTREAM_RESPONSE')
+  }
+}
+
+async function querySia(ra: number, dec: number, fov: number, cacheKey: string): Promise<IrsaFind> {
+    const rows = await fetchSiaRows(ra, dec)
 
     const byTime = new Map<string, IrsaObservation>()
     for (const row of rows) {

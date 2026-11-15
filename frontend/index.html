@@ -3,83 +3,272 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#080e1d">
-  <title>SPHEREx Explorer | Sky through time</title>
-  <link rel="stylesheet" href="style.css?v=real-10">
-  <script defer src="script.js?v=real-11"></script>
+  <meta name="theme-color" content="#080b12">
+  <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
+  <title>SPHEREx Explorer | The sky in motion</title>
+  <link rel="stylesheet" href="style.css?v=next-9">
+  <script defer src="script.js?v=next-9"></script>
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="#top" aria-label="SPHEREx Explorer home"><span class="brand-mark">✦</span><span>SPHEREx <strong>Explorer</strong></span></a>
-    <div class="top-right"><span class="chip"><span class="dot"></span> Live IRSA data</span><button id="mailShortcut" class="button secondary compact" type="button">✉ Mail observation</button><a href="#guide">How to use</a></div>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="SPHEREx Explorer home">
+      <span class="brand-mark" aria-hidden="true">✦</span>
+      <span class="brand-name">SPHEREx <em>Explorer</em></span>
+    </a>
+    <nav class="site-nav" aria-label="Main navigation">
+      <span class="live-chip"><span class="live-dot"></span> Real IRSA data</span>
+      <button id="mailShortcut" class="text-button" type="button">✉ Mail observation</button>
+      <a class="text-button" href="#how-it-works">How it works</a>
+    </nav>
   </header>
-  <main id="top" class="shell">
-    <section class="intro"><div><p class="eyebrow">SKY OBSERVATION STUDIO</p><h1>See the sky change over time.</h1><p class="subheading">Load real SPHEREx detector frames from IRSA, inspect their FITS pixels, and blink between visits to spot changes.</p></div><div class="intro-note">IRSA SIA2 <span>•</span> Real FITS cutouts</div></section>
-    <div class="workspace">
-      <aside class="panel sidebar">
-        <div class="panel-header"><h2>Explore a region</h2><span class="step">01 / INPUT</span></div>
-        <p class="muted small">Coordinates select the field. The backend queries IRSA SIA2 and returns real detector products for that position.</p>
-        <div class="field"><label for="target">Example target</label><select id="target"><option value="spherex" selected>SPHEREx DR1 field</option><option value="custom">Custom region</option></select></div>
-        <div class="field"><label for="ra">Right Ascension (RA)</label><input id="ra" type="text" value="150" placeholder="decimal degrees, e.g. 150" autocomplete="off"></div>
-        <div class="field"><label for="dec">Declination (Dec)</label><input id="dec" type="text" value="19.5" placeholder="decimal degrees, e.g. 19.5" autocomplete="off"></div>
-        <div class="field"><label for="fov">Field of view</label><select id="fov"><option value="0.1">0.10°</option><option value="0.15">0.15°</option><option value="0.2">0.20°</option><option value="0.3" selected>0.30°</option><option value="0.5">0.50°</option><option value="0.6">0.60°</option></select></div>
-        <button id="applyCoordinates" class="button secondary full">Set region label</button>
-        <div class="separator"></div>
-        <div class="panel-header"><h2>Observation images</h2><span class="step">02 / LOAD</span></div>
-        <p class="muted small">Load real SPHEREx frames for the selected field, or choose two or more aligned PNG images from your own observations.</p>
-        <button id="loadReal" class="button primary full">Load real SPHEREx frames</button>
-        <label class="upload-area" for="fileInput"><span class="upload-icon">↑</span><strong>Choose PNG images</strong><span>Multiple aligned files accepted</span></label>
-        <input id="fileInput" type="file" accept="image/png,.png" multiple hidden>
-        <div class="upload-actions"><button id="clearImages" class="button ghost">Clear</button></div>
-        <p id="sourceLabel" class="small muted">No real frames loaded</p>
-        <div class="separator"></div>
-        <div class="field"><label for="frameSpeed">Playback speed <span id="speedValue">1×</span></label><input id="frameSpeed" type="range" min="250" max="2000" step="250" value="1000"></div>
-        <label class="toggle-row" for="showCrosshair"><input id="showCrosshair" type="checkbox"><span>Show centre crosshair</span></label>
-      </aside>
-      <section class="panel viewer-panel" aria-label="Sky image viewer">
-        <div class="viewer-toolbar"><div><p class="eyebrow">LIVE VIEWER</p><h2 id="viewerTitle">SPHEREx DR1 field</h2></div><div class="viewer-actions"><button id="zoomOut" class="icon-button" title="Zoom out" aria-label="Zoom out">−</button><span id="zoomLevel" class="zoom-level">100%</span><button id="zoomIn" class="icon-button" title="Zoom in" aria-label="Zoom in">+</button><button id="resetView" class="button ghost compact">Reset view</button></div></div>
-        <div class="viewer-stage" id="viewerStage" aria-label="Image viewing area"><div id="imageTransform" class="image-transform"><img id="skyImage" alt="Selected SPHEREx observation" draggable="false" hidden></div><div id="emptyState" class="empty-state"><div class="empty-icon">✧</div><h3>Your sky awaits</h3><p>Load real IRSA SPHEREx frames, or choose aligned PNG observations.</p><button id="emptyReal" class="button primary">Load real SPHEREx frames</button></div><div id="crosshair" class="crosshair" hidden><span></span></div><div id="stageBadge" class="stage-badge" hidden>LIVE IRSA • REAL FITS</div></div>
-        <div class="playback"><div class="playback-top"><div><span class="eyebrow">OBSERVATION TIMELINE</span><div id="frameLabel" class="frame-label">No images loaded</div></div><span id="frameCount" class="muted">0 / 0</span></div><input id="timeline" aria-label="Choose observation frame" type="range" min="0" max="0" value="0" disabled><div class="player-buttons"><button id="previous" class="icon-button" title="Previous frame" aria-label="Previous frame" disabled>⏮</button><button id="playPause" class="button primary play" disabled>▶ Play</button><button id="next" class="icon-button" title="Next frame" aria-label="Next frame" disabled>⏭</button><span class="player-hint">Tip: drag on image to pan • scroll to zoom</span></div></div>
-        <div class="comparison"><div class="comparison-heading"><div><h3>Compare observations</h3><p class="small muted">Blink between two frames or inspect them side by side.</p></div><div class="compare-buttons"><button id="blink" class="button secondary" disabled>Blink A / B</button><button id="showCompare" class="button secondary" disabled>Side by side</button></div></div><div class="compare-selectors"><div class="field"><label for="frameA">Frame A</label><select id="frameA" disabled></select></div><div class="field"><label for="frameB">Frame B</label><select id="frameB" disabled></select></div></div><div id="compareGrid" class="compare-grid" hidden><figure><img id="compareImageA" alt="First observation"/><figcaption id="compareLabelA">A</figcaption></figure><figure><img id="compareImageB" alt="Second observation"/><figcaption id="compareLabelB">B</figcaption></figure></div></div>
-      </section>
-      <aside class="panel metadata"><div class="panel-header"><h2>Observation details</h2><span class="step">03 / INSPECT</span></div><dl class="details"><div><dt>Dataset</dt><dd id="detailSource">—</dd></div><div><dt>Current frame</dt><dd id="detailFrame">—</dd></div><div><dt>Observation ID</dt><dd id="detailObsid">—</dd></div><div><dt>Image dimensions</dt><dd id="detailSize">—</dd></div><div><dt>Right Ascension</dt><dd id="detailRA">150</dd></div><div><dt>Declination</dt><dd id="detailDec">19.5</dd></div><div><dt>J2000 coordinates</dt><dd id="detailSexagesimal">—</dd></div><div><dt>Constellation</dt><dd id="detailConstellation">—</dd></div><div><dt>Galactic l / b</dt><dd id="detailGalactic">—</dd></div><div><dt>Ecliptic lon / lat</dt><dd id="detailEcliptic">—</dd></div><div><dt>Observation date</dt><dd id="detailDate">Not provided</dd></div><div><dt>Band</dt><dd id="detailWavelength">Not provided</dd></div><div><dt>Light intensity</dt><dd id="detailIntensity">Measuring FITS…</dd></div><div><dt>Intensity range</dt><dd id="detailRange">—</dd></div><div><dt>Full min / max</dt><dd id="detailFullRange">—</dd></div><div><dt>Mean / median</dt><dd id="detailMean">—</dd></div><div><dt>Variance median</dt><dd id="detailVariance">—</dd></div><div><dt>Zodiacal median</dt><dd id="detailZodi">—</dd></div><div><dt>Flagged pixels</dt><dd id="detailFlags">—</dd></div><div><dt>Wavelength</dt><dd id="detailWave">—</dd></div><div><dt>Exposure</dt><dd id="detailExposure">—</dd></div><div><dt>Pixel scale</dt><dd id="detailPixelScale">—</dd></div></dl><div class="notice"><strong>Scientific note</strong><p>Frames are real IRSA SPHEREx level-2 detector cutouts. Local PNG uploads stay in this browser and are never uploaded. Align local images to the same sky grid before blinking.</p></div></aside>
-    </div>
-    <section class="lab panel" id="lab" aria-label="Field lab">
-      <div class="lab-head"><div><p class="eyebrow">FIELD LAB</p><h2>Learn it. Play it. Mail it.</h2></div><span class="step">MAIL • LEARN • GAMES</span></div>
-      <div class="lab-tabs" role="tablist" aria-label="Field lab tools">
-        <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labMail" data-lab-tab="mail">✉ Mail</button>
-        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learn</button>
-        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labGames" data-lab-tab="games">Games</button>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="kicker">SPHEREx · INFRARED SKY SURVEY</p>
+        <h1>Watch the sky<br><span>move.</span></h1>
+        <p class="hero-lede">Every visit is a real infrared exposure from NASA’s SPHEREx mission. Pick a patch, press play, and let the visits blink. Anything that moves will stand out.</p>
+        <a class="hero-action" href="#explorer">Open the sky viewer <span aria-hidden="true">↓</span></a>
       </div>
-      <div class="lab-panel" id="labMail" role="tabpanel">
-        <div class="lab-grid">
-          <div>
-            <h3>Mail this observation</h3>
-            <p class="small muted">Builds an email from the frame currently on screen. Your mail app opens for review; this page does not send mail itself.</p>
-            <div class="field"><label for="mailTo">Send to</label><input id="mailTo" type="email" placeholder="you@example.com" autocomplete="email"></div>
-            <div class="field"><label for="mailNote">Your note <span class="muted">(optional)</span></label><textarea id="mailNote" rows="3" placeholder="Add a note for the recipient"></textarea></div>
-            <div class="mail-actions"><button id="mailOpen" class="button primary" type="button">Open in mail app</button><button id="mailCopy" class="button secondary" type="button">Copy email</button></div>
-            <p id="mailStatus" class="small muted" role="status">Load real frames to build an observation email.</p>
-          </div>
-          <div class="mail-preview"><div class="lab-card-head"><h3>Current observation</h3><span class="step">LIVE FROM THE FRAME</span></div><pre id="mailPreview">Load real frames to build an observation email.</pre></div>
-        </div>
-      </div>
-      <div class="lab-panel" id="labLearn" role="tabpanel" hidden>
-        <div class="lab-grid">
-          <div class="lab-card"><div class="lab-card-head"><h3>Read this frame</h3><span class="step">REAL DATA</span></div><p class="small muted">The lesson updates from the frame currently displayed — no prewritten per-night facts.</p><dl class="lab-facts"><div><dt>Constellation</dt><dd id="learnConstellation">—</dd></div><div><dt>Position</dt><dd id="learnPosition">—</dd></div><div><dt>Median light</dt><dd id="learnLight">—</dd></div><div><dt>Wavelength</dt><dd id="learnWave">—</dd></div><div><dt>Flagged pixels</dt><dd id="learnFlags">—</dd></div><div><dt>Frames loaded</dt><dd id="learnFrames">0</dd></div></dl></div>
-          <div class="lab-card"><div class="lab-card-head"><h3>Knowledge check</h3><span id="learnScore" class="lab-score">0 correct</span></div><p id="learnQuestion" class="quiz-question">Load real frames to start a lesson.</p><div id="learnOptions" class="option-grid"></div><p id="learnFeedback" class="quiz-feedback" role="status"></p><button id="learnNext" class="button secondary" type="button" disabled>Next question</button></div>
-        </div>
-      </div>
-      <div class="lab-panel" id="labGames" role="tabpanel" hidden>
-        <div class="lab-grid">
-          <div class="game-card"><div class="lab-card-head"><h3>Brighter frame</h3><span class="lab-score">GAME 01</span></div><p class="small muted">Choose the real frame with the higher median light intensity.</p><div id="brighterChoices" class="option-grid"></div><p id="brighterFeedback" class="quiz-feedback" role="status"></p><button id="brighterNext" class="button secondary" type="button" disabled>New round</button></div>
-          <div class="game-card"><div class="lab-card-head"><h3>Wavelength window</h3><span class="lab-score">GAME 02</span></div><p class="small muted">Pick the wavelength that falls inside the displayed frame’s measured range.</p><div id="waveChoices" class="option-grid"></div><p id="waveFeedback" class="quiz-feedback" role="status"></p><button id="waveNext" class="button secondary" type="button" disabled>New round</button></div>
+      <div class="hero-targets" aria-label="Suggested moving targets">
+        <p class="kicker">TRY A MOVING NEIGHBOUR</p>
+        <div class="preset-list">
+          <button type="button" class="preset" data-target="barnard"><span>Barnard’s Star</span><small>10.3″ / year</small></button>
+          <button type="button" class="preset" data-target="epsindi"><span>Epsilon Indi B</span><small>brown-dwarf pair</small></button>
+          <button type="button" class="preset" data-target="wise0855"><span>WISE 0855−0714</span><small>fast-moving Y dwarf</small></button>
+          <button type="button" class="preset" data-target="rwaur"><span>RW Aurigae</span><small>variable young star</small></button>
+          <button type="button" class="preset" data-target="rdra"><span>R Draconis</span><small>long-period variable</small></button>
         </div>
       </div>
     </section>
-    <section class="guide" id="guide"><h2>How to use this viewer</h2><div class="guide-grid"><div><span>01</span><h3>Load real frames</h3><p>Choose a field and load real SPHEREx frames. The backend queries IRSA SIA2 and renders the actual IMAGE FITS pixels.</p></div><div><span>02</span><h3>Load and play</h3><p>Step through the real visits, play the timeline, and zoom or drag to inspect the detector cutouts.</p></div><div><span>03</span><h3>Compare frames</h3><p>Pick two real observations and blink between them or show both together. Dates and detector bands come from SIA2.</p></div></div></section>
+
+    <section id="explorer" class="explorer" aria-label="SPHEREx sky viewer">
+      <aside class="query-panel" aria-label="Choose a sky patch">
+        <div class="section-heading"><span class="section-number">01</span><h2>Choose a patch</h2></div>
+        <div class="field">
+          <label for="target">Named target</label>
+          <select id="target">
+            <option value="spherex" selected>Wide field · Leo</option>
+            <option value="barnard">Barnard’s Star · Ophiuchus</option>
+            <option value="epsindi">Epsilon Indi B · Indus</option>
+            <option value="wise0855">WISE 0855−0714</option>
+            <option value="rwaur">RW Aurigae · Auriga</option>
+            <option value="rdra">R Draconis · Draco</option>
+            <option value="custom">Custom coordinates</option>
+          </select>
+          <p id="targetMeta" class="target-meta">A real DR1 field with multiple IRSA visits. Load it, then press play.</p>
+        </div>
+
+        <div class="coordinate-grid">
+          <div class="field">
+            <label for="ra">Right ascension <span>RA</span></label>
+            <input id="ra" type="text" value="150" placeholder="150 or 10h00m00s" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="dec">Declination <span>Dec</span></label>
+            <input id="dec" type="text" value="19.5" placeholder="+19.5 or +19°30′" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <p class="field-hint">Decimal degrees, or sexagesimal hours / degrees.</p>
+
+        <div class="field">
+          <label for="fov">Field width</label>
+          <select id="fov">
+            <option value="0.1">0.10° · tight</option>
+            <option value="0.15">0.15°</option>
+            <option value="0.2">0.20°</option>
+            <option value="0.3" selected>0.30° · standard</option>
+            <option value="0.5">0.50° · wide</option>
+            <option value="0.6">0.60° · widest</option>
+            <option value="0.9">0.90°</option>
+          </select>
+        </div>
+
+        <button id="loadReal" class="button primary full" type="button">Show this sky sequence</button>
+        <p id="sourceLabel" class="source-label" role="status">Connecting to IRSA…</p>
+        <div class="query-note">
+          <span class="note-mark">i</span>
+          <p>Every image is rendered from a real IRSA SPHEREx level-2 FITS cutout. No simulated sky, no invented stars.</p>
+        </div>
+      </aside>
+
+      <section class="viewer-panel" aria-label="Sky image viewer">
+        <div class="viewer-head">
+          <div class="viewer-title-block">
+            <p id="fieldConstellation" class="kicker">SKY FIELD</p>
+            <h2 id="viewerTitle">Wide field · Leo</h2>
+            <p id="fieldMeta" class="field-meta">RA 150.000° · Dec +19.500° · 0.30° field</p>
+          </div>
+          <div class="view-controls" aria-label="View controls">
+            <button id="zoomOut" class="icon-button" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+            <span id="zoomLevel" class="zoom-level">100%</span>
+            <button id="zoomIn" class="icon-button" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+            <button id="resetView" class="text-button" type="button">Reset</button>
+            <button id="copyLink" class="text-button" type="button">Copy link</button>
+            <label class="marker-toggle" for="showCrosshair"><input id="showCrosshair" type="checkbox" checked> Centre marker</label>
+          </div>
+        </div>
+
+        <div id="viewerStage" class="viewer-stage" aria-label="Image viewing area">
+          <div id="imageTransform" class="image-transform">
+            <img id="skyImage" alt="Selected SPHEREx observation" draggable="false" hidden>
+            <canvas id="differenceCanvas" class="difference-canvas" hidden aria-label="Difference between two observations"></canvas>
+          </div>
+          <div id="emptyState" class="empty-state">
+            <div class="empty-orbit" aria-hidden="true"><span></span></div>
+            <p id="emptyEyebrow" class="kicker">REAL SPHEREX DATA</p>
+            <h3 id="emptyTitle">Your sky awaits</h3>
+            <p id="emptyMessage">Choose a target on the left and load its real SPHEREx visits.</p>
+            <button id="emptyReal" class="button primary" type="button">Load this field</button>
+          </div>
+          <div id="stageLoading" class="stage-loading" hidden>
+            <span class="loader-orbit" aria-hidden="true"></span>
+            <strong>Finding real visits…</strong>
+            <small>Querying IRSA SIA2 and preparing detector cutouts</small>
+          </div>
+          <div id="crosshair" class="crosshair" aria-hidden="true"><span></span></div>
+          <div id="stageBadge" class="stage-badge" hidden>LIVE IRSA · REAL FITS</div>
+          <div class="stage-hud">
+            <span id="stageDate">No visit loaded</span>
+            <span id="stageMode">LIVE FRAME</span>
+          </div>
+        </div>
+
+        <div class="transport">
+          <div class="transport-main">
+            <div class="transport-buttons">
+              <button id="previous" class="icon-button" type="button" title="Previous frame" aria-label="Previous frame" disabled>←</button>
+              <button id="playPause" class="button primary play" type="button" disabled>▶ Play sequence</button>
+              <button id="next" class="icon-button" type="button" title="Next frame" aria-label="Next frame" disabled>→</button>
+            </div>
+            <div class="transport-status">
+              <strong id="frameLabel">No images loaded</strong>
+              <span id="frameCount">0 / 0</span>
+            </div>
+          </div>
+          <div class="transport-options">
+            <label class="speed-control" for="frameSpeed">Speed <input id="frameSpeed" type="range" min="250" max="2000" step="250" value="1000" disabled><span id="speedValue">1.0×</span></label>
+            <button id="blink" class="button secondary compact" type="button" disabled>Blink A / B</button>
+            <button id="difference" class="button secondary compact" type="button" disabled>Difference</button>
+          </div>
+        </div>
+        <input id="timeline" class="timeline" aria-label="Choose observation frame" type="range" min="0" max="0" value="0" disabled>
+
+        <div class="filmstrip-block">
+          <div class="filmstrip-head"><span class="kicker">VISITS IN THIS PATCH</span><span>Click any visit to inspect it</span></div>
+          <div id="filmstrip" class="filmstrip" aria-label="Observation visit thumbnails"></div>
+        </div>
+
+        <details class="compare-panel">
+          <summary>Compare two visits</summary>
+          <div class="compare-content">
+            <div class="compare-selectors">
+              <div class="field"><label for="frameA">Frame A</label><select id="frameA" disabled></select></div>
+              <div class="field"><label for="frameB">Frame B</label><select id="frameB" disabled></select></div>
+              <button id="showCompare" class="button secondary compact" type="button" disabled>Side by side</button>
+            </div>
+            <div id="compareGrid" class="compare-grid" hidden>
+              <figure><img id="compareImageA" alt="First observation"><figcaption id="compareLabelA">A</figcaption></figure>
+              <figure><img id="compareImageB" alt="Second observation"><figcaption id="compareLabelB">B</figcaption></figure>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <aside class="info-panel" aria-label="Observation details">
+        <div class="section-heading"><span class="section-number">03</span><h2>What you’re seeing</h2></div>
+        <div class="visit-card">
+          <p class="kicker">CURRENT VISIT</p>
+          <strong id="detailDateBig">No visit yet</strong>
+          <p id="detailFrame">—</p>
+        </div>
+        <dl class="detail-list">
+          <div><dt>Constellation</dt><dd id="detailConstellation">—</dd></div>
+          <div><dt>WCS centre</dt><dd id="detailSexagesimal">—</dd></div>
+          <div><dt>RA / Dec</dt><dd><span id="detailRA">—</span> <span id="detailDec">—</span></dd></div>
+          <div><dt>Median intensity</dt><dd id="detailIntensity">—</dd></div>
+          <div><dt>Detector / band</dt><dd id="detailWavelength">—</dd></div>
+          <div><dt>Wavelength</dt><dd id="detailWave">—</dd></div>
+          <div><dt>Flagged pixels</dt><dd id="detailFlags">—</dd></div>
+          <div><dt>Image</dt><dd id="detailSize">—</dd></div>
+          <div><dt>Dataset</dt><dd id="detailSource">—</dd></div>
+        </dl>
+        <details class="advanced-details">
+          <summary>Full FITS measurements</summary>
+          <dl class="detail-list">
+            <div><dt>Observation ID</dt><dd id="detailObsid">—</dd></div>
+            <div><dt>Observation date</dt><dd id="detailDate">—</dd></div>
+            <div><dt>Galactic l / b</dt><dd id="detailGalactic">—</dd></div>
+            <div><dt>Ecliptic lon / lat</dt><dd id="detailEcliptic">—</dd></div>
+            <div><dt>Intensity range</dt><dd id="detailRange">—</dd></div>
+            <div><dt>Full min / max</dt><dd id="detailFullRange">—</dd></div>
+            <div><dt>Mean / median</dt><dd id="detailMean">—</dd></div>
+            <div><dt>Variance median</dt><dd id="detailVariance">—</dd></div>
+            <div><dt>Zodiacal median</dt><dd id="detailZodi">—</dd></div>
+            <div><dt>Exposure</dt><dd id="detailExposure">—</dd></div>
+            <div><dt>Pixel scale</dt><dd id="detailPixelScale">—</dd></div>
+          </dl>
+        </details>
+        <p class="detail-note">IRSA SPHEREx DR1 · level-2 spectral image. Frame centre, constellation and measurements come from the FITS cutout headers.</p>
+      </aside>
+    </section>
+
+    <section id="how-it-works" class="how-section">
+      <div class="how-intro">
+        <p class="kicker">HOW TO SPOT MOTION</p>
+        <h2>A tiny movie of a very large sky.</h2>
+        <p>SPHEREx revisits the same strip of sky across its survey. Differences between visits can reveal proper motion, variable stars, or an object that moved between exposures.</p>
+      </div>
+      <div class="how-grid">
+        <article><span>01</span><h3>Choose a patch</h3><p>Use a named nearby star or enter any RA and Dec. A 0.30° field is a good starting point for a moving target.</p></article>
+        <article><span>02</span><h3>Play the visits</h3><p>Press <strong>Play sequence</strong> to cycle through real detector frames. Use the filmstrip to jump to any date.</p></article>
+        <article><span>03</span><h3>Blink or subtract</h3><p><strong>Blink A / B</strong> toggles two visits. <strong>Difference</strong> subtracts them so changes in position or brightness become obvious.</p></article>
+      </div>
+    </section>
+
+    <section class="lab-panel" id="lab" aria-label="Observation toolkit">
+      <div class="lab-heading">
+        <div><p class="kicker">OBSERVATION DESK</p><h2>Keep a record of what you find.</h2></div>
+        <span class="lab-caption">MAIL · LEARN · GAMES</span>
+      </div>
+      <div class="lab-tabs" role="tablist" aria-label="Observation desk tools">
+        <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labMail" data-lab-tab="mail">✉ Mail observation</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learn from this frame</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labGames" data-lab-tab="games">Sky games</button>
+      </div>
+      <div class="lab-content" id="labMail" role="tabpanel">
+        <div class="desk-grid">
+          <div>
+            <h3>Mail this observation</h3>
+            <p class="desk-copy">Builds an email from the frame currently on screen. Your mail app opens for review; this page does not send mail itself.</p>
+            <div class="field"><label for="mailTo">Send to</label><input id="mailTo" type="email" placeholder="you@example.com" autocomplete="email"></div>
+            <div class="field"><label for="mailNote">Your note <span>optional</span></label><textarea id="mailNote" rows="3" placeholder="Add a note for the recipient"></textarea></div>
+            <div class="desk-actions"><button id="mailOpen" class="button primary" type="button">Open in mail app</button><button id="mailCopy" class="button secondary" type="button">Copy email</button></div>
+            <p id="mailStatus" class="desk-status" role="status">Load real frames to build an observation email.</p>
+          </div>
+          <div class="mail-preview"><div class="desk-card-head"><h3>Current observation</h3><span class="kicker">LIVE FROM THE FRAME</span></div><pre id="mailPreview">Load real frames to build an observation email.</pre></div>
+        </div>
+      </div>
+      <div class="lab-content" id="labLearn" role="tabpanel" hidden>
+        <div class="desk-grid">
+          <div class="desk-card"><div class="desk-card-head"><h3>Read this frame</h3><span class="kicker">REAL DATA</span></div><p class="desk-copy">The lesson updates from the frame currently displayed — no prewritten per-night facts.</p><dl class="lab-facts"><div><dt>Constellation</dt><dd id="learnConstellation">—</dd></div><div><dt>Position</dt><dd id="learnPosition">—</dd></div><div><dt>Median light</dt><dd id="learnLight">—</dd></div><div><dt>Wavelength</dt><dd id="learnWave">—</dd></div><div><dt>Flagged pixels</dt><dd id="learnFlags">—</dd></div><div><dt>Frames loaded</dt><dd id="learnFrames">0</dd></div></dl></div>
+          <div class="desk-card"><div class="desk-card-head"><h3>Knowledge check</h3><span id="learnScore" class="lab-score">0 correct</span></div><p id="learnQuestion" class="quiz-question">Load real frames to start a lesson.</p><div id="learnOptions" class="option-grid"></div><p id="learnFeedback" class="quiz-feedback" role="status"></p><button id="learnNext" class="button secondary" type="button" disabled>Next question</button></div>
+        </div>
+      </div>
+      <div class="lab-content" id="labGames" role="tabpanel" hidden>
+        <div class="desk-grid">
+          <div class="desk-card"><div class="desk-card-head"><h3>Brighter frame</h3><span class="lab-score">GAME 01</span></div><p class="desk-copy">Choose the real frame with the higher median light intensity.</p><div id="brighterChoices" class="option-grid"></div><p id="brighterFeedback" class="quiz-feedback" role="status"></p><button id="brighterNext" class="button secondary" type="button" disabled>New round</button></div>
+          <div class="desk-card"><div class="desk-card-head"><h3>Wavelength window</h3><span class="lab-score">GAME 02</span></div><p class="desk-copy">Pick the wavelength that falls inside the displayed frame’s measured range.</p><div id="waveChoices" class="option-grid"></div><p id="waveFeedback" class="quiz-feedback" role="status"></p><button id="waveNext" class="button secondary" type="button" disabled>New round</button></div>
+        </div>
+      </div>
+    </section>
   </main>
-  <footer>SPHEREx Explorer · Real IRSA data · Not affiliated with or endorsed by NASA</footer>
+
+  <footer class="site-footer">
+    <span>SPHEREx Explorer</span>
+    <span>Real IRSA data · Not affiliated with or endorsed by NASA</span>
+    <a href="https://irsa.ipac.caltech.edu/Missions/spherex.html" target="_blank" rel="noreferrer">SPHEREx at IRSA ↗</a>
+  </footer>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

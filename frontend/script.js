@@ -2,13 +2,17 @@
 // Real IRSA frames are loaded through the same-origin backend. Local PNGs stay local.
 const $ = (id) => document.getElementById(id);
 const el = {
-  target: $('target'), ra: $('ra'), dec: $('dec'), fov: $('fov'), apply: $('applyCoordinates'),
-  fileInput: $('fileInput'), loadReal: $('loadReal'), emptyReal: $('emptyReal'), clear: $('clearImages'),
-  sourceLabel: $('sourceLabel'), speed: $('frameSpeed'), speedValue: $('speedValue'),
+  target: $('target'), ra: $('ra'), dec: $('dec'), fov: $('fov'),
+  loadReal: $('loadReal'), emptyReal: $('emptyReal'), sourceLabel: $('sourceLabel'),
+  targetMeta: $('targetMeta'), fieldMeta: $('fieldMeta'), fieldConstellation: $('fieldConstellation'),
+  speed: $('frameSpeed'), speedValue: $('speedValue'),
   crosshairCheck: $('showCrosshair'), crosshair: $('crosshair'),
   stage: $('viewerStage'), transform: $('imageTransform'), image: $('skyImage'),
-  empty: $('emptyState'), stageBadge: $('stageBadge'), viewerTitle: $('viewerTitle'),
-  zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), resetView: $('resetView'), zoomLevel: $('zoomLevel'),
+  differenceCanvas: $('differenceCanvas'), difference: $('difference'),
+  empty: $('emptyState'), emptyEyebrow: $('emptyEyebrow'), emptyTitle: $('emptyTitle'), emptyMessage: $('emptyMessage'),
+  stageLoading: $('stageLoading'), stageBadge: $('stageBadge'), viewerTitle: $('viewerTitle'),
+  stageDate: $('stageDate'), stageMode: $('stageMode'), filmstrip: $('filmstrip'),
+  zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), resetView: $('resetView'), zoomLevel: $('zoomLevel'), copyLink: $('copyLink'),
   previous: $('previous'), next: $('next'), play: $('playPause'), timeline: $('timeline'),
   frameLabel: $('frameLabel'), frameCount: $('frameCount'),
   frameA: $('frameA'), frameB: $('frameB'), blink: $('blink'), showCompare: $('showCompare'),
@@ -16,6 +20,7 @@ const el = {
   compareLabelA: $('compareLabelA'), compareLabelB: $('compareLabelB'),
   detailSource: $('detailSource'), detailFrame: $('detailFrame'), detailObsid: $('detailObsid'),
   detailSize: $('detailSize'), detailRA: $('detailRA'), detailDec: $('detailDec'),
+  detailDateBig: $('detailDateBig'),
   detailSexagesimal: $('detailSexagesimal'), detailConstellation: $('detailConstellation'),
   detailGalactic: $('detailGalactic'), detailEcliptic: $('detailEcliptic'),
   detailDate: $('detailDate'), detailWavelength: $('detailWavelength'),
@@ -26,8 +31,38 @@ const el = {
 };
 
 const targets = {
-  spherex: { label: 'SPHEREx DR1 field', ra: 150, dec: 19.5, fov: 0.3 }
+  spherex: {
+    label: 'Wide field · Leo', constellation: 'Leo', ra: 150, dec: 19.5, fov: 0.3,
+    meta: 'A real DR1 field with multiple IRSA visits. A good place to learn the viewer.'
+  },
+  barnard: {
+    label: "Barnard's Star", constellation: 'Ophiuchus', ra: 269.452075, dec: 4.69339, fov: 0.3,
+    meta: 'M4V red dwarf · 5.96 ly · moving 10.3″ per year. One of the fastest stars in our sky.'
+  },
+  epsindi: {
+    label: 'Epsilon Indi B', constellation: 'Indus', ra: 331.04417, dec: -56.78283, fov: 0.3,
+    meta: 'T1 + T6 brown-dwarf pair · 11.9 ly · 6.7′ from Epsilon Indi A. A 0.30° field includes both.'
+  },
+  wise0855: {
+    label: 'WISE 0855−0714', constellation: 'Hydra', ra: 133.795129, dec: -7.245147, fov: 0.3,
+    meta: 'Y2 sub-brown dwarf · 7.3 ly · the coldest known brown dwarf, with a fast proper motion.'
+  },
+  rwaur: {
+    label: 'RW Aurigae', constellation: 'Auriga', ra: 76.95625, dec: 30.40111, fov: 0.3,
+    meta: 'A young T Tauri variable · Auriga · changes in brightness trace accretion and dust.'
+  },
+  rdra: {
+    label: 'R Draconis', constellation: 'Draco', ra: 248.1675, dec: 66.755, fov: 0.3,
+    meta: 'A long-period Mira-type variable · Draco · compare visits to see its brightness change.'
+  },
+  custom: {
+    label: 'Custom sky region', constellation: '', ra: null, dec: null, fov: 0.3,
+    meta: 'Enter any J2000 right ascension and declination. Decimal degrees or sexagesimal both work.'
+  }
 };
+
+let differenceMode = false;
+let differenceToken = 0;
 
 let frames = [];
 let frameIndex = 0, interval = null, blinkMode = false, comparisonOpen = false;
@@ -42,52 +77,33 @@ function notify(message) {
   toastTimeout = setTimeout(() => el.toast.classList.remove('visible'), 4200);
 }
 
-function setTarget() {
-  const selected = targets[el.target.value];
-  if (!selected) return;
-  el.ra.value = String(selected.ra);
-  el.dec.value = String(selected.dec);
-  el.fov.value = String(selected.fov);
+function parseRa(value) {
+  const text = String(value).trim().replace(/[hms]/gi, ' ').replace(/[:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return Number.NaN;
+  if (!/[\s]/.test(text)) return Number(text);
+  const parts = text.split(' ').map(Number);
+  if (parts.length !== 3 || parts.some(part => !Number.isFinite(part))) return Number.NaN;
+  const [hours, minutes, seconds] = parts;
+  if (hours < 0 || hours >= 24 || minutes < 0 || minutes >= 60 || seconds < 0 || seconds >= 60) return Number.NaN;
+  return (hours + minutes / 60 + seconds / 3600) * 15;
 }
 
-function readField() {
-  const ra = Number(el.ra.value.trim());
-  const dec = Number(el.dec.value.trim());
-  const fov = Number(el.fov.value);
-  if (!Number.isFinite(ra) || ra < 0 || ra > 360) throw new Error('RA must be between 0 and 360 degrees.');
-  if (!Number.isFinite(dec) || dec < -90 || dec > 90) throw new Error('Dec must be between -90 and +90 degrees.');
-  if (!Number.isFinite(fov) || fov < 0.1 || fov > 0.9) throw new Error('Choose a field of view between 0.10° and 0.60°.');
-  return { ra, dec, fov };
-}
-
-function applyCoordinates() {
-  try { readField(); } catch (error) { notify(error.message); return; }
-  const target = targets[el.target.value];
-  el.viewerTitle.textContent = target ? target.label : 'Custom sky region';
-  // The observation panel stays with the frame on screen until new frames load.
-  notify('Region updated. Load frames to query IRSA.');
-}
-
-function releaseImages() {
-  ownedObjectUrls.forEach((url) => URL.revokeObjectURL(url));
-  ownedObjectUrls = [];
-}
-
-function stopPlayback() {
-  clearInterval(interval); interval = null; blinkMode = false;
-  el.play.textContent = '▶ Play'; el.blink.textContent = 'Blink A / B';
-}
-
-function formatNumber(value) {
-  if (!Number.isFinite(value)) return '—';
-  if (value === 0) return '0';
-  const absolute = Math.abs(value);
-  if (absolute >= 1000 || absolute < 0.001) return value.toExponential(2);
-  return value.toFixed(3);
+function parseDec(value) {
+  const raw = String(value).trim();
+  if (!raw) return Number.NaN;
+  const normalized = raw.replace(/−/g, '-');
+  const negative = normalized.startsWith('-');
+  const text = normalized.replace(/[°d'"′″hms]/gi, ' ').replace(/[:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!/[\s]/.test(text)) return Number(text);
+  const parts = text.split(' ').map(Number);
+  if (parts.length !== 3 || parts.some(part => !Number.isFinite(part))) return Number.NaN;
+  const [degrees, minutes, seconds] = parts.map(Math.abs);
+  if (degrees > 90 || minutes >= 60 || seconds >= 60) return Number.NaN;
+  return (negative ? -1 : 1) * (degrees + minutes / 60 + seconds / 3600);
 }
 
 function formatRaHms(ra) {
-  const hours = ra / 15;
+  const hours = ((ra % 360) + 360) % 360 / 15;
   const h = Math.floor(hours);
   const minutes = Math.floor((hours - h) * 60);
   const seconds = ((hours - h) * 60 - minutes) * 60;
@@ -101,6 +117,101 @@ function formatDecDms(dec) {
   const minutes = Math.floor((absolute - degrees) * 60);
   const seconds = ((absolute - degrees) * 60 - minutes) * 60;
   return `${sign}${String(degrees).padStart(2, '0')}° ${String(minutes).padStart(2, '0')}′ ${seconds.toFixed(2).padStart(5, '0')}″`;
+}
+
+function coordinateText(ra, dec) {
+  if (!Number.isFinite(ra) || !Number.isFinite(dec)) return 'Coordinates unavailable';
+  return `${formatRaHms(ra)} · ${formatDecDms(dec)}`;
+}
+
+function updateTargetMeta(selected) {
+  if (!selected) return;
+  if (selected.ra === null || selected.dec === null) {
+    el.targetMeta.textContent = selected.meta;
+    return;
+  }
+  el.targetMeta.textContent = `${coordinateText(selected.ra, selected.dec)} · ${selected.meta}`;
+}
+
+function updateUrl(field, key) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('ra', field.ra.toFixed(5));
+  url.searchParams.set('dec', field.dec.toFixed(5));
+  url.searchParams.set('fov', field.fov.toFixed(2));
+  url.searchParams.set('target', key);
+  window.history.replaceState(null, '', url);
+}
+
+function restoreFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const key = params.get('target');
+  const ra = parseRa(params.get('ra') ?? '');
+  const dec = parseDec(params.get('dec') ?? '');
+  const fov = Number(params.get('fov'));
+  if (key && key !== 'custom' && targets[key]) {
+    setTarget(key, false);
+    return;
+  }
+  if (Number.isFinite(ra) && Number.isFinite(dec) && Number.isFinite(fov) && fov >= 0.1 && fov <= 0.9) {
+    el.target.value = 'custom';
+    el.ra.value = ra.toFixed(5);
+    el.dec.value = dec.toFixed(5);
+    el.fov.value = String(fov);
+    updateTargetMeta(targets.custom);
+    el.viewerTitle.textContent = 'Custom sky region';
+    el.fieldConstellation.textContent = 'CUSTOM · SPHEREX DR1';
+    el.fieldMeta.textContent = `${coordinateText(ra, dec)} · ${fov.toFixed(2)}° field`;
+    return;
+  }
+  setTarget('spherex', false);
+}
+
+function setTarget(key, shouldLoad = true) {
+  const selected = targets[key];
+  if (!selected) return;
+  el.target.value = key;
+  if (selected.ra !== null && selected.dec !== null) {
+    el.ra.value = selected.ra.toFixed(5);
+    el.dec.value = selected.dec.toFixed(5);
+    el.fov.value = String(selected.fov);
+  }
+  updateTargetMeta(selected);
+  if (selected.constellation) {
+    el.fieldConstellation.textContent = `${selected.constellation.toUpperCase()} · SPHEREX DR1`;
+    el.viewerTitle.textContent = selected.label;
+    el.fieldMeta.textContent = `${coordinateText(selected.ra, selected.dec)} · ${selected.fov.toFixed(2)}° field`;
+  }
+  if (shouldLoad && selected.ra !== null && selected.dec !== null) loadRealFrames();
+}
+
+function readField() {
+  const ra = parseRa(el.ra.value);
+  const dec = parseDec(el.dec.value);
+  const fov = Number(el.fov.value);
+  if (!Number.isFinite(ra) || ra < 0 || ra > 360) throw new Error('RA must be between 0 and 360 degrees, or hours/minutes/seconds.');
+  if (!Number.isFinite(dec) || dec < -90 || dec > 90) throw new Error('Dec must be between −90° and +90°.');
+  if (!Number.isFinite(fov) || fov < 0.1 || fov > 0.9) throw new Error('Choose a field width between 0.10° and 0.90°.');
+  return { ra, dec, fov };
+}
+
+function releaseImages() {
+  ownedObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  ownedObjectUrls = [];
+}
+
+function stopPlayback() {
+  clearInterval(interval); interval = null; blinkMode = false;
+  el.play.textContent = '▶ Play sequence';
+  el.blink.textContent = 'Blink A / B';
+  clearDifference();
+}
+
+function formatNumber(value) {
+  if (!Number.isFinite(value)) return '—';
+  if (value === 0) return '0';
+  const absolute = Math.abs(value);
+  if (absolute >= 1000 || absolute < 0.001) return value.toExponential(2);
+  return value.toFixed(3);
 }
 
 function formatSky(source = null) {
@@ -138,6 +249,7 @@ function updateDetails(frame) {
     el.detailFrame.textContent = '—';
     el.detailObsid.textContent = '—';
     el.detailSize.textContent = '—';
+    el.detailDateBig.textContent = 'No visit yet';
     el.detailRA.textContent = '—';
     el.detailDec.textContent = '—';
     el.detailDate.textContent = 'Not provided';
@@ -163,11 +275,13 @@ function updateDetails(frame) {
   el.detailFrame.textContent = frame.label;
   el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
   el.detailSize.textContent = frame.width && frame.height ? `${frame.width} × ${frame.height} px` : 'Loading real pixels…';
+  el.detailDateBig.textContent = frame.date || frame.label;
   const frameRa = Number.isFinite(analysis?.ra) ? analysis.ra : frame.ra;
   const frameDec = Number.isFinite(analysis?.dec) ? analysis.dec : frame.dec;
   if (frame.real && Number.isFinite(frameRa) && Number.isFinite(frameDec)) {
     el.detailRA.textContent = `${frameRa.toFixed(3)}°`;
     el.detailDec.textContent = `${frameDec > 0 ? '+' : ''}${frameDec.toFixed(3)}°`;
+    el.fieldMeta.textContent = `${coordinateText(frameRa, frameDec)} · ${frame.fov ?? Number(el.fov.value).toFixed(2)}° field`;
   } else {
     el.detailRA.textContent = '—';
     el.detailDec.textContent = '—';
@@ -203,6 +317,7 @@ function updateDetails(frame) {
     ? `${analysis.pixelScale.toFixed(2)}″ / px`
     : analysis ? 'Not in cutout' : unavailable;
   formatSky(analysis);
+  if (analysis?.constellation) el.fieldConstellation.textContent = `${analysis.constellation.toUpperCase()} · SPHEREX DR1`;
 }
 
 function readFrameHeaders(response) {
@@ -257,7 +372,17 @@ async function loadFrameData(frame) {
     if (!frames.includes(frame)) return;
     const objectUrl = URL.createObjectURL(blob);
     ownedObjectUrls.push(objectUrl);
+    const probe = new Image();
+    probe.src = objectUrl;
+    try {
+      await probe.decode();
+      frame.width = probe.naturalWidth;
+      frame.height = probe.naturalHeight;
+    } catch {
+      // The stage will report a decode error if the PNG is unusable.
+    }
     frame.src = objectUrl;
+    if (frame.thumbImg) frame.thumbImg.src = objectUrl;
     if (analysis.measured) {
       frame.analysis = analysis;
       frame.measurementError = '';
@@ -265,6 +390,7 @@ async function loadFrameData(frame) {
       frame.analysis = null;
       frame.measurementError = 'FITS measurement headers were not returned.';
     }
+    maybePrunePartialFrames();
     if (frames[frameIndex] === frame) render();
     else updateLab();
   } catch (error) {
@@ -276,6 +402,90 @@ async function loadFrameData(frame) {
     }
     notify(`Could not measure that FITS frame: ${error.message}`);
   }
+}
+
+let pruningFrames = false;
+
+function maybePrunePartialFrames() {
+  if (pruningFrames || frames.length < 3) return;
+  if (frames.some(frame => !frame.width || !frame.height)) return;
+  const maxWidth = Math.max(...frames.map(frame => frame.width));
+  const maxHeight = Math.max(...frames.map(frame => frame.height));
+  const complete = frames.filter(frame => frame.width >= maxWidth * .8 && frame.height >= maxHeight * .8);
+  if (complete.length === frames.length || complete.length < 2) return;
+  const current = frames[frameIndex];
+  pruningFrames = true;
+  frames = complete;
+  frameIndex = Math.max(0, frames.indexOf(current));
+  el.timeline.max = String(Math.max(0, frames.length - 1));
+  for (const selector of [el.frameA, el.frameB]) {
+    selector.replaceChildren();
+    frames.forEach((frame, index) => selector.add(new Option(`${index + 1}. ${frame.label}`, index)));
+  }
+  el.frameA.value = '0';
+  el.frameB.value = String(Math.min(1, frames.length - 1));
+  el.sourceLabel.textContent = el.sourceLabel.textContent.replace(/^\d+ real visits/, `${frames.length} real visits`);
+  buildFilmstrip();
+  render();
+  pruningFrames = false;
+  notify(`Skipped a partial edge visit; ${frames.length} complete visits remain.`);
+}
+
+function buildFilmstrip() {
+  el.filmstrip.replaceChildren();
+  if (!frames.length) {
+    const empty = document.createElement('p');
+    empty.className = 'film-placeholder';
+    empty.textContent = 'No visits loaded yet.';
+    el.filmstrip.append(empty);
+    return;
+  }
+  frames.forEach((frame, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'film-thumb';
+    button.title = `View ${frame.label}`;
+    const image = document.createElement('img');
+    image.src = frame.src;
+    image.alt = '';
+    image.loading = 'lazy';
+    const label = document.createElement('span');
+    label.textContent = `${frame.date || 'Visit'} · ${frame.detector || ''}`;
+    button.append(image, label);
+    button.addEventListener('click', () => {
+      stopPlayback();
+      frameIndex = index;
+      render();
+    });
+    frame.thumbImg = image;
+    el.filmstrip.append(button);
+  });
+}
+
+function updateFilmstripActive() {
+  const buttons = el.filmstrip.querySelectorAll('.film-thumb');
+  buttons.forEach((button, index) => button.classList.toggle('active', index === frameIndex));
+  const active = buttons[frameIndex];
+  if (active) {
+    const left = active.offsetLeft;
+    const right = left + active.offsetWidth;
+    if (left < el.filmstrip.scrollLeft) el.filmstrip.scrollTo({ left: left - 4, behavior: 'smooth' });
+    else if (right > el.filmstrip.scrollLeft + el.filmstrip.clientWidth) el.filmstrip.scrollTo({ left: right - el.filmstrip.clientWidth + 4, behavior: 'smooth' });
+  }
+}
+
+function setEmptyState(eyebrow, title, message) {
+  el.emptyEyebrow.textContent = eyebrow;
+  el.emptyTitle.textContent = title;
+  el.emptyMessage.textContent = message;
+}
+
+function setLoading(isLoading) {
+  loadingReal = isLoading;
+  el.stageLoading.hidden = !isLoading;
+  el.loadReal.disabled = isLoading;
+  el.emptyReal.disabled = isLoading;
+  el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Show this sky sequence';
 }
 
 function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
@@ -290,12 +500,13 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   }
   el.frameA.value = '0'; el.frameB.value = String(Math.min(1, frames.length - 1));
   const enabled = frames.length > 0;
-  for (const item of [el.timeline, el.previous, el.next, el.play, el.frameA, el.frameB, el.blink, el.showCompare]) {
+  for (const item of [el.timeline, el.previous, el.next, el.play, el.frameA, el.frameB, el.blink, el.showCompare, el.difference, el.speed]) {
     item.disabled = !enabled;
   }
   el.empty.hidden = enabled;
   el.stageBadge.hidden = !frames.some(f => f.real);
   el.stageBadge.textContent = realBadge;
+  buildFilmstrip();
   resetView(); render();
 }
 
@@ -328,15 +539,24 @@ async function loadRealFrames() {
   let field;
   try { field = readField(); } catch (error) { notify(error.message); return; }
 
-  loadingReal = true;
-  el.loadReal.disabled = true; el.emptyReal.disabled = true;
-  el.sourceLabel.textContent = 'Querying IRSA SIA2 for real frames…';
-  notify('Loading real SPHEREx detector frames from IRSA.');
+  setLoading(true);
+  if (frames.length) loadFrames([], 'Loading this patch…');
+  el.empty.hidden = true;
+  el.sourceLabel.classList.remove('error');
+  el.sourceLabel.textContent = 'Querying IRSA SIA2 for real visits…';
+  notify('Finding real SPHEREx visits for this patch.');
   try {
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '6', v: '7'
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '8', v: '8'
     });
-    const response = await fetch(`/api/spherex/frames?${params.toString()}`, { headers: { Accept: 'application/json' } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    let response;
+    try {
+      response = await fetch(`/api/spherex/frames?${params.toString()}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `IRSA frame discovery returned ${response.status}.`);
     if (!Array.isArray(payload.frames) || !payload.frames.length) throw new Error('IRSA returned no real products for this field.');
@@ -346,6 +566,7 @@ async function loadRealFrames() {
       src: frame.pngUrl,
       width: null,
       height: null,
+      fov: field.fov,
       date: frame.date,
       iso: frame.iso,
       band: frame.band,
@@ -359,52 +580,73 @@ async function loadRealFrames() {
       real: true
     }));
     sky = payload.sky || null;
-    const badge = /bundled|last known|fallback|last-good/i.test(payload.source?.label || '')
-      ? 'CACHED IRSA • REAL FITS'
-      : 'LIVE IRSA • REAL FITS';
-    const visitCount = payload.summary?.visits;
-    const coverage = visitCount ? ` · ${visitCount} real visits in field` : '';
-    loadFrames(realFrames, `${realFrames.length} real SPHEREx DR1 frames · ${payload.detector} detector${coverage}`, badge);
-    el.viewerTitle.textContent = targets[el.target.value]?.label || 'Custom sky region';
+    const badge = /bundled|last known|fallback|last-good|cached/i.test(payload.source?.label || '')
+      ? 'CACHED IRSA · REAL FITS'
+      : 'LIVE IRSA · REAL FITS';
+    const span = payload.summary?.spanDays;
+    const spanText = Number.isFinite(span) && span > 0 ? ` across ${span.toFixed(1)} days` : '';
+    loadFrames(realFrames, `${realFrames.length} real visits · ${payload.detector} detector${spanText}`, badge);
+    const target = targets[el.target.value];
+    el.viewerTitle.textContent = target?.label || 'Custom sky region';
+    el.fieldConstellation.textContent = payload.sky?.constellation?.name
+      ? `${payload.sky.constellation.name.toUpperCase()} · SPHEREX DR1`
+      : target?.constellation ? `${target.constellation.toUpperCase()} · SPHEREX DR1` : 'SPHEREX DR1 FIELD';
+    el.fieldMeta.textContent = `${coordinateText(field.ra, field.dec)} · ${field.fov.toFixed(2)}° field`;
     realFrames.forEach(loadFrameData);
-    notify(`Loaded ${realFrames.length} real IRSA SPHEREx frames.`);
+    updateUrl(field, el.target.value);
+    notify(`Loaded ${realFrames.length} real visits. Press play, blink, or difference.`);
   } catch (error) {
-    el.sourceLabel.textContent = `IRSA request failed: ${error.message}`;
+    el.stageLoading.hidden = true;
+    el.sourceLabel.textContent = `IRSA unavailable: ${error.message}`;
+    el.sourceLabel.classList.add('error');
+    if (!frames.length) {
+      el.empty.hidden = false;
+      setEmptyState('ARCHIVE NOT AVAILABLE', 'IRSA is not answering', `${error.message} The archive can be busy; try again in a moment or choose another field.`);
+    }
     notify(`IRSA request failed: ${error.message}`);
   } finally {
-    loadingReal = false;
-    el.loadReal.disabled = false; el.emptyReal.disabled = false;
+    setLoading(false);
   }
 }
 
 function render() {
   const f = frames[frameIndex];
   if (!f) {
-    el.image.hidden = true; el.empty.hidden = false;
+    el.image.hidden = true; el.differenceCanvas.hidden = true; el.empty.hidden = false;
     el.frameLabel.textContent = 'No images loaded'; el.frameCount.textContent = '0 / 0';
+    el.stageDate.textContent = 'No visit loaded';
+    el.stageMode.textContent = 'LIVE FRAME';
+    el.crosshair.hidden = true;
     updateDetails(null);
     updateLab();
     return;
   }
   el.empty.hidden = true;
-  el.image.hidden = false;
-  if (el.image.src !== new URL(f.src, window.location.href).href) el.image.src = f.src;
+  if ((!differenceMode || !el.differenceCanvas.width) && el.image.src !== new URL(f.src, window.location.href).href) el.image.src = f.src;
+  if (!f.width) el.stageLoading.hidden = false;
   el.image.onload = () => {
+    el.stageLoading.hidden = true;
     if (!f.width) { f.width = el.image.naturalWidth; f.height = el.image.naturalHeight; }
     if (frames[frameIndex] === f) updateDetails(f);
   };
-  el.image.onerror = () => notify('That IRSA FITS cutout could not be loaded as a PNG.');
-  el.frameLabel.textContent = f.label;
+  el.image.onerror = () => { el.stageLoading.hidden = true; notify('That IRSA FITS cutout could not be loaded as a PNG.'); };
+  el.frameLabel.textContent = f.date ? `${f.date} · ${f.detector || 'SPHEREx'}` : f.label;
   el.frameCount.textContent = `${frameIndex + 1} / ${frames.length}`;
   el.timeline.value = String(frameIndex);
   el.stageBadge.hidden = !f.real;
   el.stageBadge.textContent = realBadge;
+  el.stageDate.textContent = f.date ? `${f.date} · ${f.detector || 'SPHEREx'}` : f.label;
+  el.stageMode.textContent = differenceMode ? 'DIFFERENCE A − B' : blinkMode ? 'BLINKING A / B' : 'LIVE FRAME';
+  el.image.hidden = differenceMode;
+  el.differenceCanvas.hidden = !differenceMode;
+  el.crosshair.hidden = !el.crosshairCheck.checked || differenceMode;
   updateDetails(f);
+  updateFilmstripActive();
   updateLab();
 }
 
-function nextFrame() { if (!frames.length) return; frameIndex = (frameIndex + 1) % frames.length; render(); }
-function previousFrame() { if (!frames.length) return; frameIndex = (frameIndex - 1 + frames.length) % frames.length; render(); }
+function nextFrame() { if (!frames.length) return; if (differenceMode) clearDifference(); frameIndex = (frameIndex + 1) % frames.length; render(); }
+function previousFrame() { if (!frames.length) return; if (differenceMode) clearDifference(); frameIndex = (frameIndex - 1 + frames.length) % frames.length; render(); }
 function playbackDelay() { return Number(el.speed.value); }
 
 function startPlayback() {
@@ -438,6 +680,86 @@ function toggleBlink() {
   tick(); interval = setInterval(tick, playbackDelay());
 }
 
+function clearDifference() {
+  differenceToken += 1;
+  differenceMode = false;
+  el.differenceCanvas.hidden = true;
+  el.difference.classList.remove('active');
+  el.difference.textContent = 'Difference';
+  if (frames[frameIndex]) {
+    el.image.hidden = false;
+    el.crosshair.hidden = !el.crosshairCheck.checked;
+    el.stageMode.textContent = blinkMode ? 'BLINKING A / B' : 'LIVE FRAME';
+  }
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('A visit image could not be decoded for the difference view.'));
+    image.src = src;
+  });
+}
+
+async function showDifference() {
+  if (frames.length < 2) { notify('Load at least 2 visits to subtract.'); return; }
+  const a = frames[Number(el.frameA.value)] || frames[0];
+  const b = frames[Number(el.frameB.value)] || frames[frames.length - 1];
+  if (!a || !b || a === b) {
+    notify('Choose two different visits to subtract.');
+    el.difference.textContent = 'Difference';
+    return;
+  }
+  const token = ++differenceToken;
+  try {
+    const [imageA, imageB] = await Promise.all([loadImage(a.src), loadImage(b.src)]);
+    if (token !== differenceToken) return;
+    const width = Math.max(imageA.naturalWidth, imageB.naturalWidth);
+    const height = Math.max(imageA.naturalHeight, imageB.naturalHeight);
+    if (!width || !height) throw new Error('A visit image has no pixels.');
+    const canvas = el.differenceCanvas;
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(imageA, (width - imageA.naturalWidth) / 2, (height - imageA.naturalHeight) / 2);
+    const pixelsA = context.getImageData(0, 0, width, height).data;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(imageB, (width - imageB.naturalWidth) / 2, (height - imageB.naturalHeight) / 2);
+    const pixelsB = context.getImageData(0, 0, width, height).data;
+    const output = context.createImageData(width, height);
+    for (let index = 0; index < pixelsA.length; index += 4) {
+      const lumaA = (pixelsA[index] * .299 + pixelsA[index + 1] * .587 + pixelsA[index + 2] * .114);
+      const lumaB = (pixelsB[index] * .299 + pixelsB[index + 1] * .587 + pixelsB[index + 2] * .114);
+      const delta = Math.abs(lumaA - lumaB);
+      const value = Math.min(255, delta * 4.2);
+      output.data[index] = value;
+      output.data[index + 1] = value * .68;
+      output.data[index + 2] = value * .34;
+      output.data[index + 3] = 255;
+    }
+    context.putImageData(output, 0, 0);
+    differenceMode = true;
+    el.image.hidden = true;
+    canvas.hidden = false;
+    el.crosshair.hidden = true;
+    el.difference.classList.add('active');
+    el.difference.textContent = 'Hide difference';
+    el.stageMode.textContent = 'DIFFERENCE A − B';
+    el.frameLabel.textContent = `${a.date || 'A'} − ${b.date || 'B'}`;
+  } catch (error) {
+    clearDifference();
+    notify(error.message);
+  }
+}
+
+function toggleDifference() {
+  if (differenceMode) { clearDifference(); return; }
+  if (frames.length < 2) { notify('Load at least 2 visits to subtract.'); return; }
+  stopPlayback();
+  el.difference.textContent = 'Preparing difference…';
+  showDifference();
+}
+
 function setZoom(value) {
   zoom = Math.max(1, Math.min(8, value));
   if (zoom === 1) { panX = 0; panY = 0; }
@@ -449,12 +771,33 @@ function updateTransform() {
 }
 function resetView() { zoom = 1; panX = 0; panY = 0; updateTransform(); }
 
-el.target.addEventListener('change', setTarget);
-el.apply.addEventListener('click', applyCoordinates);
+el.target.addEventListener('change', () => {
+  const key = el.target.value;
+  if (key === 'custom') {
+    updateTargetMeta(targets.custom);
+    el.ra.focus();
+    el.ra.select();
+    return;
+  }
+  setTarget(key, true);
+});
+function markCustomField() {
+  if (el.target.value === 'custom') return;
+  el.target.value = 'custom';
+  updateTargetMeta(targets.custom);
+  el.viewerTitle.textContent = 'Custom sky region';
+  el.fieldConstellation.textContent = 'CUSTOM · SPHEREX DR1';
+}
+for (const input of [el.ra, el.dec]) input.addEventListener('input', markCustomField);
+for (const preset of document.querySelectorAll('[data-target]')) {
+  preset.addEventListener('click', () => {
+    const key = preset.dataset.target;
+    setTarget(key, true);
+    document.getElementById('explorer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
 el.loadReal.addEventListener('click', loadRealFrames);
 el.emptyReal.addEventListener('click', loadRealFrames);
-el.fileInput.addEventListener('change', async e => { await loadPNGFiles(e.target.files); e.target.value = ''; });
-el.clear.addEventListener('click', () => { sky = null; loadFrames([], 'No real frames loaded'); });
 el.play.addEventListener('click', togglePlay);
 el.next.addEventListener('click', nextFrame);
 el.previous.addEventListener('click', previousFrame);
@@ -463,14 +806,23 @@ el.speed.addEventListener('input', () => {
   const delay = playbackDelay(); el.speedValue.textContent = `${(1000 / delay).toFixed(1)}×`;
   if (interval) { if (blinkMode) { stopPlayback(); notify('Speed changed; restart blinking.'); } else { startPlayback(); } }
 });
-el.frameA.addEventListener('change', renderComparison);
-el.frameB.addEventListener('change', renderComparison);
+el.frameA.addEventListener('change', () => { if (differenceMode) showDifference(); else renderComparison(); });
+el.frameB.addEventListener('change', () => { if (differenceMode) showDifference(); else renderComparison(); });
 el.blink.addEventListener('click', toggleBlink);
+el.difference.addEventListener('click', toggleDifference);
 el.showCompare.addEventListener('click', toggleComparison);
-el.crosshairCheck.addEventListener('change', () => { el.crosshair.hidden = !el.crosshairCheck.checked; });
+el.crosshairCheck.addEventListener('change', () => { el.crosshair.hidden = !el.crosshairCheck.checked || differenceMode; });
 el.zoomIn.addEventListener('click', () => setZoom(zoom * 1.25));
 el.zoomOut.addEventListener('click', () => setZoom(zoom / 1.25));
 el.resetView.addEventListener('click', resetView);
+el.copyLink.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    notify('Link copied. It opens this exact sky patch.');
+  } catch {
+    notify('Copy the address bar to share this sky patch.');
+  }
+});
 el.stage.addEventListener('wheel', e => {
   if (!frames.length) return;
   e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
@@ -804,6 +1156,7 @@ function initLab() {
   newWaveRound();
 }
 
+restoreFromUrl();
 initLab();
 render();
 loadRealFrames();

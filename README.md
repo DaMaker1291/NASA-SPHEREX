@@ -1,10 +1,12 @@
 # Drift — a real SPHEREx cutout lab
 
-A browser viewer for real SPHEREx level-2 data. Pick a field, and the app asks
-IRSA for the actual SPHEREx DR1 detector frames covering it, fetches a real FITS
-cutout through a Worker proxy, and renders the IMAGE, VARIANCE, FLAGS and ZODI
-arrays. Spectra are measured from those pixels with the WCS-WAVE table. Gaia DR3
-and AllWISE overlays are live catalogue queries.
+A public-facing browser viewer for real SPHEREx level-2 data. Pick a named
+moving target or enter any coordinates, and the app asks IRSA for the actual
+SPHEREx DR1 detector frames covering it, fetches real FITS cutouts through a
+Worker proxy, and plays them as a visit-by-visit sequence. A filmstrip, blink
+control and a real difference view make it practical to spot motion or
+brightness changes. Spectra are measured from those pixels with the WCS-WAVE
+table. Gaia DR3 and AllWISE overlays are live catalogue queries.
 
 There is no deterministic sky model in the viewer and no simulated noise,
 contamination or catalogue. The source of every displayed cutout is named in
@@ -22,9 +24,8 @@ npm run typecheck
 ## Deploy on Render
 
 The repository includes `render.yaml` and a small Node entrypoint for Render.
-The rendered site is the static `frontend/` app imported from the
-`frontend-development` branch; the existing IRSA backend remains available at
-`/api/*` from the same service.
+The rendered site is the self-contained static `frontend/` viewer; the IRSA
+backend is served from the same service at `/api/*`.
 
 1. Push this repository to GitHub.
 2. In Render, choose **New → Blueprint** and select the repository.
@@ -46,8 +47,11 @@ dependency.
 ## The real pipeline
 
 1. `GET /api/spherex/find` queries IRSA SIA2 with
-   `COLLECTION=spherex_dr1`, `POS=circle RA Dec radius`, `RESPONSEFORMAT=CSV`.
-   Rows are grouped into real exposure groups, detector products and visits.
+   `COLLECTION=spherex_dr1`, `POS=circle RA Dec 0.02`, and CSV (falling back to
+the HTML table when CSV is unhealthy). The cone is deliberately narrow: it asks
+which products cover the target, not for every product inside the display FOV.
+This keeps real target searches fast and avoids partial edge cutouts. Rows are
+grouped into real exposure groups, detector products and visits.
 2. `GET /api/spherex/cutout` accepts only an allowlisted
    `https://irsa.ipac.caltech.edu/ibe/data/spherex/...fits` URL. It asks the IRSA
    cutout service for `center=RA,Dec&size=...&gzip=false`, strips the large EPSF
@@ -170,8 +174,12 @@ The viewer keeps the field, real visit, detector and catalogue layers in the
 query string:
 
 ```
-?ra=150.000&dec=19.500&fov=0.30&detector=D2&visit=2026W19_2A_0047&layer=gaia
+?target=barnard&ra=269.45207&dec=4.69339&fov=0.30
 ```
+
+`target` is one of the named presets (`barnard`, `epsindi`, `wise0855`,
+`rwaur`, `rdra`, `spherex`) or `custom`. The viewer writes the current target
+and coordinates back to the URL, so **Copy link** opens the same sky patch.
 
 `/guide#embed` documents the parameters and the real pipeline in the app.
 
@@ -201,6 +209,29 @@ product URL is linked from the frame.
 
 This is not an official NASA, IPAC or SPHEREx mission product. Mission data and
 catalogue services belong to their respective archives.
+
+## Public viewer
+
+The landing page is the viewer: it auto-loads a real field, keeps the image
+large, and places coordinates and provenance next to it. Named presets cover
+Barnard's Star, Epsilon Indi B, WISE 0855−0714, RW Aurigae and R Draconis.
+The RA/Dec parser accepts decimal degrees or sexagesimal values. Real visits
+load progressively; partial detector-edge frames are removed so the sequence
+does not jump in shape. **Blink A/B** toggles two visits; **Difference**
+subtracts their PNG rasters in the browser. The observation desk below the
+viewer keeps the mail, learning and real-data game tools.
+
+Regression checks used during development loaded all five named targets from
+the local Worker, measured their first real cutout, and exercised playback,
+blink, difference and mobile layout:
+
+```
+GET /api/spherex/frames?ra=269.452075&dec=4.69339&fov=0.3&limit=8
+GET /api/spherex/frames?ra=331.04417&dec=-56.78283&fov=0.3&limit=8
+GET /api/spherex/frames?ra=133.795129&dec=-7.245147&fov=0.3&limit=8
+GET /api/spherex/frames?ra=76.95625&dec=30.40111&fov=0.3&limit=8
+GET /api/spherex/frames?ra=248.1675&dec=66.755&fov=0.3&limit=8
+```
 
 ## Source map
 
