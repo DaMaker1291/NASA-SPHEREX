@@ -1807,7 +1807,7 @@ const lab = {
   tabs: Array.from(document.querySelectorAll('[data-lab-tab]')),
   panels: {
     wavelength: $('labWavelength'), constellation: $('labConstellation'), verify: $('labVerify'),
-    mail: $('labMail'), learn: $('labLearn'), games: $('labGames')
+    discover: $('labDiscover'), mail: $('labMail'), learn: $('labLearn'), games: $('labGames')
   },
   shortcut: $('mailShortcut'), mailTo: $('mailTo'), mailNote: $('mailNote'),
   mailOpen: $('mailOpen'), mailCopy: $('mailCopy'), mailStatus: $('mailStatus'), mailPreview: $('mailPreview'),
@@ -1818,7 +1818,12 @@ const lab = {
   brighterChoices: $('brighterChoices'), brighterFeedback: $('brighterFeedback'), brighterNext: $('brighterNext'),
   waveChoices: $('waveChoices'), waveFeedback: $('waveFeedback'), waveNext: $('waveNext'),
   bandGamePrompt: $('bandGamePrompt'), bandChoices: $('bandChoices'), bandFeedback: $('bandFeedback'),
-  bandNext: $('bandNext'), bandGameScore: $('bandGameScore')
+  bandNext: $('bandNext'), bandGameScore: $('bandGameScore'),
+  runDiscovery: $('runDiscovery'), discoveryStatus: $('discoveryStatus'), discoveryPair: $('discoveryPair'),
+  discoveryCanvas: $('discoveryCanvas'), discoveryEmpty: $('discoveryEmpty'), discoveryHint: $('discoveryHint'),
+  scanFrameA: $('scanFrameA'), scanFrameB: $('scanFrameB'), swapScan: $('swapScan'),
+  candidateList: $('candidateList'), candidateCount: $('candidateCount'),
+  lightCurve: $('lightCurve'), lightCurveBand: $('lightCurveBand'), lightCurveCaption: $('lightCurveCaption')
 };
 
 const labState = {
@@ -1828,7 +1833,12 @@ const labState = {
   brighter: null,
   wave: null,
   band: null,
-  bandScore: 0
+  bandScore: 0,
+  scanSignature: '',
+  candidates: [],
+  lightPoints: [],
+  discoveryToken: 0,
+  scanning: false
 };
 
 function shuffle(values) {
@@ -1866,6 +1876,7 @@ function setLabTab(name) {
   }
   for (const [key, panel] of Object.entries(lab.panels)) panel.hidden = key !== name;
   if (name === 'mail') updateLab();
+  if (name === 'discover') updateDiscovery();
 }
 
 function labFactPosition(data) {
@@ -1927,6 +1938,393 @@ function updateLab() {
     newWaveRound();
     newBandRound();
   }
+  updateDiscovery();
+}
+
+// Discovery engine: real pixel residuals, real sky coordinates, Gaia context and light curve.
+function scanFrameLabel(frame, index) {
+  return `${index + 1}. ${frame.date || frame.label}${frame.detector ? ` · ${frame.detector}` : ''}`;
+}
+
+function syncScanSelectors() {
+  const signature = frames.map(frame => `${frame.obsid || frame.label}`).join('|');
+  if (signature !== labState.scanSignature) {
+    labState.scanSignature = signature;
+    labState.candidates = [];
+    labState.discoveryToken += 1;
+    lab.discoveryEmpty.hidden = false;
+    lab.discoveryEmpty.textContent = 'Choose two visits and run the scan.';
+    renderDiscoveryCandidates();
+    for (const selector of [lab.scanFrameA, lab.scanFrameB]) selector.replaceChildren();
+    frames.forEach((frame, index) => {
+      const label = scanFrameLabel(frame, index);
+      lab.scanFrameA.add(new Option(label, index));
+      lab.scanFrameB.add(new Option(label, index));
+    });
+    if (frames.length) {
+      const measured = frames
+        .map((frame, index) => ({ index, value: Number(frame.analysis?.median) }))
+        .filter(item => Number.isFinite(item.value));
+      if (measured.length >= 2) {
+        measured.sort((a, b) => a.value - b.value);
+        lab.scanFrameA.value = String(measured[0].index);
+        lab.scanFrameB.value = String(measured[measured.length - 1].index);
+      } else {
+        lab.scanFrameA.value = '0';
+        lab.scanFrameB.value = String(frames.length - 1);
+      }
+    }
+  }
+  const usable = frames.length >= 2;
+  lab.scanFrameA.disabled = !usable || labState.scanning;
+  lab.scanFrameB.disabled = !usable || labState.scanning;
+  lab.swapScan.disabled = !usable || labState.scanning;
+  lab.runDiscovery.disabled = !usable || labState.scanning;
+  if (!usable) {
+    lab.discoveryStatus.textContent = 'Load at least two real visits to scan.';
+  } else if (!labState.scanning && !labState.candidates.length) {
+    lab.discoveryStatus.textContent = 'Ready: two real visits can be compared.';
+  }
+}
+
+function selectedScanPair() {
+  if (frames.length < 2) return null;
+  let aIndex = Number(lab.scanFrameA.value);
+  let bIndex = Number(lab.scanFrameB.value);
+  if (!Number.isInteger(aIndex) || !frames[aIndex]) aIndex = 0;
+  if (!Number.isInteger(bIndex) || !frames[bIndex]) bIndex = frames.length - 1;
+  if (aIndex === bIndex) bIndex = (aIndex + 1) % frames.length;
+  return { a: frames[aIndex], b: frames[bIndex], aIndex, bIndex };
+}
+
+function smoothLuma(values, width, height) {
+  const output = new Float32Array(values.length);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      let count = 0;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= height) continue;
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= width) continue;
+          sum += values[yy * width + xx];
+          count += 1;
+        }
+      }
+      output[y * width + x] = sum / count;
+    }
+  }
+  return output;
+}
+
+function skyAtCanvasPixel(frame, x, y, canvasWidth, canvasHeight, offsetX, offsetY) {
+  const analysis = frame.analysis || frame.displayAnalysis;
+  const width = frame.width || canvasWidth;
+  const height = frame.height || canvasHeight;
+  const fractionX = Math.max(0, Math.min(1, (x - offsetX) / Math.max(1, width)));
+  const fractionY = Math.max(0, Math.min(1, (y - offsetY) / Math.max(1, height)));
+  if (analysis?.wcsCorners) return bilinearSky(analysis.wcsCorners, fractionX, fractionY);
+  if (Number.isFinite(analysis?.ra) && Number.isFinite(analysis?.dec)) {
+    const fov = Number(frame.fov) || Number(el.fov.value) || 0.3;
+    const cosDec = Math.max(0.08, Math.cos(analysis.dec * Math.PI / 180));
+    return {
+      ra: normalizeRa(analysis.ra - (fractionX - 0.5) * fov / cosDec),
+      dec: Math.max(-90, Math.min(90, analysis.dec + (0.5 - fractionY) * fov))
+    };
+  }
+  return null;
+}
+
+function renderDiscoveryCandidates() {
+  lab.candidateList.replaceChildren();
+  const count = labState.candidates.length;
+  lab.candidateCount.textContent = `${count} CANDIDATE${count === 1 ? '' : 'S'}`;
+  if (!count) {
+    const empty = document.createElement('p');
+    empty.className = 'small muted';
+    empty.textContent = 'No ranked residuals yet. Run a scan on two real visits.';
+    lab.candidateList.append(empty);
+    return;
+  }
+  for (const [index, candidate] of labState.candidates.entries()) {
+    const card = document.createElement('article');
+    card.className = 'candidate-card';
+    const rank = document.createElement('span');
+    rank.className = 'candidate-rank';
+    rank.textContent = String(index + 1).padStart(2, '0');
+    const body = document.createElement('div');
+    body.className = 'candidate-body';
+    const title = document.createElement('strong');
+    title.textContent = `${candidate.delta >= 0 ? '+' : '−'}${Math.abs(candidate.delta).toFixed(1)} luma ${candidate.delta >= 0 ? 'brighter' : 'fainter'} in B`;
+    const position = document.createElement('span');
+    position.textContent = `${formatRaHms(candidate.ra)} · ${formatDecDms(candidate.dec)}`;
+    const gaia = document.createElement('small');
+    if (candidate.edge) {
+      const edge = document.createElement('small');
+      edge.className = 'gaia-empty';
+      edge.textContent = 'Edge of visit coverage — possible pointing artifact';
+      body.append(edge);
+    }
+    if (candidate.gaiaState === 'pending') gaia.textContent = 'Gaia DR3 cross-match…';
+    else if (candidate.gaiaState === 'hit') {
+      gaia.textContent = `Gaia DR3: ${candidate.gaia.count} source${candidate.gaia.count === 1 ? '' : 's'} within 1.2′${candidate.gaia.mag !== null ? ` · G ${candidate.gaia.mag.toFixed(1)}` : ''}`;
+      gaia.className = 'gaia-hit';
+    } else if (candidate.gaiaState === 'empty') {
+      gaia.textContent = 'No Gaia DR3 source within 1.2′ · worth a second look';
+      gaia.className = 'gaia-empty';
+    } else if (candidate.gaiaState === 'error') gaia.textContent = 'Gaia lookup unavailable';
+    else gaia.textContent = 'Gaia cross-match not requested';
+    body.append(title, position, gaia);
+    const centre = document.createElement('button');
+    centre.type = 'button';
+    centre.className = 'candidate-centre';
+    centre.textContent = 'Centre';
+    centre.addEventListener('click', () => navigateToField({ ra: candidate.ra, dec: candidate.dec, fov: Number(el.fov.value) }, `Candidate ${index + 1}`));
+    card.append(rank, body, centre);
+    lab.candidateList.append(card);
+  }
+}
+
+function drawDiscoveryPreview(canvas, difference, lumaA, lumaB, width, height, candidates) {
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const image = context.createImageData(width, height);
+  for (let index = 0; index < difference.length; index += 1) {
+    const delta = difference[index];
+    const amplitude = Math.min(255, Math.abs(delta) * 3.4);
+    const at = index * 4;
+    if (delta >= 0) {
+      image.data[at] = amplitude;
+      image.data[at + 1] = amplitude * .66;
+      image.data[at + 2] = amplitude * .2;
+    } else {
+      image.data[at] = amplitude * .3;
+      image.data[at + 1] = amplitude * .72;
+      image.data[at + 2] = amplitude;
+    }
+    image.data[at + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+  context.strokeStyle = '#f2bb6d';
+  context.fillStyle = '#fff3d5';
+  context.font = 'bold 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+  context.lineWidth = 1.2;
+  for (const [index, candidate] of candidates.entries()) {
+    context.beginPath();
+    context.arc(candidate.x, candidate.y, 8, 0, Math.PI * 2);
+    context.stroke();
+    context.fillText(String(index + 1), candidate.x + 10, candidate.y - 7);
+  }
+}
+
+async function crossmatchCandidates(candidates, token) {
+  const queue = [...candidates];
+  const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+    while (queue.length) {
+      const candidate = queue.shift();
+      if (!candidate) continue;
+      try {
+        const params = new URLSearchParams({ survey: 'gaia', ra: String(candidate.ra), dec: String(candidate.dec), radius: '0.02' });
+        const response = await fetch(`/api/catalog?${params.toString()}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
+        if (token !== labState.discoveryToken) return;
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `Gaia returned ${response.status}.`);
+        const sources = Array.isArray(payload.sources) ? payload.sources : [];
+        const count = Number.isFinite(payload.count) ? payload.count : sources.length;
+        const nearest = sources.reduce((best, source) => {
+          const separation = angularSeparation(candidate.ra, candidate.dec, Number(source.ra), Number(source.dec));
+          return separation !== null && (!best || separation < best.separation) ? { source, separation } : best;
+        }, null);
+        if (count > 0) {
+          candidate.gaiaState = 'hit';
+          candidate.gaia = { count, mag: Number.isFinite(Number(nearest?.source?.mag)) ? Number(nearest.source.mag) : null };
+        } else {
+          candidate.gaiaState = 'empty';
+          candidate.gaia = { count: 0, mag: null };
+        }
+      } catch {
+        if (token !== labState.discoveryToken) return;
+        candidate.gaiaState = 'error';
+      }
+      renderDiscoveryCandidates();
+    }
+  });
+  await Promise.all(workers);
+  if (token === labState.discoveryToken) {
+    const matched = candidates.filter(candidate => candidate.gaiaState === 'hit').length;
+    lab.discoveryStatus.textContent = `${candidates.length} candidate${candidates.length === 1 ? '' : 's'} ranked · Gaia DR3 context attached to ${matched} of ${candidates.length}. Candidates are leads, not confirmations.`;
+  }
+}
+
+async function runDiscoveryScan() {
+  if (labState.scanning) return;
+  const pair = selectedScanPair();
+  if (!pair) { notify('Load at least two real visits before scanning.'); return; }
+  if (!pair.a.src || !pair.b.src) { notify('Wait for both visits to finish loading.'); return; }
+  labState.scanning = true;
+  const token = ++labState.discoveryToken;
+  labState.candidates = [];
+  renderDiscoveryCandidates();
+  syncScanSelectors();
+  lab.discoveryStatus.textContent = 'Comparing real pixels and ranking residuals…';
+  lab.discoveryEmpty.hidden = true;
+  try {
+    const [imageA, imageB] = await Promise.all([loadImage(pair.a.src), loadImage(pair.b.src)]);
+    if (token !== labState.discoveryToken) return;
+    const width = Math.max(imageA.naturalWidth, imageB.naturalWidth);
+    const height = Math.max(imageA.naturalHeight, imageB.naturalHeight);
+    if (!width || !height) throw new Error('A visit has no pixels to compare.');
+    const canvas = lab.discoveryCanvas;
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const offsetA = { x: (width - imageA.naturalWidth) / 2, y: (height - imageA.naturalHeight) / 2 };
+    const offsetB = { x: (width - imageB.naturalWidth) / 2, y: (height - imageB.naturalHeight) / 2 };
+    context.clearRect(0, 0, width, height);
+    context.drawImage(imageA, offsetA.x, offsetA.y);
+    const pixelsA = context.getImageData(0, 0, width, height).data;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(imageB, offsetB.x, offsetB.y);
+    const pixelsB = context.getImageData(0, 0, width, height).data;
+    const lumaA = new Float32Array(width * height);
+    const lumaB = new Float32Array(width * height);
+    for (let index = 0; index < lumaA.length; index += 1) {
+      const at = index * 4;
+      lumaA[index] = pixelsA[at] * .299 + pixelsA[at + 1] * .587 + pixelsA[at + 2] * .114;
+      lumaB[index] = pixelsB[at] * .299 + pixelsB[at + 1] * .587 + pixelsB[at + 2] * .114;
+    }
+    const smoothA = smoothLuma(lumaA, width, height);
+    const smoothB = smoothLuma(lumaB, width, height);
+    const difference = new Float32Array(width * height);
+    const absolute = new Float32Array(width * height);
+    for (let index = 0; index < difference.length; index += 1) {
+      difference[index] = smoothB[index] - smoothA[index];
+      absolute[index] = Math.abs(difference[index]);
+    }
+    const samples = Array.from(absolute).sort((a, b) => a - b);
+    const median = samples[Math.floor(samples.length / 2)] || 0;
+    const madSamples = samples.map(value => Math.abs(value - median)).sort((a, b) => a - b);
+    const mad = madSamples[Math.floor(madSamples.length / 2)] || 0;
+    const threshold = Math.max(7, median + 6 * Math.max(mad, 0.3));
+    const points = [];
+    for (let y = 5; y < height - 5; y += 1) {
+      for (let x = 5; x < width - 5; x += 1) {
+        const index = y * width + x;
+        if (absolute[index] >= threshold) points.push({ x, y, score: absolute[index], delta: difference[index] });
+      }
+    }
+    points.sort((a, b) => b.score - a.score);
+    const candidates = [];
+    for (const point of points) {
+      if (candidates.some(other => Math.hypot(other.x - point.x, other.y - point.y) < 9)) continue;
+      const sky = skyAtCanvasPixel(pair.b, point.x, point.y, width, height, offsetB.x, offsetB.y);
+      if (!sky) continue;
+      const edge = point.x < width * .14 || point.x > width * .86 || point.y < height * .14 || point.y > height * .86;
+      candidates.push({ ...point, ...sky, edge, gaiaState: 'pending', gaia: null });
+      if (candidates.length >= 8) break;
+    }
+    if (token !== labState.discoveryToken) return;
+    labState.candidates = candidates;
+    drawDiscoveryPreview(canvas, difference, smoothA, smoothB, width, height, candidates);
+    lab.discoveryPair.textContent = `${pair.a.date || 'A'} → ${pair.b.date || 'B'} · ${width} × ${height} px`;
+    lab.discoveryStatus.textContent = candidates.length
+      ? `${candidates.length} candidate${candidates.length === 1 ? '' : 's'} ranked from real pixels. Gaia cross-match follows.`
+      : 'No residual crossed the robust threshold. The visits may be nearly identical, or the change is below the archive noise.';
+    if (!candidates.length) {
+      lab.discoveryEmpty.hidden = false;
+      lab.discoveryEmpty.textContent = 'No candidate crossed the robust residual threshold for this pair.';
+    }
+    renderDiscoveryCandidates();
+    if (candidates.length) void crossmatchCandidates(candidates, token);
+  } catch (error) {
+    lab.discoveryStatus.textContent = `Scan failed: ${error.message}`;
+    notify(`Change scan failed: ${error.message}`);
+  } finally {
+    labState.scanning = false;
+    syncScanSelectors();
+  }
+}
+
+function drawLightCurve() {
+  const canvas = lab.lightCurve;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  canvas.width = Math.max(320, Math.floor(canvas.clientWidth || canvas.width || 840));
+  canvas.height = 190;
+  const width = canvas.width;
+  const height = canvas.height;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = '#070f19';
+  context.fillRect(0, 0, width, height);
+  const measured = frames
+    .map((frame, index) => ({ frame, index, value: Number(frame.analysis?.median), iso: frame.iso || frame.date }))
+    .filter(item => Number.isFinite(item.value));
+  labState.lightPoints = [];
+  lab.lightCurveBand.textContent = `${detector} · ${measured.length} MEASURED VISIT${measured.length === 1 ? '' : 'S'}`;
+  if (!measured.length) {
+    context.fillStyle = '#71859a';
+    context.font = '14px ui-monospace, SFMono-Regular, Menlo, monospace';
+    context.fillText('Load measured FITS visits to plot real medians.', 20, height / 2);
+    lab.lightCurveCaption.textContent = 'No measured frames yet.';
+    return;
+  }
+  const values = measured.map(item => item.value);
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const span = Math.max(high - low, Math.abs(high) * .002 || 1e-6);
+  const left = 64, right = 22, top = 22, bottom = 34;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const dates = measured.map(item => Date.parse(item.iso) || item.index);
+  const minDate = Math.min(...dates);
+  const maxDate = Math.max(...dates);
+  const xFor = (date) => left + (maxDate === minDate ? plotWidth / 2 : ((date - minDate) / (maxDate - minDate)) * plotWidth);
+  const yFor = (value) => top + (1 - (value - (low - span * .08)) / (span * 1.16)) * plotHeight;
+  context.strokeStyle = 'rgba(120,151,180,.17)';
+  context.fillStyle = '#71859a';
+  context.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  context.lineWidth = 1;
+  for (let tick = 0; tick <= 3; tick += 1) {
+    const value = low - span * .08 + (span * 1.16) * tick / 3;
+    const y = yFor(value);
+    context.beginPath(); context.moveTo(left, y); context.lineTo(width - right, y); context.stroke();
+    context.fillText(formatNumber(value), 5, y + 4);
+  }
+  context.strokeStyle = '#f2bb6d';
+  context.lineWidth = 1.4;
+  context.beginPath();
+  measured.forEach((item, index) => {
+    const x = xFor(dates[index]);
+    const y = yFor(item.value);
+    if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
+  });
+  context.stroke();
+  measured.forEach((item, index) => {
+    const x = xFor(dates[index]);
+    const y = yFor(item.value);
+    const active = item.index === frameIndex;
+    context.beginPath();
+    context.arc(x, y, active ? 4.5 : 2.8, 0, Math.PI * 2);
+    context.fillStyle = active ? '#fff0cf' : '#f2bb6d';
+    context.fill();
+    if (active) {
+      context.strokeStyle = 'rgba(242,187,109,.5)';
+      context.beginPath(); context.arc(x, y, 8, 0, Math.PI * 2); context.stroke();
+    }
+    labState.lightPoints.push({ x, y, index: item.index });
+    if (index === 0 || index === measured.length - 1 || active) {
+      context.fillStyle = active ? '#fff0cf' : '#71859a';
+      context.fillText(item.iso ? item.iso.slice(0, 10) : `V${item.index + 1}`, x - 28, height - 10);
+    }
+  });
+  const unit = frames[frameIndex]?.analysis?.bunit || 'MJy sr⁻¹';
+  lab.lightCurveCaption.textContent = `${measured.length} real visits · median range ${formatNumber(low)}–${formatNumber(high)} ${unit}. These are FITS cutout medians, not calibrated photometry.`;
+}
+
+function updateDiscovery() {
+  syncScanSelectors();
+  drawLightCurve();
 }
 
 function addLabChoice(container, label, onClick) {
@@ -2170,11 +2568,48 @@ function initLab() {
   lab.brighterNext.addEventListener('click', newBrighterRound);
   lab.waveNext.addEventListener('click', newWaveRound);
   lab.bandNext.addEventListener('click', newBandRound);
+  lab.runDiscovery.addEventListener('click', runDiscoveryScan);
+  lab.swapScan.addEventListener('click', () => {
+    const first = lab.scanFrameA.value;
+    lab.scanFrameA.value = lab.scanFrameB.value;
+    lab.scanFrameB.value = first;
+    lab.discoveryStatus.textContent = 'Visits swapped; run the scan to compare the new order.';
+  });
+  for (const selector of [lab.scanFrameA, lab.scanFrameB]) {
+    selector.addEventListener('change', () => {
+      lab.discoveryStatus.textContent = 'Ready: run the scan to compare this pair.';
+    });
+  }
+  lab.discoveryCanvas.addEventListener('click', event => {
+    if (!labState.candidates.length) return;
+    const rect = lab.discoveryCanvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * lab.discoveryCanvas.width / rect.width;
+    const y = (event.clientY - rect.top) * lab.discoveryCanvas.height / rect.height;
+    const nearest = labState.candidates
+      .map((candidate, index) => ({ candidate, index, distance: Math.hypot(candidate.x - x, candidate.y - y) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (nearest && nearest.distance < 16) navigateToField({ ra: nearest.candidate.ra, dec: nearest.candidate.dec, fov: Number(el.fov.value) }, `Candidate ${nearest.index + 1}`);
+  });
+  lab.lightCurve.addEventListener('click', event => {
+    if (!labState.lightPoints.length) return;
+    const rect = lab.lightCurve.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * lab.lightCurve.width / rect.width;
+    const y = (event.clientY - rect.top) * lab.lightCurve.height / rect.height;
+    const nearest = labState.lightPoints
+      .map(point => ({ point, distance: Math.hypot(point.x - x, point.y - y) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (nearest && nearest.distance < 34) {
+      stopPlayback();
+      frameIndex = nearest.point.index;
+      render();
+    }
+  });
   setLabTab('wavelength');
   newLearnQuestion();
   newBrighterRound();
   newWaveRound();
   newBandRound();
+  updateDiscovery();
 }
 
 restoreFromUrl();

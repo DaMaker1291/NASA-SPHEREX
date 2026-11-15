@@ -238,6 +238,27 @@ GET /api/spherex/frames?ra=76.95625&dec=30.40111&fov=0.3&limit=8
 GET /api/spherex/frames?ra=248.1675&dec=66.755&fov=0.3&limit=8
 ```
 
+## Change finder and real light curve
+
+The **Change finder** workspace turns the viewer into a discovery tool rather
+than only a picture browser:
+
+- It compares two real visits pixel by pixel after a small smoothing pass.
+- It ranks residuals with a robust median/MAD threshold and non-maximum
+  suppression, so one changing star does not fill the list with 30 neighbours.
+- Each candidate is converted back to J2000 RA/Dec through the real cutout WCS,
+  not through a guessed screen grid.
+- Every candidate is cross-matched against Gaia DR3 within 1.2′. A Gaia source
+  is context, not confirmation; edge-coverage candidates are explicitly marked
+  as possible pointing artifacts.
+- The **real light curve** plots the FITS median from every measured visit and
+  lets you click any point to jump to that visit.
+
+The scan reports what it actually did and never labels a lead a confirmed
+transient. R Draconis is a useful sanity check: its genuine long-period
+variability appears in the visit medians, while the candidate list still needs
+human review.
+
 ## Map-like sky navigation
 
 The viewer behaves like a map over real SPHEREx cutouts:

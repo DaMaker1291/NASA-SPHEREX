@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-18">
-  <script defer src="script.js?v=next-30"></script>
+  <link rel="stylesheet" href="style.css?v=next-19">
+  <script defer src="script.js?v=next-34"></script>
 </head>
 <body>
   <header class="site-header">
@@ -288,6 +288,7 @@
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labVerify" data-lab-tab="verify">Data verification</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learning lab</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labGames" data-lab-tab="games">Sky games</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labDiscover" data-lab-tab="discover">Change finder</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labMail" data-lab-tab="mail">✉ Mail observation</button>
       </div>
       <div class="lab-content" id="labWavelength" role="tabpanel">
@@ -358,6 +359,45 @@
           <div class="source-box"><span class="kicker">SOURCE 3 · GEOMETRY</span><strong>IAU constellation engine</strong><p>Constellation membership computed from J2000 coordinates, not copied from IRSA.</p></div>
         </div>
         <details class="checksum-box"><summary>Cutout integrity receipt</summary><code id="checksumValue">A SHA-256 checksum appears after the first real frame loads.</code></details>
+      </div>
+
+      <div class="lab-content" id="labDiscover" role="tabpanel" hidden>
+        <div class="discover-head">
+          <div>
+            <p class="kicker">REAL-DATA DISCOVERY ENGINE</p>
+            <h3>Find what the sky changed.</h3>
+            <p class="desk-copy">This compares two real visits pixel by pixel, ranks the strongest residuals, converts each one back to sky coordinates with the cutout WCS, and asks Gaia DR3 whether a known source sits there. A candidate is a lead worth checking, not a confirmed discovery.</p>
+          </div>
+          <div class="discover-actions">
+            <button id="runDiscovery" class="button primary" type="button" disabled>Run change scan</button>
+            <span id="discoveryStatus" class="desk-status" role="status">Load at least two real visits to scan.</span>
+          </div>
+        </div>
+        <div class="discover-grid">
+          <div class="desk-card">
+            <div class="desk-card-head"><h3>Difference preview</h3><span id="discoveryPair" class="kicker">REAL PIXELS</span></div>
+            <div class="discovery-frame">
+              <canvas id="discoveryCanvas" width="420" height="420" aria-label="Difference between two real visits"></canvas>
+              <p id="discoveryEmpty" class="discovery-empty">Choose two visits and run the scan.</p>
+            </div>
+            <div class="scan-controls">
+              <div class="field"><label for="scanFrameA">Visit A</label><select id="scanFrameA" disabled></select></div>
+              <div class="field"><label for="scanFrameB">Visit B</label><select id="scanFrameB" disabled></select></div>
+              <button id="swapScan" class="button secondary compact" type="button" disabled>Swap A / B</button>
+            </div>
+            <p id="discoveryHint" class="field-hint">Amber means brighter in B; ice blue means fainter in B. Click a ranked candidate to inspect it.</p>
+          </div>
+          <div class="desk-card">
+            <div class="desk-card-head"><h3>Candidate ranking</h3><span id="candidateCount" class="lab-score">0 CANDIDATES</span></div>
+            <div id="candidateList" class="candidate-list"><p class="small muted">Run a scan to rank real pixel residuals.</p></div>
+            <p class="candidate-note">Candidates are derived from the real cutouts. A Gaia match is context, not proof of variability; edge artifacts and differing visit coverage are called out.</p>
+          </div>
+        </div>
+        <div class="desk-card lightcurve-card">
+          <div class="desk-card-head"><h3>Real light curve</h3><span id="lightCurveBand" class="kicker">MEASURED FITS MEDIANS</span></div>
+          <canvas id="lightCurve" width="840" height="190" aria-label="Measured median brightness across real visits"></canvas>
+          <p id="lightCurveCaption" class="desk-status">Load measured visits to plot their real median brightness.</p>
+        </div>
       </div>
 
       <div class="lab-content" id="labMail" role="tabpanel" hidden>
