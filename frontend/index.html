@@ -6,13 +6,14 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-32">
-  <script type="module" src="script.js?v=next-52"></script>
+  <link rel="stylesheet" href="style.css?v=next-33">
+  <script type="module" src="script.js?v=next-59"></script>
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="#top" aria-label="SPHEREx Explorer home">
-      <span class="brand-mark" aria-hidden="true">✦</span>
+    <a class="brand" href="#top" aria-label="DRIFT — SPHEREx Explorer home">
+      <img class="brand-logo" src="assets/drift-logo.svg" alt="DRIFT" width="128" height="44">
+      <span class="brand-divider" aria-hidden="true"></span>
       <span class="brand-name">SPHEREx <em>Explorer</em></span>
     </a>
     <nav class="site-nav" aria-label="Main navigation">
@@ -108,7 +109,7 @@
 
       <section class="viewer-panel" aria-label="Sky image viewer">
         <div id="appToolbar" class="app-toolbar" aria-label="Map application controls">
-          <button id="appHome" class="app-brand" type="button" title="Leave the map app" aria-label="SPHEREx Explorer home"><span aria-hidden="true">✦</span><strong>SPHEREx</strong><em>Explorer</em></button>
+          <button id="appHome" class="app-brand" type="button" title="Leave the map app" aria-label="DRIFT — leave the map app"><img class="app-brand-logo" src="assets/drift-logo.svg" alt="DRIFT" width="88" height="30"><span class="app-brand-rule" aria-hidden="true"></span><strong>SPHEREx</strong><em>Explorer</em></button>
           <span class="app-live" id="appLive"><span class="live-dot"></span> <span id="appLiveText">LIVE IRSA</span></span>
           <div class="app-actions">
             <button id="appDetails" class="app-action" type="button" aria-expanded="false" aria-controls="infoPanel">Details</button>
@@ -473,9 +474,10 @@
       <div class="lab-content" id="labGames" role="tabpanel" hidden>
         <div class="desk-grid">
           <div class="desk-card"><div class="desk-card-head"><h3>Brighter frame</h3><span class="lab-score">GAME 01</span></div><p class="desk-copy">Choose the real frame with the higher median light intensity.</p><div id="brighterChoices" class="option-grid"></div><p id="brighterFeedback" class="quiz-feedback" role="status"></p><button id="brighterNext" class="button secondary" type="button" disabled>New round</button></div>
-          <div class="desk-card"><div class="desk-card-head"><h3>Wavelength window</h3><span class="lab-score">GAME 02</span></div><p class="desk-copy">Pick the wavelength that falls inside the displayed frame’s measured range.</p><div id="waveChoices" class="option-grid"></div><p id="waveFeedback" class="quiz-feedback" role="status"></p><button id="waveNext" class="button secondary" type="button" disabled>New round</button></div>
+          <div class="desk-card"><div class="desk-card-head"><h3>Wavelength window</h3><span class="lab-score">GAME 02</span></div><p class="desk-copy">Pick the wavelength that falls inside a real measured visit’s range.</p><p id="wavePrompt" class="quiz-question">Loading measured visits…</p><div id="waveChoices" class="option-grid"></div><p id="waveFeedback" class="quiz-feedback" role="status"></p><button id="waveNext" class="button secondary" type="button" disabled>New round</button></div>
           <div class="desk-card"><div class="desk-card-head"><h3>Band match</h3><span id="bandGameScore" class="lab-score">GAME 03 · 0 pts</span></div><p class="desk-copy">A real measured wavelength belongs to one detector. Pick the band before the archive tells you.</p><p id="bandGamePrompt" class="quiz-question">Load a measured frame to play.</p><div id="bandChoices" class="option-grid"></div><p id="bandFeedback" class="quiz-feedback" role="status"></p><button id="bandNext" class="button secondary" type="button" disabled>New round</button></div>
         </div>
+        <p id="gamesSource" class="small muted" role="status"></p>
       </div>
     </section>
   </main>

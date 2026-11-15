@@ -30,7 +30,10 @@ A valid zero-row TAP/SIA2 result returns HTTP 200 with:
 ```
 
 The viewer shows `NO COVERAGE` with that message. It does not call the mirror,
-does not show an IRSA outage, and does not invent a frame.
+does not show an IRSA outage, and does not invent a frame. If the browser has
+already shown the real local all-sky mosaic for this position, that clearly
+labelled 30° context image remains visible instead of being replaced by an
+empty viewer.
 
 ## Cutouts and fallback
 
@@ -45,6 +48,18 @@ requests:
 3. Only `IMAGE`, `VARIANCE`, `FLAGS`, `ZODI` and `WCS-WAVE` (plus the primary
    header) are fetched and cropped.
 4. Large HDUs such as `EPSF` are never downloaded by the fallback.
+5. The frame endpoint accepts up to 24 visits per detector; the bundled default
+   index and the checked-in mirror cover all six detectors.
+
+## Local all-sky context
+
+When IRSA cannot discover a field and there is no matching local visit mirror,
+the browser reprojects a 30° context window from the checked-in NASA/JPL-Caltech
+all-sky mosaic (`frontend/assets/spherex-allsky-2025.jpg`, 1600 × 800 Galactic
+equirectangular). The fallback is local, requires no network request and is
+labelled `LOCAL MOSAIC · REAL NASA IMAGE`. It is context only: the mosaic has no
+per-visit FITS measurements and only about 0.225° per source pixel, so the
+viewer does not pretend that its 30° window is the selected 0.3° cutout.
 
 The checked S3 range test reads a 65 MB DR1 product into a 426 KB cropped
 buffer while preserving `IMAGE`, `VARIANCE`, `ZODI` and `WCS-WAVE`.

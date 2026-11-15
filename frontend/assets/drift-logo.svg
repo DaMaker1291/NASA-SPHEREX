@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="55 65 1095 375" role="img" aria-labelledby="drift-logo-title">
+  <title id="drift-logo-title">DRIFT</title>
+  <defs>
+    <linearGradient id="drift-word" x1="70" y1="280" x2="1140" y2="425" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8eef5"/>
+    </linearGradient>
+    <linearGradient id="drift-tail" x1="663" y1="320" x2="1012" y2="78" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5ddae8"/>
+      <stop offset=".52" stop-color="#159bdd"/>
+      <stop offset="1" stop-color="#0768bf"/>
+    </linearGradient>
+    <radialGradient id="drift-moon" cx="36%" cy="30%" r="78%">
+      <stop stop-color="#e2e6ea"/>
+      <stop offset="1" stop-color="#b6bdc5"/>
+    </radialGradient>
+  </defs>
+  <text x="70" y="425" fill="url(#drift-word)" font-family="'Arial Black','Helvetica Neue',Arial,sans-serif" font-size="205" font-weight="900" letter-spacing="-4" textLength="1070" lengthAdjust="spacingAndGlyphs">DRIFT</text>
+  <path fill="url(#drift-tail)" d="M 1012 78 C 954 148 876 209 798 256 C 744 290 700 326 681 360 C 666 389 626 380 622 347 C 617 309 644 268 690 239 C 780 184 890 131 1012 78 Z"/>
+  <path fill="none" stroke="#c8f7ff" stroke-opacity=".34" stroke-width="3.2" stroke-linecap="round" d="M 960 118 C 880 170 805 215 748 260"/>
+  <circle cx="665" cy="285" r="45" fill="url(#drift-moon)"/>
+</svg>

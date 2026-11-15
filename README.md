@@ -164,10 +164,10 @@ HDUs needed for the crop, rather than downloading the full 65 MB product. See
 
 ### Verified local mirror
 
-`public/mirror/` contains a checked, local mirror of the default field in the
-D2 and D6 detectors, with eight real visits per detector. Each mirrored frame
-has a PNG preview, a real FITS cutout, the original IRSA URI, and SHA-256
-checksums; `npm run mirror:verify` validates all 32 files and signatures. The
+`public/mirror/` contains a checked, local mirror of the default field in all
+six detector bands, with twelve real visits per band. Each mirrored frame has a
+PNG preview, a real FITS cutout, the original IRSA URI, and SHA-256 checksums;
+`npm run mirror:verify` validates all 144 files and signatures. The
 browser verifies every mirrored PNG before display and labels it
 **LOCAL MIRROR · REAL FITS**. A matching verified field is shown immediately
 while the live IRSA request refreshes in the background; if that request fails,
@@ -176,8 +176,22 @@ discovery is unavailable. The ingestor talks directly to IRSA TAP/SIA2 and the
 IRSA/S3 cutout sources, so it does not need the app API; a fresh run mirrors up
 to 24 visits per detector by default and can mirror every available visit with
 `--limit 0`. The mirror contains real archive products only; it does not invent
-missing fields. See `docs/mirror.md` for the ingestion CLI and the limits of a
-selected-field mirror.
+missing fields. If a map click has no local coverage and IRSA is unavailable,
+the viewer moves to the nearest verified field and labels it as a fallback; it
+never displays that field's pixels under the clicked coordinates. See
+`docs/mirror.md` for the ingestion CLI and the limits of a selected-field mirror.
+
+### Local all-sky mosaic fallback
+
+`frontend/assets/spherex-allsky-2025.jpg` is the checked-in, real
+**NASA/JPL-Caltech SPHEREx All Sky Map 2025** (1600 × 800, Galactic
+equirectangular). When a map position has no matching local visit mirror and
+IRSA does not answer, the browser reprojects a **30° context window** around the
+requested coordinates from that local image and labels it
+**LOCAL MOSAIC · REAL NASA IMAGE**. The selected 0.3° field remains the
+navigation/query position; the 30° image is explicitly a context view, not a
+per-visit FITS cutout and not a claim that the mosaic has 0.3° resolution.
+Nothing is fetched for this fallback and no synthetic pixels are added.
 
 ## What is real
 

@@ -411,7 +411,9 @@ function updateDetails(frame) {
   const measurementFailed = Boolean(frame.measurementError);
   const measurementPending = frame.real && !analysis && !measurementFailed;
   const unavailable = measurementFailed ? 'Unavailable (measurement failed)' : '—';
-  el.detailSource.textContent = frame.real ? 'IRSA SPHEREx DR1' : 'Local PNG files';
+  el.detailSource.textContent = frame.mosaic
+    ? 'NASA/JPL-Caltech all-sky mosaic'
+    : frame.real ? 'IRSA SPHEREx DR1' : 'Local PNG files';
   el.detailFrame.textContent = frame.label;
   el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
   const displayWidth = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
@@ -423,7 +425,9 @@ function updateDetails(frame) {
   if (frame.real && Number.isFinite(frameRa) && Number.isFinite(frameDec)) {
     el.detailRA.textContent = `${frameRa.toFixed(3)}°`;
     el.detailDec.textContent = `${frameDec > 0 ? '+' : ''}${frameDec.toFixed(3)}°`;
-    el.fieldMeta.textContent = `${coordinateText(frameRa, frameDec)} · ${hdMode && frame.hdObjectUrl ? 'wide 0.90° window' : `${frame.fov ?? Number(el.fov.value).toFixed(2)}° field`}`;
+    el.fieldMeta.textContent = frame.mosaic
+      ? `${coordinateText(frameRa, frameDec)} · 30° mosaic context · selected ${Number(el.fov.value).toFixed(2)}° field`
+      : `${coordinateText(frameRa, frameDec)} · ${hdMode && frame.hdObjectUrl ? 'wide 0.90° window' : `${frame.fov ?? Number(el.fov.value).toFixed(2)}° field`}`;
   } else {
     el.detailRA.textContent = '—';
     el.detailDec.textContent = '—';
@@ -775,7 +779,8 @@ const GALACTIC_AXIS = {
   y: [0.4941094278755837, -0.4448296299600112, 0.7469822444972180],
   z: [-0.8676661490190047, -0.1980763734312015, 0.4559837761750669]
 };
-const allSky = { pixels: null, width: 0, height: 0, background: null, loaded: false, failed: false };
+const allSky = { pixels: null, width: 0, height: 0, background: null, loaded: false, failed: false, ready: null, resolveReady: null };
+allSky.ready = new Promise(resolve => { allSky.resolveReady = resolve; });
 
 function equatorialToGalactic(raDegrees, decDegrees) {
   const ra = raDegrees * Math.PI / 180;
@@ -836,13 +841,15 @@ function initAllSkyMap() {
       allSky.height = canvas.height;
       allSky.background = buildAllSkyBackground();
       allSky.loaded = Boolean(allSky.background);
+      allSky.resolveReady?.(true);
       drawMinimap();
     } catch {
       allSky.failed = true;
+      allSky.resolveReady?.(false);
       drawMinimap();
     }
   };
-  image.onerror = () => { allSky.failed = true; drawMinimap(); };
+  image.onerror = () => { allSky.failed = true; allSky.resolveReady?.(false); drawMinimap(); };
   image.src = 'assets/spherex-allsky-2025.jpg';
 }
 
@@ -1154,6 +1161,30 @@ function updateVerification() {
     el.checksumValue.textContent = 'A SHA-256 checksum appears after the first real frame loads.';
     labState.verifyGaiaKey = '';
     setVerificationGaia('idle', 'Load a real frame to query the Gaia DR3 catalogue.');
+    return;
+  }
+  if (frame.mosaic) {
+    el.verificationScore.textContent = 'Local mosaic';
+    el.verificationScore.className = 'verify-score';
+    el.verificationList.replaceChildren(
+      verificationRow({
+        state: 'note',
+        title: 'All-sky context, not a visit cutout',
+        detail: 'This is the real NASA/JPL-Caltech SPHEREx All Sky Map 2025, resampled locally for the requested field. It has no per-visit FITS measurements or observation identity.'
+      }),
+      verificationRow({
+        state: 'receipt',
+        title: 'NASA/JPL-Caltech image source',
+        detail: 'Local asset: spherex-allsky-2025.jpg · Galactic equirectangular mosaic, 1600 × 800.'
+      })
+    );
+    el.checksumValue.textContent = 'Context image only; no FITS payload checksum.';
+    el.verifySourceSia.textContent = 'NASA/JPL-Caltech SPHEREx All Sky Map 2025';
+    el.verifySiaDetail.textContent = 'Local mosaic · 2025';
+    el.verifySourceFits.textContent = 'No FITS cutout';
+    el.verifyFitsDetail.textContent = 'A visit cutout requires IRSA discovery.';
+    labState.verifyGaiaKey = '';
+    setVerificationGaia('idle', 'Gaia context is available only for a real visit cutout.');
     return;
   }
   const checks = [];
@@ -1537,7 +1568,7 @@ function setEmptyState(eyebrow, title, message) {
 function setLoading(isLoading) {
   loadingReal = isLoading;
   const current = frames[frameIndex];
-  el.stageLoading.hidden = isLoading ? false : !(current?.real && !current.objectUrl && !current.loadError);
+  el.stageLoading.hidden = isLoading ? false : !(current?.real && !current.mosaic && !current.objectUrl && !current.loadError);
   el.loadReal.disabled = isLoading;
   el.emptyReal.disabled = isLoading;
   el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Show this sky sequence';
@@ -1545,7 +1576,7 @@ function setLoading(isLoading) {
 
 function updateAppLive(state = 'live') {
   if (!el.appLive) return;
-  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', offline: 'IRSA OFFLINE', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', 'no-coverage': 'NO COVERAGE' };
+  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', offline: 'IRSA OFFLINE', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
   if (el.appLiveText) el.appLiveText.textContent = labels[state] || labels.live;
   el.appLive.dataset.state = state;
 }
@@ -1556,7 +1587,8 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   frames = newFrames; frameIndex = 0; comparisonOpen = false; realBadge = badge;
   const localOnly = newFrames.length > 0 && newFrames.every(frame => !frame.real);
   const mirrorOnly = newFrames.length > 0 && newFrames.every(frame => frame.mirror);
-  updateAppLive(localOnly ? 'local' : mirrorOnly ? 'mirror' : /bundled|last known|fallback|last-good|cached/i.test(badge) ? 'cached' : 'live');
+  const mosaicOnly = newFrames.length > 0 && newFrames.every(frame => frame.mosaic);
+  updateAppLive(localOnly ? 'local' : mosaicOnly ? 'mosaic' : mirrorOnly ? 'mirror' : /bundled|last known|fallback|last-good|cached/i.test(badge) ? 'cached' : 'live');
   hdMode = false; updateHDControls();
   el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side';
   el.sourceLabel.textContent = source;
@@ -1624,7 +1656,7 @@ function mirrorMeasurement(value) {
   return { ...value, measured: true };
 }
 
-async function loadMirrorField(field, requestedDetector, requestedPalette, requestedStretch) {
+async function loadMirrorField(field, requestedDetector, requestedPalette, requestedStretch, { nearest = false } = {}) {
   let response;
   try {
     response = await fetch('/mirror/index.json', { cache: 'no-store', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5_000) });
@@ -1635,18 +1667,28 @@ async function loadMirrorField(field, requestedDetector, requestedPalette, reque
   let manifest;
   try { manifest = await response.json(); } catch { return null; }
   if (manifest?.schemaVersion !== 2 || !Array.isArray(manifest.fields)) return null;
-  const entry = manifest.fields.find(item =>
+  const candidates = manifest.fields.filter(item =>
     Number.isFinite(item.ra) &&
     Number.isFinite(item.dec) &&
-    Math.abs(item.ra - field.ra) < 0.01 &&
-    Math.abs(item.dec - field.dec) < 0.01 &&
     Number.isFinite(item.fov) &&
-    Math.abs(item.fov - field.fov) < 0.001 &&
     item.detector === requestedDetector &&
     item.palette === requestedPalette &&
-    item.stretch === requestedStretch
+    item.stretch === requestedStretch &&
+    Array.isArray(item.frames) &&
+    item.frames.length
   );
-  if (!entry || !Array.isArray(entry.frames) || !entry.frames.length) return null;
+  const exact = candidates.find(item =>
+    Math.abs(item.ra - field.ra) < 0.01 &&
+    Math.abs(item.dec - field.dec) < 0.01 &&
+    Math.abs(item.fov - field.fov) < 0.001
+  );
+  const entry = exact || (nearest
+    ? candidates
+      .map(item => ({ item, separation: angularSeparation(field.ra, field.dec, item.ra, item.dec) }))
+      .filter(candidate => Number.isFinite(candidate.separation))
+      .sort((a, b) => a.separation - b.separation)[0]?.item
+    : null);
+  if (!entry) return null;
   const mirrorFrames = [];
   for (const frame of entry.frames) {
     const measurement = mirrorMeasurement(frame.measurement);
@@ -1683,6 +1725,7 @@ async function loadMirrorField(field, requestedDetector, requestedPalette, reque
   return {
     frames: mirrorFrames,
     source: `Local mirror · ${mirrorFrames.length} verified real visits · ${entry.detector}`,
+    field: { ra: entry.ra, dec: entry.dec, fov: entry.fov },
     sky: entry.sky || null
   };
 }
@@ -1704,9 +1747,9 @@ function showNoCoverage(payload, field, target) {
   notify(message);
 }
 
-async function loadVerifiedMirror(field) {
+async function loadVerifiedMirror(field, { nearest = false } = {}) {
   let mirror = null;
-  try { mirror = await loadMirrorField(field, detector, palette, stretch); } catch { return null; }
+  try { mirror = await loadMirrorField(field, detector, palette, stretch, { nearest }); } catch { return null; }
   if (!mirror) return null;
   try {
     await loadFrameSet(mirror.frames, { detached: true, timeoutMs: 8_000 });
@@ -1736,6 +1779,126 @@ function showMirrorField(mirror, field, { record = true, note = '' } = {}) {
   updateVerification();
 }
 
+function sampleAllSkyMosaic(galacticL, galacticB) {
+  if (!allSky.pixels) return null;
+  const width = allSky.width;
+  const height = allSky.height;
+  const u = ((((180 - galacticL) % 360) + 360) % 360) / 360;
+  const v = Math.max(0, Math.min(1, (90 - galacticB) / 180));
+  const fx = u * width;
+  const fy = v * height;
+  const x0 = Math.floor(fx) % width;
+  const y0 = Math.min(height - 1, Math.floor(fy));
+  const x1 = (x0 + 1) % width;
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = fx - Math.floor(fx);
+  const ty = fy - Math.floor(fy);
+  const source = allSky.pixels.data;
+  const pixel = (x, y) => {
+    const at = (y * width + x) * 4;
+    return [source[at], source[at + 1], source[at + 2]];
+  };
+  const a = pixel(x0, y0);
+  const b = pixel(x1, y0);
+  const c = pixel(x0, y1);
+  const d = pixel(x1, y1);
+  return a.map((value, channel) =>
+    value * (1 - tx) * (1 - ty) + b[channel] * tx * (1 - ty) + c[channel] * (1 - tx) * ty + d[channel] * tx * ty
+  );
+}
+
+function buildAllSkyMosaicCutout(field, size = 512) {
+  if (!allSky.pixels) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  const output = context.createImageData(size, size);
+  const cosDec = Math.max(0.05, Math.cos(field.dec * Math.PI / 180));
+  for (let y = 0; y < size; y += 1) {
+    const north = 0.5 - (y + 0.5) / size;
+    const dec = Math.max(-90, Math.min(90, field.dec + north * field.fov));
+    for (let x = 0; x < size; x += 1) {
+      const east = (x + 0.5) / size - 0.5;
+      const ra = normalizeRa(field.ra + (east * field.fov) / cosDec);
+      const galactic = equatorialToGalactic(ra, dec);
+      const colour = sampleAllSkyMosaic(galactic.l, galactic.b);
+      const at = (y * size + x) * 4;
+      if (!colour) continue;
+      output.data[at] = Math.round(colour[0]);
+      output.data[at + 1] = Math.round(colour[1]);
+      output.data[at + 2] = Math.round(colour[2]);
+      output.data[at + 3] = 255;
+    }
+  }
+  context.putImageData(output, 0, 0);
+  return { src: canvas.toDataURL('image/png'), width: size, height: size };
+}
+
+async function showMosaicField(field, note = '') {
+  if (!allSky.pixels) await allSky.ready;
+  const contextFov = 30;
+  const image = buildAllSkyMosaicCutout({ ...field, fov: contextFov });
+  if (!image) return false;
+  const frame = {
+    label: 'All-sky mosaic · 2025 · 30° context',
+    src: image.src,
+    width: image.width,
+    height: image.height,
+    fov: contextFov,
+    mosaicContextFov: contextFov,
+    date: '2025',
+    iso: '',
+    band: 'All-sky',
+    detector: 'Mosaic',
+    uri: '',
+    obsid: '',
+    ra: field.ra,
+    dec: field.dec,
+    analysis: null,
+    measurementError: 'NASA/JPL-Caltech all-sky mosaic; no per-visit FITS measurements.',
+    sourceLabel: 'NASA/JPL-Caltech SPHEREx All Sky Map 2025 · local mosaic',
+    real: true,
+    mosaic: true
+  };
+  loadFrames(
+    [frame],
+    'NASA/JPL-Caltech SPHEREx All Sky Map 2025 · local mosaic · 30° context',
+    'LOCAL MOSAIC · REAL NASA IMAGE'
+  );
+  el.sourceLabel.classList.remove('error');
+  el.sourceLabel.textContent = `NASA/JPL-Caltech all-sky mosaic · local · 30° context${note ? ` · ${note}` : ''}`;
+  el.viewerTitle.textContent = targets[el.target.value]?.label || 'Custom sky region';
+  el.fieldConstellation.textContent = 'LOCAL ALL-SKY MOSAIC · REAL NASA IMAGE';
+  el.fieldMeta.textContent = `${coordinateText(field.ra, field.dec)} · 30° mosaic context · selected ${field.fov.toFixed(2)}° field`;
+  el.stageLoading.hidden = true;
+  updateAppLive('mosaic');
+  updateUrl(field, el.target.value);
+  updateMapUI();
+  updateVerification();
+  notify(`Showing the real NASA/JPL-Caltech all-sky mosaic at ${coordinateText(field.ra, field.dec)} · 30° context.`);
+  return true;
+}
+
+let emptyDefaultFallback = false;
+let archiveUnavailableUntil = 0;
+
+function showNearestMirrorFallback(mirror, note) {
+  const fallbackField = mirror.field;
+  const isDefault = Math.abs(fallbackField.ra - 150) < 0.01 && Math.abs(fallbackField.dec - 19.5) < 0.01 && Math.abs(fallbackField.fov - 0.3) < 0.01;
+  el.target.value = isDefault ? 'spherex' : 'custom';
+  el.ra.value = fallbackField.ra.toFixed(5);
+  el.dec.value = fallbackField.dec.toFixed(5);
+  el.fov.value = String(fallbackField.fov);
+  updateTargetMeta(isDefault ? targets.spherex : targets.custom);
+  emptyDefaultFallback = false;
+  el.emptyReal.textContent = 'Load this field';
+  showMirrorField(mirror, fallbackField, { record: true, note });
+  updateAppLive('mirror');
+  notify(`IRSA is unavailable. Showing the nearest verified local field at ${coordinateText(fallbackField.ra, fallbackField.dec)}. This is real SPHEREx archive data, not the clicked patch.`);
+}
+
 async function loadRealFrames(options = {}) {
   const record = options?.record !== false;
   let field;
@@ -1753,6 +1916,7 @@ async function loadRealFrames(options = {}) {
   el.sourceLabel.textContent = 'Checking verified local mirror…';
   notify('Checking the verified local mirror before contacting IRSA.');
   let mirror = null;
+  let mosaicShown = false;
   try {
     mirror = await loadVerifiedMirror(field);
     if (request !== loadRequest) {
@@ -1765,16 +1929,37 @@ async function loadRealFrames(options = {}) {
       // The mirror is usable now; the IRSA request is the background refresh.
       setLoading(false);
       notify(`Showing ${mirror.frames.length} verified local visits while IRSA refreshes.`);
-    } else {
+    } else if (archiveUnavailableUntil > Date.now()) {
+      // Every arbitrary sky position now has real local context from the
+      // checked-in NASA/JPL-Caltech mosaic. Do not make a recent outage empty.
+      mosaicShown = await showMosaicField(field, 'IRSA unavailable');
+      if (request !== loadRequest) return;
+      if (mosaicShown) {
+        setLoading(false);
+        return;
+      }
       el.sourceLabel.textContent = 'Querying IRSA SIA2 for real visits…';
       notify('Finding real SPHEREx visits for this patch.');
+    } else {
+      // Show the real local all-sky mosaic immediately, then replace it with
+      // per-visit FITS frames if IRSA answers. The mosaic is context only, not
+      // a substitute for a visit and never carries a visit measurement.
+      mosaicShown = await showMosaicField(field, 'checking IRSA…');
+      if (request !== loadRequest) return;
+      if (mosaicShown) {
+        setLoading(false);
+        notify('Showing the real local all-sky mosaic while IRSA is checked.');
+      } else {
+        el.sourceLabel.textContent = 'Querying IRSA SIA2 for real visits…';
+        notify('Finding real SPHEREx visits for this patch.');
+      }
     }
 
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '8', v: '10',
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '24', v: '10',
       detector, palette, stretch
     });
-    const timeout = setTimeout(() => controller.abort(), 45_000);
+    const timeout = setTimeout(() => controller.abort(), 20_000);
     let response;
     try {
       response = await fetch(`/api/spherex/frames?${params.toString()}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
@@ -1785,6 +1970,15 @@ async function loadRealFrames(options = {}) {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `IRSA frame discovery returned ${response.status}.`);
     if (Array.isArray(payload.frames) && payload.frames.length === 0 && payload.coverage?.observed === false) {
+      if (mosaicShown) {
+        updateAppLive('mosaic');
+        el.sourceLabel.classList.remove('error');
+        el.sourceLabel.textContent = 'NASA/JPL-Caltech all-sky mosaic · local · no per-visit coverage for this field';
+        el.stageBadge.hidden = false;
+        el.stageBadge.textContent = 'LOCAL MOSAIC · REAL NASA IMAGE';
+        notify('No SPHEREx visits cover this exact patch; the local all-sky mosaic remains visible.');
+        return;
+      }
       showNoCoverage(payload, field, targets[el.target.value]);
       return;
     }
@@ -1818,6 +2012,9 @@ async function loadRealFrames(options = {}) {
       : 'LIVE IRSA · REAL FITS';
     const span = payload.summary?.spanDays;
     const spanText = Number.isFinite(span) && span > 0 ? ` across ${span.toFixed(1)} days` : '';
+    archiveUnavailableUntil = 0;
+    emptyDefaultFallback = false;
+    el.emptyReal.textContent = 'Load this field';
     loadFrames(realFrames, `${realFrames.length} real visits · ${payload.detector} detector${spanText}`, badge);
     const target = targets[el.target.value];
     el.viewerTitle.textContent = target?.label || 'Custom sky region';
@@ -1835,27 +2032,55 @@ async function loadRealFrames(options = {}) {
     notify(`Loaded ${realFrames.length} real visits in ${detector}. Press play, blink, or difference.`);
   } catch (error) {
     if (request !== loadRequest) return;
+    const archiveError = error?.name === 'AbortError' ? 'IRSA did not answer within 20 seconds.' : error.message;
     el.stageLoading.hidden = true;
     el.sourceLabel.classList.add('error');
     if (mirror) {
       updateAppLive('mirror');
-      el.sourceLabel.textContent = `${mirror.source} · IRSA refresh failed: ${error.message}`;
+      el.sourceLabel.textContent = `${mirror.source} · IRSA refresh failed: ${archiveError}`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = 'LOCAL MIRROR · REAL FITS';
-      notify(`IRSA refresh failed: ${error.message}. Keeping the verified local mirror.`);
+      notify(`IRSA refresh failed: ${archiveError}. Keeping the verified local mirror.`);
+      return;
+    }
+    archiveUnavailableUntil = Date.now() + 30_000;
+    if (mosaicShown) {
+      updateAppLive('mosaic');
+      el.sourceLabel.textContent = `NASA/JPL-Caltech all-sky mosaic · local · IRSA unavailable: ${archiveError}`;
+      el.stageBadge.hidden = false;
+      el.stageBadge.textContent = 'LOCAL MOSAIC · REAL NASA IMAGE';
+      notify(`IRSA is unavailable; keeping the real local all-sky mosaic. ${archiveError}`);
+      return;
+    }
+    const fallback = await loadVerifiedMirror(field, { nearest: true });
+    if (request !== loadRequest) {
+      if (fallback) discardFrameObjects(fallback.frames);
+      return;
+    }
+    if (fallback) {
+      showNearestMirrorFallback(fallback, 'IRSA unavailable · nearest verified field');
       return;
     }
     updateAppLive('offline');
     if (frames.length) {
-      el.sourceLabel.textContent = `IRSA unavailable: ${error.message} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
+      el.sourceLabel.textContent = `IRSA unavailable: ${archiveError} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = realBadge;
     } else {
-      el.sourceLabel.textContent = `IRSA unavailable: ${error.message}`;
+      el.sourceLabel.textContent = `IRSA unavailable: ${archiveError}`;
       el.empty.hidden = false;
-      setEmptyState('ARCHIVE NOT AVAILABLE', 'IRSA is not answering', `${error.message} The archive can be busy; try again in a moment or choose another field.`);
+      const isDefaultField = Math.abs(field.ra - 150) < 0.01 && Math.abs(field.dec - 19.5) < 0.01 && Math.abs(field.fov - 0.3) < 0.01;
+      if (isDefaultField) {
+        emptyDefaultFallback = false;
+        el.emptyReal.textContent = 'Load this field';
+        setEmptyState('ARCHIVE NOT AVAILABLE', 'IRSA is not answering', `${archiveError} The archive can be busy; try again in a moment.`);
+      } else {
+        emptyDefaultFallback = true;
+        el.emptyReal.textContent = 'Load verified default field';
+        setEmptyState('ARCHIVE NOT AVAILABLE', 'This field needs IRSA discovery', `${archiveError} The verified default field (RA 150°, Dec +19.5°) is still available offline; the other presets need IRSA's discovery service.`);
+      }
     }
-    notify(`IRSA request failed: ${error.message}`);
+    notify(`IRSA request failed: ${archiveError}`);
   } finally {
     if (request === loadRequest) {
       setLoading(false);
@@ -1947,7 +2172,7 @@ function render() {
   }
   el.empty.hidden = true;
   const useHd = hdMode && Boolean(f.hdObjectUrl) && !differenceMode;
-  const stageSrc = useHd ? f.hdObjectUrl : f.objectUrl || (f.real ? TRANSPARENT_PIXEL : f.src);
+  const stageSrc = useHd ? f.hdObjectUrl : f.objectUrl || f.src || (f.real ? TRANSPARENT_PIXEL : '');
   if ((!differenceMode || !el.differenceCanvas.width) && el.image.src !== new URL(stageSrc, window.location.href).href) el.image.src = stageSrc;
   if (hdMode && f.real && !f.hdObjectUrl && !f.hdLoading) loadHDFrame(f);
   if (!f.width) el.stageLoading.hidden = Boolean(f.loadError);
@@ -2169,7 +2394,13 @@ for (const preset of document.querySelectorAll('[data-target]')) {
   });
 }
 el.loadReal.addEventListener('click', loadRealFrames);
-el.emptyReal.addEventListener('click', loadRealFrames);
+el.emptyReal.addEventListener('click', () => {
+  if (emptyDefaultFallback) {
+    emptyDefaultFallback = false;
+    setTarget('spherex', false);
+  }
+  loadRealFrames();
+});
 el.receiptDownload?.addEventListener('click', downloadVerificationReceipt);
 el.detector.addEventListener('change', () => setBand(el.detector.value, true));
 for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
@@ -2463,9 +2694,10 @@ const lab = {
   learnQuestion: $('learnQuestion'), learnOptions: $('learnOptions'), learnFeedback: $('learnFeedback'),
   learnNext: $('learnNext'), learnScore: $('learnScore'),
   brighterChoices: $('brighterChoices'), brighterFeedback: $('brighterFeedback'), brighterNext: $('brighterNext'),
-  waveChoices: $('waveChoices'), waveFeedback: $('waveFeedback'), waveNext: $('waveNext'),
+  wavePrompt: $('wavePrompt'), waveChoices: $('waveChoices'), waveFeedback: $('waveFeedback'), waveNext: $('waveNext'),
   bandGamePrompt: $('bandGamePrompt'), bandChoices: $('bandChoices'), bandFeedback: $('bandFeedback'),
   bandNext: $('bandNext'), bandGameScore: $('bandGameScore'),
+  gamesSource: $('gamesSource'),
   runDiscovery: $('runDiscovery'), discoveryStatus: $('discoveryStatus'), discoveryPair: $('discoveryPair'),
   discoveryCanvas: $('discoveryCanvas'), discoveryEmpty: $('discoveryEmpty'), discoveryHint: $('discoveryHint'),
   scanFrameA: $('scanFrameA'), scanFrameB: $('scanFrameB'), swapScan: $('swapScan'),
@@ -2482,6 +2714,9 @@ const labState = {
   brighter: null,
   wave: null,
   band: null,
+  gameArchive: null,
+  gameArchivePromise: null,
+  gameArchiveError: '',
   bandScore: 0,
   scanSignature: '',
   candidates: [],
@@ -2518,6 +2753,137 @@ function labData() {
     flagged: Number.isFinite(analysis?.flagged) ? analysis.flagged : null,
     bunit: analysis?.bunit || 'MJy / sr'
   };
+}
+
+function measuredVisits() {
+  return frames.filter(frame =>
+    Number.isFinite(frame.analysis?.median) &&
+    Number.isFinite(frame.analysis?.waveMin) &&
+    Number.isFinite(frame.analysis?.waveMax) &&
+    frame.analysis.waveMax > frame.analysis.waveMin
+  );
+}
+
+function gameVisitLabel(frame) {
+  if (!frame) return 'this visit';
+  const stamp = frame.iso ? new Date(frame.iso).toISOString().slice(11, 16) : '';
+  return `${frame.date || frame.label}${frame.detector ? ` · ${frame.detector}` : ''}${stamp ? ` · ${stamp}Z` : ''}`;
+}
+
+function gameFrameKey(frame) {
+  return frame?.obsid || frame?.uri || frame?.label || '';
+}
+
+function brighterGamePool() {
+  const measured = measuredVisits();
+  if (measured.length >= 2) return { frames: measured, source: 'displayed' };
+  const archive = labState.gameArchive;
+  if (archive?.all?.length >= 2) {
+    const group = archive.groups?.[detector];
+    return { frames: group?.length >= 2 ? group : archive.all, source: 'archive' };
+  }
+  return { frames: measured, source: labState.gameArchivePromise ? 'loading' : 'unavailable' };
+}
+
+function measurementGamePool() {
+  const measured = measuredVisits();
+  if (measured.length >= 2) return { frames: measured, source: 'displayed' };
+  const archive = labState.gameArchive;
+  if (archive?.all?.length >= 2) return { frames: archive.all, source: 'archive' };
+  return { frames: measured, source: labState.gameArchivePromise ? 'loading' : 'unavailable' };
+}
+
+function setGameSource(pool) {
+  let text = '';
+  if (pool.source === 'archive') {
+    text = `IRSA is offline; games use real local-mirror visits from ${labState.gameArchive?.fieldLabel || 'the bundled field'}.`;
+  } else if (pool.source === 'displayed') {
+    text = 'Rounds use the measured visits loaded from this field.';
+  } else if (pool.source === 'loading') {
+    text = 'Loading measured visits for the games…';
+  } else {
+    text = 'No measured visits are available. Reconnect IRSA or load measured FITS frames to play.';
+  }
+  lab.gamesSource.textContent = text;
+}
+
+function gameEmptyMessage(pool, kind) {
+  if (pool.source === 'loading') return 'Loading measured visits…';
+  if (pool.source === 'unavailable') return 'No measured visits are available yet.';
+  return kind === 'brighter'
+    ? 'Load at least two measured frames to play.'
+    : 'Load a measured frame to play.';
+}
+
+async function loadGameArchive() {
+  if (labState.gameArchive) return labState.gameArchive;
+  if (labState.gameArchivePromise) return labState.gameArchivePromise;
+  labState.gameArchivePromise = (async () => {
+    try {
+      const response = await fetch('/mirror/index.json', {
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(5_000)
+      });
+      if (!response.ok) throw new Error(`Local mirror returned ${response.status}.`);
+      const manifest = await response.json();
+      if (manifest?.schemaVersion !== 2 || !Array.isArray(manifest.fields)) throw new Error('Local mirror manifest is invalid.');
+      const groups = {};
+      const all = [];
+      let fieldLabel = '';
+      for (const entry of manifest.fields) {
+        if (!BAND_INFO[entry.detector] || !Array.isArray(entry.frames) || entry.frames.length < 2) continue;
+        const group = [];
+        for (const source of entry.frames) {
+          const analysis = mirrorMeasurement(source.measurement);
+          const src = mirrorAsset(source.png);
+          if (!analysis || !src) continue;
+          const frame = {
+            label: `${source.date} · ${source.detector}`,
+            src,
+            mirrorSrc: src,
+            remoteSrc: '',
+            width: analysis.width,
+            height: analysis.height,
+            fov: entry.fov,
+            date: source.date,
+            iso: source.iso,
+            band: source.band,
+            detector: source.detector,
+            uri: source.uri,
+            obsid: source.obsid,
+            ra: entry.ra,
+            dec: entry.dec,
+            analysis,
+            mirrorAnalysis: analysis,
+            sourceLabel: 'Local mirror · real IRSA FITS',
+            real: true,
+            mirror: true
+          };
+          group.push(frame);
+          all.push(frame);
+        }
+        if (group.length >= 2) groups[entry.detector] = group;
+        if (!fieldLabel && group.length) {
+          fieldLabel = `RA ${entry.ra.toFixed(1)}° · Dec ${entry.dec >= 0 ? '+' : ''}${entry.dec.toFixed(1)}°`;
+        }
+      }
+      if (all.length < 2) throw new Error('Local mirror has no measured visits.');
+      return { groups, all, fieldLabel };
+    } catch (error) {
+      labState.gameArchiveError = error.message;
+      return null;
+    }
+  })();
+  const archive = await labState.gameArchivePromise;
+  labState.gameArchivePromise = null;
+  if (archive) labState.gameArchive = archive;
+  if (!measuredVisits().length) {
+    newBrighterRound();
+    newWaveRound();
+    newBandRound();
+  }
+  return archive;
 }
 
 function setLabTab(name) {
@@ -3001,14 +3367,14 @@ function addLabFrameChoice(container, frame, onClick) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'option-button frame-option';
-  button.dataset.frameLabel = frame.label;
+  button.dataset.frameKey = gameFrameKey(frame);
   const image = document.createElement('img');
   image.src = frame.objectUrl || frame.src;
   image.alt = `Real SPHEREx frame from ${frame.label}`;
   image.loading = 'lazy';
   image.addEventListener('error', () => image.remove());
   const label = document.createElement('span');
-  label.textContent = frame.label;
+  label.textContent = gameVisitLabel(frame);
   button.append(image, label);
   button.addEventListener('click', onClick);
   container.append(button);
@@ -3112,16 +3478,30 @@ function newLearnQuestion() {
 }
 
 function newBrighterRound() {
-  const candidates = frames.filter(frame => Number.isFinite(frame.analysis?.median));
+  const pool = brighterGamePool();
+  setGameSource(pool);
+  const candidates = pool.frames.filter(frame => Number.isFinite(frame.analysis?.median));
   lab.brighterChoices.replaceChildren();
   lab.brighterFeedback.textContent = '';
   lab.brighterNext.disabled = true;
   if (candidates.length < 2) {
-    lab.brighterChoices.innerHTML = '<p class="small muted">Load at least two measured frames to play.</p>';
+    lab.brighterChoices.innerHTML = `<p class="small muted">${gameEmptyMessage(pool, 'brighter')}</p>`;
     labState.brighter = null;
     return;
   }
-  const pair = shuffle(candidates).slice(0, 2);
+  const sorted = [...candidates].sort((a, b) => a.analysis.median - b.analysis.median);
+  const pairs = [];
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (Math.abs(sorted[index].analysis.median - sorted[index - 1].analysis.median) > 1e-6) {
+      pairs.push([sorted[index - 1], sorted[index]]);
+    }
+  }
+  if (!pairs.length) {
+    lab.brighterChoices.innerHTML = '<p class="small muted">These visits have the same median light. Load another visit to play.</p>';
+    labState.brighter = null;
+    return;
+  }
+  const pair = shuffle(pairs[Math.floor(Math.random() * pairs.length)]);
   const brighter = pair[0].analysis.median >= pair[1].analysis.median ? pair[0] : pair[1];
   labState.brighter = { pair, brighter, answered: false };
   for (const frame of pair) {
@@ -3132,9 +3512,9 @@ function newBrighterRound() {
       for (const button of lab.brighterChoices.querySelectorAll('button')) button.disabled = true;
       event.currentTarget.classList.add(correct ? 'correct' : 'wrong');
       const brighterButton = [...lab.brighterChoices.querySelectorAll('button')]
-        .find(button => button.dataset.frameLabel === brighter.label);
+        .find(button => button.dataset.frameKey === gameFrameKey(brighter));
       brighterButton?.classList.add('correct');
-      const labels = pair.map(item => `${item.label}: ${formatNumber(item.analysis.median)} MJy / sr`).join(' · ');
+      const labels = pair.map(item => `${gameVisitLabel(item)}: ${formatNumber(item.analysis.median)} MJy / sr`).join(' · ');
       lab.brighterFeedback.textContent = `${correct ? 'Correct.' : 'Not quite.'} ${labels}`;
       lab.brighterFeedback.className = `quiz-feedback ${correct ? 'correct-text' : 'wrong-text'}`;
       lab.brighterNext.disabled = false;
@@ -3143,18 +3523,28 @@ function newBrighterRound() {
 }
 
 function newWaveRound() {
-  const data = labData();
+  const pool = measurementGamePool();
+  setGameSource(pool);
+  const candidates = pool.frames.filter(frame =>
+    Number.isFinite(frame.analysis?.waveMin) &&
+    Number.isFinite(frame.analysis?.waveMax) &&
+    frame.analysis.waveMax > frame.analysis.waveMin
+  );
   lab.waveChoices.replaceChildren();
   lab.waveFeedback.textContent = '';
   lab.waveNext.disabled = true;
-  if (data.waveMin === null || data.waveMax === null || data.waveMax <= data.waveMin) {
-    lab.waveChoices.innerHTML = '<p class="small muted">Load a measured frame to play.</p>';
+  if (!candidates.length) {
+    lab.wavePrompt.textContent = gameEmptyMessage(pool, 'wave');
+    lab.waveChoices.innerHTML = '<p class="small muted">The game uses the real measured WCS-WAVE range.</p>';
     labState.wave = null;
     return;
   }
+  const frame = candidates[Math.floor(Math.random() * candidates.length)];
+  const data = frame.analysis;
   const middle = (data.waveMin + data.waveMax) / 2;
   const options = [...new Set([middle, data.waveMax + 0.2, Math.max(0.1, data.waveMin - 0.2)].map(value => `${value.toFixed(3)} μm`))];
-  labState.wave = { answered: false, correct: `${middle.toFixed(3)} μm`, min: data.waveMin, max: data.waveMax };
+  lab.wavePrompt.textContent = `Which wavelength falls inside the ${frame.detector || 'measured'} visit from ${frame.date || 'this field'}?`;
+  labState.wave = { answered: false, correct: `${middle.toFixed(3)} μm`, min: data.waveMin, max: data.waveMax, frameKey: gameFrameKey(frame) };
   for (const option of shuffle(options)) {
     addLabChoice(lab.waveChoices, option, event => {
       if (!labState.wave || labState.wave.answered) return;
@@ -3164,7 +3554,7 @@ function newWaveRound() {
       for (const button of buttons) button.disabled = true;
       event.currentTarget.classList.add(correct ? 'correct' : 'wrong');
       buttons.find(button => button.textContent === labState.wave.correct)?.classList.add('correct');
-      lab.waveFeedback.textContent = `${correct ? 'Correct.' : 'Not quite.'} This frame spans ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`;
+      lab.waveFeedback.textContent = `${correct ? 'Correct.' : 'Not quite.'} That ${frame.detector || 'visit'} visit spans ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`;
       lab.waveFeedback.className = `quiz-feedback ${correct ? 'correct-text' : 'wrong-text'}`;
       lab.waveNext.disabled = false;
     });
@@ -3172,21 +3562,31 @@ function newWaveRound() {
 }
 
 function newBandRound() {
-  const data = labData();
+  const pool = measurementGamePool();
+  setGameSource(pool);
+  const candidates = pool.frames.filter(frame => {
+    const band = frame.band || frame.detector;
+    return BAND_INFO[band] &&
+      Number.isFinite(frame.analysis?.waveMin) &&
+      Number.isFinite(frame.analysis?.waveMax) &&
+      frame.analysis.waveMax > frame.analysis.waveMin;
+  });
   lab.bandChoices.replaceChildren();
   lab.bandFeedback.textContent = '';
   lab.bandNext.disabled = true;
-  if (!data.frame || data.waveMin === null || data.waveMax === null || !BAND_INFO[data.band]) {
-    lab.bandGamePrompt.textContent = 'Load a measured frame to play.';
+  if (!candidates.length) {
+    lab.bandGamePrompt.textContent = gameEmptyMessage(pool, 'band');
     lab.bandChoices.innerHTML = '<p class="small muted">The game uses the real measured WCS-WAVE range.</p>';
     labState.band = null;
     return;
   }
-  const correct = data.band;
+  const frame = candidates[Math.floor(Math.random() * candidates.length)];
+  const data = frame.analysis;
+  const correct = frame.band || frame.detector;
   const middle = (data.waveMin + data.waveMax) / 2;
   lab.bandGamePrompt.textContent = `A real frame measures ${middle.toFixed(3)} μm. Which detector is it?`;
   const otherBands = shuffle(Object.keys(BAND_INFO).filter(band => band !== correct)).slice(0, 2);
-  labState.band = { correct, answered: false };
+  labState.band = { correct, answered: false, frameKey: gameFrameKey(frame) };
   for (const option of shuffle([correct, ...otherBands])) {
     addLabChoice(lab.bandChoices, `${option} · ${BAND_INFO[option].low.toFixed(2)}–${BAND_INFO[option].high.toFixed(2)} μm`, event => {
       if (!labState.band || labState.band.answered) return;
@@ -3196,7 +3596,7 @@ function newBandRound() {
       event.currentTarget.classList.add(isCorrect ? 'correct' : 'wrong');
       if (isCorrect) labState.bandScore += 1;
       lab.bandGameScore.textContent = `GAME 03 · ${labState.bandScore} ${labState.bandScore === 1 ? 'pt' : 'pts'}`;
-      lab.bandFeedback.textContent = `${isCorrect ? 'Correct.' : 'Not quite.'} The frame is ${correct}; its measured range is ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`;
+      lab.bandFeedback.textContent = `${isCorrect ? 'Correct.' : 'Not quite.'} The visit is ${correct}; its measured range is ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`;
       lab.bandFeedback.className = `quiz-feedback ${isCorrect ? 'correct-text' : 'wrong-text'}`;
       lab.bandNext.disabled = false;
     });
@@ -3294,6 +3694,7 @@ function initLab() {
   newBrighterRound();
   newWaveRound();
   newBandRound();
+  loadGameArchive();
   updateDiscovery();
 }
 

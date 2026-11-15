@@ -25,8 +25,8 @@ Learning lab and Sky games use mirrored visits in exactly the same way as live
 IRSA visits; static PNGs alone cannot carry HTTP measurement headers.
 
 The checked-in seed currently mirrors the app's default field, **RA 150°,
-Dec +19.5°, 0.3°**, in both **D2** and **D6**, with eight real visits per
-detector from IRSA DR1. A fresh run can mirror up to 24 visits per detector by
+Dec +19.5°, 0.3°**, in all six detector bands, with twelve real visits per
+band from IRSA DR1. A fresh run can mirror up to 24 visits per detector by
 default, or every available visit with `--limit 0`; the checked-in seed is not
 rewritten until a real ingestion succeeds. Other preset fields are not populated
 while IRSA's discovery service is unavailable; the ingestor will not invent
@@ -45,14 +45,20 @@ npm run mirror:verify
 node scripts/mirror-spherex.mjs \
   --field orion:83.822:-5.391:0.3 \
   --detector D2 --limit 24
+
+# Replay the checked-in real index when IRSA discovery is down
+node scripts/mirror-spherex.mjs \
+  --bundled public/data/spherex/dr1-150.json --limit 12
 ```
 
-The ingestor discovers visits with IRSA TAP (falling back to SIA2), then fetches
-each FITS cutout from the IRSA cutout service or the public S3 bucket. It
-rasterizes the real FITS itself and stores the real products and measurement
-metadata; no app server is involved. `--limit` defaults to 24, accepts 2 through
-500, and `--limit 0` mirrors every visit discovery returns. PNG and FITS cutouts
-are always mirrored together; there is no PNG-only mode.
+The ingestor normally discovers visits with IRSA TAP (falling back to SIA2),
+then fetches each FITS cutout from the IRSA cutout service or the public S3
+bucket. It can also be given a checked-in real index through `--bundled` when
+the archive's discovery service is down. It rasterizes the real FITS itself and
+stores the real products and measurement metadata; no app server is involved.
+`--limit` defaults to 24, accepts 2 through 500, and `--limit 0` mirrors every
+visit discovery returns. PNG and FITS cutouts are always mirrored together;
+there is no PNG-only mode.
 
 The manifest is schema version 2. Every frame carries a `measurement` object
 with the real archive-derived values used by the learner and games.
@@ -67,7 +73,9 @@ The IRSA request continues in the background; a successful response replaces
 the mirror with live or cached IRSA data.
 
 If the background request fails, the verified mirror stays visible and its
-source label records the refresh failure. Existing live or cached visits are
+source label records the refresh failure. For a coordinate with no exact
+mirror while IRSA is down, the viewer moves to the nearest verified field and
+labels it as a fallback; it never presents those pixels as the clicked patch. Existing live or cached visits are
 retained on failure in the same way when no mirror matches. No local file is
 shown merely because it exists: it must pass the manifest, path, checksum and
 measurement checks first.

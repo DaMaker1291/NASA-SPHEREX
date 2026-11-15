@@ -30,7 +30,11 @@ const IRSA_HOST = 'irsa.ipac.caltech.edu'
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const FIELD_ID = /^[a-z0-9][a-z0-9-]*$/
 const DEFAULTS = [
+  { id: 'default-d1', ra: 150, dec: 19.5, fov: 0.3, detector: 'D1' },
   { id: 'default-d2', ra: 150, dec: 19.5, fov: 0.3, detector: 'D2' },
+  { id: 'default-d3', ra: 150, dec: 19.5, fov: 0.3, detector: 'D3' },
+  { id: 'default-d4', ra: 150, dec: 19.5, fov: 0.3, detector: 'D4' },
+  { id: 'default-d5', ra: 150, dec: 19.5, fov: 0.3, detector: 'D5' },
   { id: 'default-d6', ra: 150, dec: 19.5, fov: 0.3, detector: 'D6' },
 ]
 
@@ -40,16 +44,19 @@ function usage() {
 
 Options:
   --out DIR             Mirror directory (default public/mirror)
-  --field ID:RA:DEC:FOV  Add a field; repeatable. Defaults to both checked-in fields.
+  --field ID:RA:DEC:FOV  Add a field; repeatable. Defaults to all six checked-in fields.
   --detector D2          Detector for --field entries (default D2)
   --palette NAME         Palette stored in the manifest (default iridescent)
   --stretch NAME         Stretch stored in the manifest (default asinh)
   --limit N              Frames per field: 0 for all, otherwise 2..500 (default 24)
+  --bundled FILE         Use a checked-in real IRSA search JSON instead of live discovery
   --verify               Verify an existing mirror and exit
   --help                 Show this help
 
 Discovery uses IRSA TAP with SIA2 fallback. Pixels come from the IRSA cutout
-service with direct S3 byte-range fallback. The script never invents a frame.
+service with direct S3 byte-range fallback. --bundled only replays a real
+index that was already returned by IRSA; it does not invent observations. The
+script never invents a frame.
 It exits non-zero if a requested frame cannot be fetched or validated, and
 verifies the complete candidate manifest before publishing it.`)
 }
@@ -62,17 +69,19 @@ function parseArgs(argv) {
     palette: 'iridescent',
     stretch: 'asinh',
     limit: 24,
+    bundled: null,
     verify: false,
   }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (arg === '--help' || arg === '-h') { usage(); process.exit(0) }
     if (arg === '--verify') { options.verify = true; continue }
-    if (arg === '--out' || arg === '--field' || arg === '--detector' || arg === '--palette' || arg === '--stretch' || arg === '--limit') {
+    if (arg === '--out' || arg === '--field' || arg === '--detector' || arg === '--palette' || arg === '--stretch' || arg === '--limit' || arg === '--bundled') {
       const value = argv[i + 1]
       if (!value) throw new Error(`${arg} needs a value`)
       i += 1
       if (arg === '--out') options.out = resolve(ROOT, value)
+      else if (arg === '--bundled') options.bundled = resolve(ROOT, value)
       else if (arg === '--detector') {
         options.detector = value.toUpperCase()
         if (!/^D[1-6]$/.test(options.detector)) throw new Error('--detector must be D1 through D6')
@@ -241,9 +250,41 @@ function measurementFromRaster(raster, product, field, cutout) {
   }
 }
 
+async function loadBundledField(path, field) {
+  let data
+  try {
+    data = JSON.parse(await readFile(path, 'utf8'))
+  } catch (error) {
+    throw new Error(`Could not read bundled IRSA index ${path}: ${error instanceof Error ? error.message : 'invalid JSON'}`)
+  }
+  if (!Array.isArray(data?.observations) || !data.observations.length) {
+    throw new Error(`Bundled IRSA index ${path} has no real observations`)
+  }
+  const center = data.field
+  if (!center || !Number.isFinite(center.ra) || !Number.isFinite(center.dec) || !Number.isFinite(center.fov)) {
+    throw new Error(`Bundled IRSA index ${path} has no field centre`)
+  }
+  const raDelta = Math.min(Math.abs(center.ra - field.ra), 360 - Math.abs(center.ra - field.ra))
+  if (raDelta > 0.01 || Math.abs(center.dec - field.dec) > 0.01 || Math.abs(center.fov - field.fov) > 0.01) {
+    throw new Error(`Bundled IRSA index ${path} is for RA ${center.ra}, Dec ${center.dec}, FOV ${center.fov}; it does not match ${field.id}`)
+  }
+  const source = data.source || { label: 'IRSA SIA2', url: 'https://irsa.ipac.caltech.edu/' }
+  return {
+    ...data,
+    field: { ra: center.ra, dec: center.dec, fov: center.fov },
+    source: {
+      ...source,
+      label: `${source.label || 'IRSA SIA2'} · checked-in real index`,
+      url: source.url || 'https://irsa.ipac.caltech.edu/',
+    },
+  }
+}
+
 export async function ingestField(options, field, archiveOverride = null) {
   const archive = archiveOverride ?? await archiveRuntime()
-  const found = await archive.findSpherex(field.ra, field.dec, field.fov)
+  const found = options.bundled
+    ? await loadBundledField(options.bundled, field)
+    : await archive.findSpherex(field.ra, field.dec, field.fov)
   if (!Array.isArray(found.observations) || !found.observations.length) {
     throw new Error(`No real SPHEREx observations returned for ${field.id}`)
   }
