@@ -218,8 +218,13 @@ Barnard's Star, Epsilon Indi B, WISE 0855−0714, RW Aurigae and R Draconis.
 The RA/Dec parser accepts decimal degrees or sexagesimal values. Real visits
 load progressively; partial detector-edge frames are removed so the sequence
 does not jump in shape. **Blink A/B** toggles two visits; **Difference**
-subtracts their PNG rasters in the browser. The observation desk below the
-viewer keeps the mail, learning and real-data game tools.
+subtracts their PNG rasters in the browser. The workspace below the viewer has
+separate Wavelength, Constellations, Data verification, Learning lab, Sky games
+and Mail sections. Wavelength uses the six real detector bands and server-side
+palette/stretch filters; the HD button requests a larger native-scale cutout;
+constellation membership and neighbourhoods come from IAU geometry; and the
+verification panel cross-checks SIA2 metadata, FITS headers and a SHA-256
+payload receipt.
 
 Regression checks used during development loaded all five named targets from
 the local Worker, measured their first real cutout, and exercised playback,
@@ -233,10 +238,63 @@ GET /api/spherex/frames?ra=76.95625&dec=30.40111&fov=0.3&limit=8
 GET /api/spherex/frames?ra=248.1675&dec=66.755&fov=0.3&limit=8
 ```
 
+## Wavelength workspace
+
+The viewer exposes all six real SPHEREx detector bands. The band chips and the
+query-panel selector set the `detector` parameter (`D1`–`D6`); the backend
+rebuilds the visit sequence from the matching SIA2 products. The ranges shown
+for each band were measured from real DR1 WCS-WAVE headers for the calibrated
+field and are confirmed again per frame after load:
+
+```
+D1 0.735–1.126 μm
+D2 1.086–1.668 μm
+D3 1.616–2.439 μm
+D4 2.398–3.863 μm
+D5 3.798–4.443 μm
+D6 4.402–5.025 μm
+```
+
+Palette (`iridescent`, `gold`, `ice`, `mono`) and intensity stretch (`asinh`,
+`linear`, `log`) are real server-side raster controls (`/api/spherex/png`).
+They change presentation only; the underlying FITS pixels are unchanged.
+
+### Native-scale HD window
+
+`GET /api/spherex/png?...&pixels=1024` requests a genuine larger IRSA cutout at
+native detector sampling. The normal 0.30° view is about 176 px because SPHEREx
+sampling is about 6.15″/pixel; the HD request uses the archive's pixel-size
+cutout mode and can return roughly 700–1024 px depending on detector coverage.
+This is not synthetic upscaling. Resolution is still archive-limited, and the
+UI labels any shortfall rather than claiming invented detail. The viewer also
+supports 8× zoom, pan, native-pixel sharpening and browser full screen.
+
+## Constellations and verification
+
+`GET /api/sky/context?ra=…&dec=…&radius=5` returns the IAU constellation at the
+centre plus neighbouring constellations sampled at eight compass bearings with
+`astronomy-engine`. The Constellations workspace shows the centre, Galactic and
+Ecliptic coordinates, and the neighbours with their direction.
+
+The Data verification workspace compares independent evidence for the frame on
+screen:
+
+1. IRSA SIA2 discovery row: date, detector, observation ID, product URI.
+2. IRSA FITS cutout headers: DATE-AVG, DETECTOR, OBSID, WCS centre, WCS-WAVE.
+3. IAU constellation membership computed independently from J2000 geometry.
+4. SHA-256 receipt of the actual PNG payload.
+
+Green checks mean the two sources agree; amber checks state a real mismatch or
+unavailable value; the receipt is shown separately and is not counted as an
+agreement check.
+
 ## Source map
 
 ```
-src/worker/index.ts          Hono routes: find, cutout, spectrum, catalog
+frontend/index.html         Public Render viewer, workspace, learning/game panels
+frontend/script.js          Real-frame viewer, bands, HD window, verification
+frontend/style.css          Responsive public viewer and workspace
+src/worker/index.ts          Hono routes: find, cutout, png, spectrum, sky context, catalog
 src/worker/sky.ts            IAU constellation + galactic/ecliptic coordinates
 src/worker/http.ts           validation, retry, caches, URL allowlist, limits
 src/worker/irsa.ts           SIA2, cutout proxy, FITS strip, catalogue services

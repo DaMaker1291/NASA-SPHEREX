@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-15">
-  <script defer src="script.js?v=next-13"></script>
+  <link rel="stylesheet" href="style.css?v=next-17">
+  <script defer src="script.js?v=next-24"></script>
 </head>
 <body>
   <header class="site-header">
@@ -17,6 +17,7 @@
     </a>
     <nav class="site-nav" aria-label="Main navigation">
       <span class="live-chip"><span class="live-dot"></span> Real IRSA data</span>
+      <a class="text-button" href="#lab">Workspace</a>
       <button id="mailShortcut" class="text-button" type="button">✉ Mail observation</button>
       <a class="text-button" href="#how-it-works">How it works</a>
     </nav>
@@ -83,6 +84,19 @@
           </select>
         </div>
 
+        <div class="field">
+          <label for="detector">Wavelength band <span>real detector</span></label>
+          <select id="detector">
+            <option value="D1">D1 · 0.73–1.13 μm</option>
+            <option value="D2" selected>D2 · 1.09–1.67 μm</option>
+            <option value="D3">D3 · 1.62–2.44 μm</option>
+            <option value="D4">D4 · 2.40–3.86 μm</option>
+            <option value="D5">D5 · 3.80–4.44 μm</option>
+            <option value="D6">D6 · 4.40–5.02 μm</option>
+          </select>
+          <p id="bandHint" class="field-hint">Measured ranges from real DR1 WCS-WAVE headers. Change bands to compare the same sky at different infrared wavelengths.</p>
+        </div>
+
         <button id="loadReal" class="button primary full" type="button">Show this sky sequence</button>
         <p id="sourceLabel" class="source-label" role="status">Connecting to IRSA…</p>
         <div class="query-note">
@@ -104,6 +118,8 @@
             <button id="zoomIn" class="icon-button" type="button" title="Zoom in" aria-label="Zoom in">+</button>
             <button id="resetView" class="text-button" type="button">Reset</button>
             <button id="copyLink" class="text-button" type="button">Copy link</button>
+            <button id="hdToggle" class="text-button" type="button" disabled>HD window</button>
+            <button id="fullscreen" class="text-button" type="button">Full screen</button>
             <a class="jump-query" href="#queryPanel">Coordinates ↓</a>
             <label class="marker-toggle" for="showCrosshair"><input id="showCrosshair" type="checkbox" checked> Centre marker</label>
           </div>
@@ -130,6 +146,7 @@
           <div id="stageBadge" class="stage-badge" hidden>LIVE IRSA · REAL FITS</div>
           <div class="stage-hud">
             <span id="stageDate">No visit loaded</span>
+            <span id="stageResolution">NATIVE CUTOUT</span>
             <span id="stageMode">LIVE FRAME</span>
           </div>
         </div>
@@ -228,15 +245,88 @@
 
     <section class="lab-panel" id="lab" aria-label="Observation toolkit">
       <div class="lab-heading">
-        <div><p class="kicker">OBSERVATION DESK</p><h2>Keep a record of what you find.</h2></div>
-        <span class="lab-caption">MAIL · LEARN · GAMES</span>
+        <div><p class="kicker">OBSERVATION WORKSPACE</p><h2>Go deeper than one picture.</h2></div>
+        <span class="lab-caption">WAVELENGTH · SKY · LEARN · GAME · VERIFY</span>
       </div>
-      <div class="lab-tabs" role="tablist" aria-label="Observation desk tools">
-        <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labMail" data-lab-tab="mail">✉ Mail observation</button>
-        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learn from this frame</button>
+      <div class="lab-tabs" role="tablist" aria-label="Observation workspace tools">
+        <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labWavelength" data-lab-tab="wavelength">Wavelength & filters</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labConstellation" data-lab-tab="constellation">Constellations</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labVerify" data-lab-tab="verify">Data verification</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learning lab</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labGames" data-lab-tab="games">Sky games</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labMail" data-lab-tab="mail">✉ Mail observation</button>
       </div>
-      <div class="lab-content" id="labMail" role="tabpanel">
+      <div class="lab-content" id="labWavelength" role="tabpanel">
+        <div class="desk-grid">
+          <div class="desk-card">
+            <div class="desk-card-head"><h3>Six ways to see the same sky</h3><span id="wavelengthBandName" class="lab-score">D2</span></div>
+            <p class="desk-copy">These are real SPHEREx detector bands, not colour filters. Each visit is a spectral image; changing the band changes the physical wavelengths recorded by the detector.</p>
+            <div id="bandRail" class="band-rail" aria-label="SPHEREx wavelength bands">
+              <button type="button" class="band-chip" data-band="D1"><strong>D1</strong><span>0.73–1.13 μm</span></button>
+              <button type="button" class="band-chip active" data-band="D2"><strong>D2</strong><span>1.09–1.67 μm</span></button>
+              <button type="button" class="band-chip" data-band="D3"><strong>D3</strong><span>1.62–2.44 μm</span></button>
+              <button type="button" class="band-chip" data-band="D4"><strong>D4</strong><span>2.40–3.86 μm</span></button>
+              <button type="button" class="band-chip" data-band="D5"><strong>D5</strong><span>3.80–4.44 μm</span></button>
+              <button type="button" class="band-chip" data-band="D6"><strong>D6</strong><span>4.40–5.02 μm</span></button>
+            </div>
+            <dl class="lab-facts wavelength-facts">
+              <div><dt>Measured range</dt><dd id="wavelengthRange">Load a real frame</dd></div>
+              <div><dt>Channel width</dt><dd id="wavelengthBandwidth">—</dd></div>
+              <div><dt>Pixel scale</dt><dd id="wavelengthPixelScale">—</dd></div>
+              <div><dt>Visits in this band</dt><dd id="wavelengthFrames">0</dd></div>
+            </dl>
+            <p id="bandSummary" class="desk-status" role="status">The band rail is populated from the real D1–D6 products returned by IRSA.</p>
+          </div>
+          <div class="desk-card">
+            <div class="desk-card-head"><h3>Display filters</h3><span class="kicker">PRESENTATION ONLY</span></div>
+            <p class="desk-copy">Palette and stretch change how the same measured pixels are drawn. They never change the underlying FITS values.</p>
+            <div class="field"><label for="paletteSelect">Palette</label><select id="paletteSelect"><option value="iridescent">Iridescent · default</option><option value="gold">Warm gold</option><option value="ice">Ice blue</option><option value="mono">Monochrome</option></select></div>
+            <div class="field"><label for="stretchSelect">Intensity stretch</label><select id="stretchSelect"><option value="asinh">Asinh · balanced</option><option value="linear">Linear · direct</option><option value="log">Log · faint detail</option></select></div>
+            <button id="hdToggleLab" class="button secondary full" type="button" disabled>Load 1024 px HD window</button>
+            <p class="field-hint">HD requests a larger native-scale IRSA cutout around the same centre. Resolution is archive-limited by SPHEREx's detector sampling.</p>
+            <label class="marker-toggle sharp-toggle" for="sharpPixels"><input id="sharpPixels" type="checkbox"> Sharpen native pixels when zoomed</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-content" id="labConstellation" role="tabpanel" hidden>
+        <div class="desk-grid">
+          <div class="desk-card constellation-card">
+            <div class="desk-card-head"><h3>IAU constellation</h3><span id="constellationSource" class="kicker">ASTRONOMY-ENGINE</span></div>
+            <p id="constellationName" class="constellation-name">—</p>
+            <p id="constellationSymbol" class="constellation-symbol">Load a field to identify its constellation.</p>
+            <p id="constellationCopy" class="desk-copy">Constellation membership is computed from the official IAU boundaries at the cutout centre, independently of the IRSA metadata.</p>
+            <dl class="lab-facts">
+              <div><dt>Sky position</dt><dd id="constellationRa">—</dd></div>
+              <div><dt>Galactic l / b</dt><dd id="constellationGalactic">—</dd></div>
+              <div><dt>Ecliptic lon / lat</dt><dd id="constellationEcliptic">—</dd></div>
+              <div><dt>Resolved from</dt><dd id="constellationResolved">Cutout WCS centre</dd></div>
+            </dl>
+          </div>
+          <div class="desk-card">
+            <div class="desk-card-head"><h3>Neighbouring constellations</h3><button id="constellationRefresh" class="text-button" type="button">Refresh</button></div>
+            <p class="desk-copy">We sample eight compass bearings around the target and ask the IAU geometry which constellation owns each point. This is a neighbourhood, not a hand-drawn sky map.</p>
+            <div id="constellationNeighbors" class="neighbor-grid"><p class="small muted">Load a field to resolve its neighbours.</p></div>
+            <p id="constellationMethod" class="desk-status">Method: astronomy-engine IAU lookup at eight bearings.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-content" id="labVerify" role="tabpanel" hidden>
+        <div class="verify-head">
+          <div><p class="kicker">CROSS-SOURCE RECEIPTS</p><h3>One frame, several independent checks.</h3><p class="desk-copy">The viewer keeps the SIA2 discovery row, the FITS cutout headers and the independent IAU geometry side by side. Amber means a value is unavailable or differs; green means the two sources agree.</p></div>
+          <span id="verificationScore" class="verify-score">Waiting for data</span>
+        </div>
+        <ul id="verificationList" class="verification-list"><li class="verify-row pending"><span class="verify-dot"></span><div><strong>No frame loaded</strong><p>Load a real SPHEREx field to run the cross-checks.</p></div></li></ul>
+        <div class="verify-sources">
+          <div class="source-box"><span class="kicker">SOURCE 1 · DISCOVERY</span><strong id="verifySourceSia">IRSA SIA2</strong><p id="verifySiaDetail">Visit row, date, observation ID and product URI.</p></div>
+          <div class="source-box"><span class="kicker">SOURCE 2 · PIXELS</span><strong id="verifySourceFits">IRSA FITS cutout</strong><p id="verifyFitsDetail">IMAGE, WCS, WCS-WAVE and detector headers.</p></div>
+          <div class="source-box"><span class="kicker">SOURCE 3 · GEOMETRY</span><strong>IAU constellation engine</strong><p>Constellation membership computed from J2000 coordinates, not copied from IRSA.</p></div>
+        </div>
+        <details class="checksum-box"><summary>Cutout integrity receipt</summary><code id="checksumValue">A SHA-256 checksum appears after the first real frame loads.</code></details>
+      </div>
+
+      <div class="lab-content" id="labMail" role="tabpanel" hidden>
         <div class="desk-grid">
           <div>
             <h3>Mail this observation</h3>
@@ -254,11 +344,17 @@
           <div class="desk-card"><div class="desk-card-head"><h3>Read this frame</h3><span class="kicker">REAL DATA</span></div><p class="desk-copy">The lesson updates from the frame currently displayed — no prewritten per-night facts.</p><dl class="lab-facts"><div><dt>Constellation</dt><dd id="learnConstellation">—</dd></div><div><dt>Position</dt><dd id="learnPosition">—</dd></div><div><dt>Median light</dt><dd id="learnLight">—</dd></div><div><dt>Wavelength</dt><dd id="learnWave">—</dd></div><div><dt>Flagged pixels</dt><dd id="learnFlags">—</dd></div><div><dt>Frames loaded</dt><dd id="learnFrames">0</dd></div></dl></div>
           <div class="desk-card"><div class="desk-card-head"><h3>Knowledge check</h3><span id="learnScore" class="lab-score">0 correct</span></div><p id="learnQuestion" class="quiz-question">Load real frames to start a lesson.</p><div id="learnOptions" class="option-grid"></div><p id="learnFeedback" class="quiz-feedback" role="status"></p><button id="learnNext" class="button secondary" type="button" disabled>Next question</button></div>
         </div>
+        <div class="lesson-strip">
+          <article><span>LESSON 01</span><h3>What is a SPHEREx visit?</h3><p>Each visit is a real level-2 spectral image. The detector records many narrow wavelength channels at once; the cutout shows a spatial slice of that exposure.</p></article>
+          <article><span>LESSON 02</span><h3>Why change bands?</h3><p>D1 to D6 cover different infrared windows. A star, dust cloud or brown dwarf can look completely different from one band to the next because different physical processes glow at different wavelengths.</p></article>
+          <article><span>LESSON 03</span><h3>Why blink visits?</h3><p>The same patch is observed at different times. Blinking two visits makes proper motion, variable stars and transient brightness changes easier to see than any single frame.</p></article>
+        </div>
       </div>
       <div class="lab-content" id="labGames" role="tabpanel" hidden>
         <div class="desk-grid">
           <div class="desk-card"><div class="desk-card-head"><h3>Brighter frame</h3><span class="lab-score">GAME 01</span></div><p class="desk-copy">Choose the real frame with the higher median light intensity.</p><div id="brighterChoices" class="option-grid"></div><p id="brighterFeedback" class="quiz-feedback" role="status"></p><button id="brighterNext" class="button secondary" type="button" disabled>New round</button></div>
           <div class="desk-card"><div class="desk-card-head"><h3>Wavelength window</h3><span class="lab-score">GAME 02</span></div><p class="desk-copy">Pick the wavelength that falls inside the displayed frame’s measured range.</p><div id="waveChoices" class="option-grid"></div><p id="waveFeedback" class="quiz-feedback" role="status"></p><button id="waveNext" class="button secondary" type="button" disabled>New round</button></div>
+          <div class="desk-card"><div class="desk-card-head"><h3>Band match</h3><span id="bandGameScore" class="lab-score">GAME 03 · 0 pts</span></div><p class="desk-copy">A real measured wavelength belongs to one detector. Pick the band before the archive tells you.</p><p id="bandGamePrompt" class="quiz-question">Load a measured frame to play.</p><div id="bandChoices" class="option-grid"></div><p id="bandFeedback" class="quiz-feedback" role="status"></p><button id="bandNext" class="button secondary" type="button" disabled>New round</button></div>
         </div>
       </div>
     </section>

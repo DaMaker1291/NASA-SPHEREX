@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const el = {
-  target: $('target'), ra: $('ra'), dec: $('dec'), fov: $('fov'),
+  target: $('target'), ra: $('ra'), dec: $('dec'), fov: $('fov'), detector: $('detector'), bandHint: $('bandHint'),
   loadReal: $('loadReal'), emptyReal: $('emptyReal'), sourceLabel: $('sourceLabel'),
   targetMeta: $('targetMeta'), fieldMeta: $('fieldMeta'), fieldConstellation: $('fieldConstellation'),
   speed: $('frameSpeed'), speedValue: $('speedValue'),
@@ -14,6 +14,18 @@ const el = {
   stageLoading: $('stageLoading'), stageBadge: $('stageBadge'), viewerTitle: $('viewerTitle'),
   stageDate: $('stageDate'), stageMode: $('stageMode'), filmstrip: $('filmstrip'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), resetView: $('resetView'), zoomLevel: $('zoomLevel'), copyLink: $('copyLink'),
+  hdToggle: $('hdToggle'), hdToggleLab: $('hdToggleLab'), stageResolution: $('stageResolution'), fullscreen: $('fullscreen'),
+  paletteSelect: $('paletteSelect'), stretchSelect: $('stretchSelect'), sharpPixels: $('sharpPixels'),
+  bandRail: $('bandRail'), wavelengthBandName: $('wavelengthBandName'), wavelengthRange: $('wavelengthRange'),
+  wavelengthBandwidth: $('wavelengthBandwidth'), wavelengthPixelScale: $('wavelengthPixelScale'), wavelengthFrames: $('wavelengthFrames'),
+  bandSummary: $('bandSummary'),
+  constellationName: $('constellationName'), constellationSymbol: $('constellationSymbol'), constellationCopy: $('constellationCopy'),
+  constellationRa: $('constellationRa'), constellationGalactic: $('constellationGalactic'), constellationEcliptic: $('constellationEcliptic'),
+  constellationResolved: $('constellationResolved'), constellationNeighbors: $('constellationNeighbors'), constellationMethod: $('constellationMethod'),
+  constellationRefresh: $('constellationRefresh'), constellationSource: $('constellationSource'),
+  verificationScore: $('verificationScore'), verificationList: $('verificationList'), verificationSources: $('verificationSources'),
+  verifySourceSia: $('verifySourceSia'), verifySourceFits: $('verifySourceFits'), verifySiaDetail: $('verifySiaDetail'), verifyFitsDetail: $('verifyFitsDetail'),
+  checksumValue: $('checksumValue'),
   previous: $('previous'), next: $('next'), play: $('playPause'), timeline: $('timeline'),
   frameLabel: $('frameLabel'), frameCount: $('frameCount'),
   frameA: $('frameA'), frameB: $('frameB'), blink: $('blink'), showCompare: $('showCompare'),
@@ -29,6 +41,15 @@ const el = {
   detailMean: $('detailMean'), detailVariance: $('detailVariance'), detailZodi: $('detailZodi'),
   detailFlags: $('detailFlags'), detailWave: $('detailWave'),
   detailExposure: $('detailExposure'), detailPixelScale: $('detailPixelScale'), toast: $('toast')
+};
+
+const BAND_INFO = {
+  D1: { low: 0.7349, high: 1.1263, label: 'D1', color: '#9fc6ff' },
+  D2: { low: 1.0859, high: 1.6677, label: 'D2', color: '#c5a7ff' },
+  D3: { low: 1.6163, high: 2.4391, label: 'D3', color: '#ff9bcf' },
+  D4: { low: 2.3980, high: 3.8629, label: 'D4', color: '#ffb27a' },
+  D5: { low: 3.7984, high: 4.4426, label: 'D5', color: '#ffd37a' },
+  D6: { low: 4.4018, high: 5.0246, label: 'D6', color: '#f4f0de' }
 };
 
 const targets = {
@@ -68,6 +89,8 @@ let differenceToken = 0;
 let frames = [];
 let frameIndex = 0, interval = null, blinkMode = false, comparisonOpen = false;
 let zoom = 1, panX = 0, panY = 0, isDragging = false, dragStart = null;
+let detector = 'D2', palette = 'iridescent', stretch = 'asinh', hdMode = false;
+let constellationRequest = 0, constellationData = null;
 let ownedObjectUrls = [];
 let toastTimeout = null, loadingReal = false, sky = null, realBadge = 'LIVE IRSA • REAL FITS';
 
@@ -140,6 +163,9 @@ function updateUrl(field, key) {
   url.searchParams.set('dec', field.dec.toFixed(5));
   url.searchParams.set('fov', field.fov.toFixed(2));
   url.searchParams.set('target', key);
+  url.searchParams.set('band', detector);
+  url.searchParams.set('palette', palette);
+  url.searchParams.set('stretch', stretch);
   window.history.replaceState(null, '', url);
 }
 
@@ -149,6 +175,13 @@ function restoreFromUrl() {
   const ra = parseRa(params.get('ra') ?? '');
   const dec = parseDec(params.get('dec') ?? '');
   const fov = Number(params.get('fov'));
+  const requestedBand = params.get('band')?.toUpperCase();
+  if (requestedBand && BAND_INFO[requestedBand]) detector = requestedBand;
+  if (['iridescent', 'gold', 'ice', 'mono'].includes(params.get('palette'))) palette = params.get('palette');
+  if (['asinh', 'linear', 'log'].includes(params.get('stretch'))) stretch = params.get('stretch');
+  el.detector.value = detector;
+  el.paletteSelect.value = palette;
+  el.stretchSelect.value = stretch;
   if (key && key !== 'custom' && targets[key]) {
     setTarget(key, false);
     return;
@@ -275,7 +308,9 @@ function updateDetails(frame) {
   el.detailSource.textContent = frame.real ? 'IRSA SPHEREx DR1' : 'Local PNG files';
   el.detailFrame.textContent = frame.label;
   el.detailObsid.textContent = frame.obsid || analysis?.obsid || '—';
-  el.detailSize.textContent = frame.width && frame.height ? `${frame.width} × ${frame.height} px` : 'Loading real pixels…';
+  const displayWidth = hdMode && frame.hdWidth ? frame.hdWidth : frame.width;
+  const displayHeight = hdMode && frame.hdHeight ? frame.hdHeight : frame.height;
+  el.detailSize.textContent = displayWidth && displayHeight ? `${displayWidth} × ${displayHeight} px${hdMode && frame.hdWidth ? ' · HD' : ''}` : 'Loading real pixels…';
   el.detailDateBig.textContent = frame.date || frame.label;
   const frameRa = Number.isFinite(analysis?.ra) ? analysis.ra : frame.ra;
   const frameDec = Number.isFinite(analysis?.dec) ? analysis.dec : frame.dec;
@@ -321,6 +356,206 @@ function updateDetails(frame) {
   if (analysis?.constellation) el.fieldConstellation.textContent = `${analysis.constellation.toUpperCase()} · SPHEREX DR1`;
 }
 
+function updateBandUI() {
+  const frame = frames[frameIndex];
+  const analysis = frame?.analysis || frame?.displayAnalysis;
+  const info = BAND_INFO[detector] || BAND_INFO.D2;
+  el.wavelengthBandName.textContent = `${detector} · ${info.low.toFixed(3)}–${info.high.toFixed(3)} μm`;
+  el.wavelengthRange.textContent = analysis && Number.isFinite(analysis.waveMin)
+    ? `${analysis.waveMin.toFixed(3)}–${analysis.waveMax.toFixed(3)} μm`
+    : 'Load a real frame';
+  el.wavelengthBandwidth.textContent = analysis && Number.isFinite(analysis.waveBwMin)
+    ? `${analysis.waveBwMin.toFixed(3)}–${analysis.waveBwMax.toFixed(3)} μm`
+    : '—';
+  el.wavelengthPixelScale.textContent = analysis && Number.isFinite(analysis.pixelScale)
+    ? `${analysis.pixelScale.toFixed(2)}″ / px`
+    : '—';
+  el.wavelengthFrames.textContent = frames.filter(item => item.real).length
+    ? `${frames.length} · ${detector}`
+    : '0';
+  el.bandSummary.textContent = `IRSA returned ${frames.length || 0} real ${detector} visits for this field. The measured range comes from the FITS WCS-WAVE table.`;
+  for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
+    chip.classList.toggle('active', chip.dataset.band === detector);
+    chip.setAttribute('aria-pressed', String(chip.dataset.band === detector));
+  }
+  el.detector.value = detector;
+  updateHDControls();
+}
+
+function setBand(value, shouldReload = true) {
+  if (!BAND_INFO[value]) return;
+  detector = value;
+  updateBandUI();
+  if (shouldReload && frames.some(frame => frame.real)) loadRealFrames();
+}
+
+function renderConstellation(primary, neighborhood = null, error = '') {
+  const constellation = primary?.constellation || null;
+  if (!constellation) {
+    el.constellationName.textContent = '—';
+    el.constellationSymbol.textContent = 'Load a sky field to identify its constellation.';
+    return;
+  }
+  el.constellationName.textContent = constellation.name;
+  el.constellationSymbol.textContent = `${constellation.symbol || constellation.name} · IAU constellation`;
+  const ra = primary.raHms || '—';
+  const dec = primary.decDms || '—';
+  el.constellationRa.textContent = `${ra} · ${dec}`;
+  el.constellationGalactic.textContent = primary.galactic
+    ? `${primary.galactic.l.toFixed(2)}° / ${primary.galactic.b >= 0 ? '+' : ''}${primary.galactic.b.toFixed(2)}°`
+    : '—';
+  el.constellationEcliptic.textContent = primary.ecliptic
+    ? `${primary.ecliptic.lon.toFixed(2)}° / ${primary.ecliptic.lat >= 0 ? '+' : ''}${primary.ecliptic.lat.toFixed(2)}°`
+    : '—';
+  const frame = frames[frameIndex];
+  el.constellationResolved.textContent = frame?.analysis?.constellation
+    ? `FITS cutout centre: ${frame.analysis.constellation}`
+    : 'Requested field centre';
+  el.constellationCopy.textContent = `The cutout centre falls inside ${constellation.name} (${constellation.symbol}). Membership is computed from official IAU boundaries at the J2000 position, independently of the IRSA catalogue row.`;
+  el.constellationSource.textContent = 'ASTRONOMY-ENGINE · IAU';
+  el.constellationMethod.textContent = error
+    ? `Neighbourhood unavailable: ${error}`
+    : neighborhood?.method || 'Method: astronomy-engine IAU lookup at eight bearings.';
+  el.constellationNeighbors.replaceChildren();
+  const neighbors = neighborhood?.neighbors || [];
+  if (!neighbors.length) {
+    const placeholder = document.createElement('p');
+    placeholder.className = 'small muted';
+    placeholder.textContent = error ? 'The geometry service is unavailable.' : 'No neighbouring constellations were resolved at the sampled radius.';
+    el.constellationNeighbors.append(placeholder);
+    return;
+  }
+  for (const neighbor of neighbors) {
+    const card = document.createElement('div');
+    card.className = 'neighbor-card';
+    const symbol = document.createElement('strong');
+    symbol.textContent = `${neighbor.symbol || neighbor.name}`;
+    const text = document.createElement('span');
+    text.textContent = `${neighbor.name} · ${neighbor.direction}`;
+    card.append(symbol, text);
+    el.constellationNeighbors.append(card);
+  }
+}
+
+async function loadConstellation(primary, ra, dec) {
+  constellationData = primary || sky || null;
+  renderConstellation(constellationData, null);
+  if (!Number.isFinite(ra) || !Number.isFinite(dec)) return;
+  const request = ++constellationRequest;
+  try {
+    const params = new URLSearchParams({ ra: String(ra), dec: String(dec), radius: '5' });
+    const response = await fetch(`/api/sky/context?${params.toString()}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
+    const payload = await response.json().catch(() => ({}));
+    if (request !== constellationRequest) return;
+    if (!response.ok) throw new Error(payload.error || `Sky context returned ${response.status}.`);
+    renderConstellation(payload, payload);
+  } catch (error) {
+    if (request === constellationRequest) renderConstellation(constellationData, null, error.message);
+  }
+}
+
+function angularSeparation(ra1, dec1, ra2, dec2) {
+  if (![ra1, dec1, ra2, dec2].every(Number.isFinite)) return null;
+  const rad = Math.PI / 180;
+  const a = Math.sin((dec2 - dec1) * rad / 2) ** 2 +
+    Math.cos(dec1 * rad) * Math.cos(dec2 * rad) * Math.sin((ra2 - ra1) * rad / 2) ** 2;
+  return 2 * Math.asin(Math.min(1, Math.sqrt(a))) / rad;
+}
+
+function verificationRow(check) {
+  const item = document.createElement('li');
+  item.className = `verify-row ${check.state}`;
+  const dot = document.createElement('span');
+  dot.className = 'verify-dot';
+  const body = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = check.title;
+  const detail = document.createElement('p');
+  detail.textContent = check.detail;
+  body.append(title, detail);
+  item.append(dot, body);
+  return item;
+}
+
+function updateVerification() {
+  const frame = frames[frameIndex];
+  const analysis = frame?.analysis || frame?.displayAnalysis;
+  el.verificationList.replaceChildren();
+  if (!frame?.real) {
+    el.verificationScore.textContent = 'Waiting for data';
+    el.verificationList.append(verificationRow({ state: 'pending', title: 'No real frame loaded', detail: 'Load a real SPHEREx field to run the cross-source checks.' }));
+    el.checksumValue.textContent = 'A SHA-256 checksum appears after the first real frame loads.';
+    return;
+  }
+  const checks = [];
+  const siaDate = frame.date || '';
+  const fitsDate = analysis?.dateAvg ? analysis.dateAvg.slice(0, 10) : '';
+  checks.push({
+    state: fitsDate && siaDate === fitsDate ? 'verified' : fitsDate ? 'note' : 'pending',
+    title: 'Visit date agrees',
+    detail: fitsDate
+      ? `SIA2 ${siaDate || '—'} · FITS DATE-AVG ${fitsDate}`
+      : 'FITS DATE-AVG has not arrived yet.'
+  });
+  const fitsDetector = analysis?.detector || analysis?.band || '';
+  const normalizeDetector = value => String(value || '').replace(/^D/i, '');
+  checks.push({
+    state: fitsDetector ? normalizeDetector(fitsDetector) === normalizeDetector(frame.detector) ? 'verified' : 'note' : 'pending',
+    title: 'Detector agrees',
+    detail: fitsDetector ? `SIA2 ${frame.detector} · FITS detector ${fitsDetector}` : 'FITS DETECTOR header not available.'
+  });
+  const idMatch = analysis?.obsid && frame.obsid
+    ? analysis.obsid === frame.obsid || analysis.obsid.includes(frame.obsid) || frame.obsid.includes(analysis.obsid)
+    : null;
+  checks.push({
+    state: idMatch === null ? 'pending' : idMatch ? 'verified' : 'note',
+    title: 'Observation identity agrees',
+    detail: analysis?.obsid ? `SIA2 ${frame.obsid || '—'} · FITS ${analysis.obsid}` : 'FITS OBSID header not available.'
+  });
+  const separation = angularSeparation(Number(frame.ra), Number(frame.dec), analysis?.ra, analysis?.dec);
+  checks.push({
+    state: separation === null ? 'pending' : separation < 0.02 ? 'verified' : 'note',
+    title: 'WCS centre is inside the requested field',
+    detail: separation === null ? 'Waiting for the cutout WCS centre.' : `${separation.toFixed(3)}° from the requested centre.`
+  });
+  const band = BAND_INFO[frame.detector];
+  const waveInside = analysis && Number.isFinite(analysis.waveMin) && band
+    ? analysis.waveMax >= band.low && analysis.waveMin <= band.high
+    : null;
+  checks.push({
+    state: waveInside === null ? 'pending' : waveInside ? 'verified' : 'note',
+    title: 'Wavelength falls inside the requested band',
+    detail: analysis && Number.isFinite(analysis.waveMin)
+      ? `Measured ${analysis.waveMin.toFixed(3)}–${analysis.waveMax.toFixed(3)} μm · ${frame.detector} nominal ${band.low.toFixed(2)}–${band.high.toFixed(2)} μm`
+      : 'Waiting for WCS-WAVE measurements.'
+  });
+  const siaConstellation = sky?.constellation?.name || '';
+  checks.push({
+    state: analysis?.constellation && siaConstellation ? analysis.constellation === siaConstellation ? 'verified' : 'note' : 'pending',
+    title: 'Constellation agrees with independent geometry',
+    detail: analysis?.constellation
+      ? `FITS centre resolves to ${analysis.constellation}${siaConstellation ? ` · requested centre resolves to ${siaConstellation}` : ''}`
+      : 'Waiting for the cutout constellation.'
+  });
+  checks.push({
+    state: frame.sha256 ? 'receipt' : 'pending',
+    title: 'Pixel payload integrity receipt',
+    detail: frame.sha256 ? `SHA-256 ${frame.sha256.slice(0, 24)}… saved for this cutout.` : 'Hashing the real PNG payload…'
+  });
+  const verified = checks.filter(check => check.state === 'verified').length;
+  const available = checks.filter(check => check.state === 'verified' || check.state === 'note').length;
+  el.verificationScore.textContent = `${verified} / ${available} checks agree`;
+  el.verificationScore.className = `verify-score ${verified === available && available ? 'good' : available ? 'mixed' : ''}`;
+  for (const check of checks) el.verificationList.append(verificationRow(check));
+  el.verifySourceSia.textContent = frame.sourceLabel || 'IRSA SIA2 · SPHEREx DR1';
+  el.verifySiaDetail.textContent = `${frame.date || '—'} · ${frame.detector} · ${frame.obsid || 'OBSID pending'}`;
+  el.verifySourceFits.textContent = analysis ? 'IRSA FITS cutout' : 'IRSA FITS cutout · pending';
+  el.verifyFitsDetail.textContent = analysis
+    ? `${frame.width || '—'} × ${frame.height || '—'} px · ${frame.uri?.split('/').pop() || 'product URI'}`
+    : 'IMAGE, WCS, WCS-WAVE and detector headers.';
+  el.checksumValue.textContent = frame.sha256 || 'Waiting for the real PNG payload.';
+}
+
 function readFrameHeaders(response) {
   const number = (name) => {
     const raw = response.headers.get(name);
@@ -329,6 +564,8 @@ function readFrameHeaders(response) {
     return Number.isFinite(value) ? value : null;
   };
   const headers = {
+    width: number('X-Frame-Width'),
+    height: number('X-Frame-Height'),
     min: number('X-Frame-Min'),
     max: number('X-Frame-Max'),
     low: number('X-Frame-Low'),
@@ -356,12 +593,31 @@ function readFrameHeaders(response) {
     galacticL: number('X-Frame-Galactic-L'),
     galacticB: number('X-Frame-Galactic-B'),
     eclipticLon: number('X-Frame-Ecliptic-Lon'),
-    eclipticLat: number('X-Frame-Ecliptic-Lat')
+    eclipticLat: number('X-Frame-Ecliptic-Lat'),
+    cutoutSize: response.headers.get('X-Cutout-Size') || '',
+    palette: response.headers.get('X-Frame-Palette') || '',
+    stretch: response.headers.get('X-Frame-Stretch') || ''
   };
   return {
     ...headers,
     measured: Number.isFinite(headers.median) && Number.isFinite(headers.mean)
   };
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 45_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let hardTimer;
+  const hard = new Promise((_, reject) => {
+    hardTimer = setTimeout(() => reject(new Error(`request timed out after ${Math.round(timeoutMs / 1000)} s`)), timeoutMs + 1_000);
+  });
+  return Promise.race([
+    fetch(url, { ...options, signal: controller.signal }),
+    hard,
+  ]).finally(() => {
+    clearTimeout(timer);
+    clearTimeout(hardTimer);
+  });
 }
 
 async function loadFrameData(frame) {
@@ -370,29 +626,30 @@ async function loadFrameData(frame) {
   try {
     let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      response = await fetch(frame.src, { headers: { Accept: 'image/png' }, signal: AbortSignal.timeout(60_000) });
+      response = await fetchWithTimeout(frame.src, { headers: { Accept: 'image/png' } }, 45_000);
       if (response.ok || ![429, 503, 504].includes(response.status) || attempt === 2) break;
       await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
     }
     if (!response?.ok) throw new Error(`FITS frame returned ${response?.status ?? 'no response'}.`);
     const analysis = readFrameHeaders(response);
-    const blob = await response.blob();
+    const bytes = await response.arrayBuffer();
     if (!frames.includes(frame)) return;
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      frame.sha256 = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    } catch {
+      frame.sha256 = '';
+    }
+    const blob = new Blob([bytes], { type: 'image/png' });
     const objectUrl = URL.createObjectURL(blob);
     ownedObjectUrls.push(objectUrl);
-    const probe = new Image();
-    probe.src = objectUrl;
-    try {
-      await probe.decode();
-      frame.width = probe.naturalWidth;
-      frame.height = probe.naturalHeight;
-    } catch {
-      // The stage will report a decode error if the PNG is unusable.
-    }
+    if (Number.isFinite(analysis.width) && analysis.width > 0) frame.width = analysis.width;
+    if (Number.isFinite(analysis.height) && analysis.height > 0) frame.height = analysis.height;
     frame.objectUrl = objectUrl;
     frame.src = objectUrl;
     frame.loadError = '';
     if (frame.thumbImg) frame.thumbImg.src = objectUrl;
+    frame.displayAnalysis = analysis;
     if (analysis.measured) {
       frame.analysis = analysis;
       frame.measurementError = '';
@@ -401,6 +658,8 @@ async function loadFrameData(frame) {
       frame.measurementError = 'FITS measurement headers were not returned.';
     }
     maybePrunePartialFrames();
+    updateBandUI();
+    updateVerification();
     if (frames[frameIndex] === frame) render();
     else updateLab();
   } catch (error) {
@@ -415,6 +674,17 @@ async function loadFrameData(frame) {
   } finally {
     frame.loading = false;
   }
+}
+
+async function loadFrameSet(list) {
+  const queue = [...list];
+  const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+    while (queue.length) {
+      const frame = queue.shift();
+      if (frame) await loadFrameData(frame);
+    }
+  });
+  await Promise.all(workers);
 }
 
 let pruningFrames = false;
@@ -505,6 +775,7 @@ function setLoading(isLoading) {
 function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   stopPlayback(); releaseImages();
   frames = newFrames; frameIndex = 0; comparisonOpen = false; realBadge = badge;
+  hdMode = false; updateHDControls();
   el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side';
   el.sourceLabel.textContent = source;
   el.timeline.max = String(Math.max(0, frames.length - 1));
@@ -561,7 +832,8 @@ async function loadRealFrames() {
   notify('Finding real SPHEREx visits for this patch.');
   try {
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '8', v: '8'
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '8', v: '9',
+      detector, palette, stretch
     });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45_000);
@@ -575,9 +847,12 @@ async function loadRealFrames() {
     if (!response.ok) throw new Error(payload.error || `IRSA frame discovery returned ${response.status}.`);
     if (!Array.isArray(payload.frames) || !payload.frames.length) throw new Error('IRSA returned no real products for this field.');
 
+    detector = payload.detector || detector;
+    el.detector.value = detector;
     const realFrames = payload.frames.map(frame => ({
       label: `${frame.date} · ${frame.detector}`,
       src: frame.pngUrl,
+      remoteSrc: frame.pngUrl,
       width: null,
       height: null,
       fov: field.fov,
@@ -591,6 +866,7 @@ async function loadRealFrames() {
       dec: payload.field?.dec ?? field.dec,
       analysis: null,
       measurementError: null,
+      sourceLabel: payload.source?.label || 'IRSA SIA2 · SPHEREx DR1',
       real: true
     }));
     sky = payload.sky || null;
@@ -606,9 +882,12 @@ async function loadRealFrames() {
       ? `${payload.sky.constellation.name.toUpperCase()} · SPHEREX DR1`
       : target?.constellation ? `${target.constellation.toUpperCase()} · SPHEREX DR1` : 'SPHEREX DR1 FIELD';
     el.fieldMeta.textContent = `${coordinateText(field.ra, field.dec)} · ${field.fov.toFixed(2)}° field`;
-    realFrames.forEach(loadFrameData);
+    void loadFrameSet(realFrames);
     updateUrl(field, el.target.value);
-    notify(`Loaded ${realFrames.length} real visits. Press play, blink, or difference.`);
+    updateBandUI();
+    loadConstellation(payload.sky || null, field.ra, field.dec);
+    updateVerification();
+    notify(`Loaded ${realFrames.length} real visits in ${detector}. Press play, blink, or difference.`);
   } catch (error) {
     el.stageLoading.hidden = true;
     el.sourceLabel.textContent = `IRSA unavailable: ${error.message}`;
@@ -621,6 +900,70 @@ async function loadRealFrames() {
   } finally {
     setLoading(false);
   }
+}
+
+function hdUrlFor(frame) {
+  if (!frame?.remoteSrc) return '';
+  const url = new URL(frame.remoteSrc, window.location.href);
+  url.searchParams.set('pixels', '1024');
+  return url.toString();
+}
+
+async function loadHDFrame(frame) {
+  if (!frame?.real || frame.hdLoading || frame.hdObjectUrl) return;
+  const url = hdUrlFor(frame);
+  if (!url) return;
+  frame.hdLoading = true;
+  el.stageResolution.textContent = 'FETCHING 1024 PX…';
+  try {
+    let response;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetchWithTimeout(url, { headers: { Accept: 'image/png' } }, 60_000);
+      if (response.ok || ![429, 503, 504].includes(response.status) || attempt === 2) break;
+      await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
+    }
+    if (!response?.ok) throw new Error(`HD cutout returned ${response?.status ?? 'no response'}.`);
+    const bytes = await response.arrayBuffer();
+    const blob = new Blob([bytes], { type: 'image/png' });
+    const objectUrl = URL.createObjectURL(blob);
+    ownedObjectUrls.push(objectUrl);
+    const headerWidth = Number(response.headers.get('X-Frame-Width'));
+    const headerHeight = Number(response.headers.get('X-Frame-Height'));
+    frame.hdObjectUrl = objectUrl;
+    frame.hdWidth = Number.isFinite(headerWidth) ? headerWidth : 1024;
+    frame.hdHeight = Number.isFinite(headerHeight) ? headerHeight : 883;
+    frame.hdAnalysis = readFrameHeaders(response);
+    if (frames[frameIndex] === frame && hdMode) render();
+    notify(`HD window loaded from a ${frame.hdWidth} × ${frame.hdHeight} native-scale IRSA cutout.`);
+  } catch (error) {
+    notify(`HD cutout failed: ${error.message}`);
+    hdMode = false;
+    updateHDControls();
+    render();
+  } finally {
+    frame.hdLoading = false;
+    if (frames[frameIndex] === frame && !frame.hdObjectUrl) el.stageResolution.textContent = 'NATIVE CUTOUT';
+  }
+}
+
+function updateHDControls() {
+  const current = frames[frameIndex];
+  const enabled = Boolean(current?.real);
+  for (const button of [el.hdToggle, el.hdToggleLab]) {
+    if (!button) continue;
+    button.disabled = !enabled;
+    button.textContent = hdMode ? 'Standard window' : 'HD 1024 px window';
+    button.classList.toggle('active', hdMode);
+  }
+}
+
+function toggleHD() {
+  const current = frames[frameIndex];
+  if (!current?.real) { notify('Load a real IRSA frame before opening the HD window.'); return; }
+  hdMode = !hdMode;
+  updateHDControls();
+  if (hdMode) loadHDFrame(current);
+  render();
 }
 
 function render() {
@@ -636,9 +979,17 @@ function render() {
     return;
   }
   el.empty.hidden = true;
-  const stageSrc = f.objectUrl || (f.real ? TRANSPARENT_PIXEL : f.src);
+  const useHd = hdMode && Boolean(f.hdObjectUrl) && !differenceMode;
+  const stageSrc = useHd ? f.hdObjectUrl : f.objectUrl || (f.real ? TRANSPARENT_PIXEL : f.src);
   if ((!differenceMode || !el.differenceCanvas.width) && el.image.src !== new URL(stageSrc, window.location.href).href) el.image.src = stageSrc;
+  if (hdMode && f.real && !f.hdObjectUrl && !f.hdLoading) loadHDFrame(f);
   if (!f.width) el.stageLoading.hidden = Boolean(f.loadError);
+  el.stageResolution.textContent = useHd
+    ? `HD ${f.hdWidth || 1024} PX`
+    : hdMode && f.hdLoading ? 'FETCHING HD…'
+      : f.width ? `${f.width} PX NATIVE` : 'NATIVE CUTOUT';
+  el.image.classList.toggle('pixelated', Boolean(el.sharpPixels?.checked) && zoom > 1.05);
+  updateHDControls();
   el.image.onload = () => {
     el.stageLoading.hidden = true;
     if (!f.width) { f.width = el.image.naturalWidth; f.height = el.image.naturalHeight; }
@@ -657,6 +1008,8 @@ function render() {
   el.crosshair.hidden = !el.crosshairCheck.checked || differenceMode;
   updateDetails(f);
   updateFilmstripActive();
+  updateBandUI();
+  updateVerification();
   updateLab();
 }
 
@@ -783,6 +1136,7 @@ function setZoom(value) {
 function updateTransform() {
   el.transform.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
   el.zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
+  el.image.classList.toggle('pixelated', Boolean(el.sharpPixels?.checked) && zoom > 1.05);
 }
 function resetView() { zoom = 1; panX = 0; panY = 0; updateTransform(); }
 
@@ -813,6 +1167,26 @@ for (const preset of document.querySelectorAll('[data-target]')) {
 }
 el.loadReal.addEventListener('click', loadRealFrames);
 el.emptyReal.addEventListener('click', loadRealFrames);
+el.detector.addEventListener('change', () => setBand(el.detector.value, true));
+for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
+  chip.addEventListener('click', () => setBand(chip.dataset.band, true));
+}
+for (const select of [el.paletteSelect, el.stretchSelect]) {
+  select.addEventListener('change', () => {
+    palette = el.paletteSelect.value;
+    stretch = el.stretchSelect.value;
+    if (frames.some(frame => frame.real)) loadRealFrames();
+    else notify('Load a real IRSA field to apply archive display filters.');
+  });
+}
+for (const button of [el.hdToggle, el.hdToggleLab]) button?.addEventListener('click', toggleHD);
+el.sharpPixels.addEventListener('change', () => render());
+el.constellationRefresh.addEventListener('click', () => {
+  try {
+    const field = readField();
+    loadConstellation(sky, field.ra, field.dec);
+  } catch (error) { notify(error.message); }
+});
 el.play.addEventListener('click', togglePlay);
 el.next.addEventListener('click', nextFrame);
 el.previous.addEventListener('click', previousFrame);
@@ -838,6 +1212,14 @@ el.copyLink.addEventListener('click', async () => {
     notify('Copy the address bar to share this sky patch.');
   }
 });
+el.fullscreen.addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await el.stage.requestFullscreen();
+  } catch (error) {
+    notify(`Full screen is unavailable: ${error.message}`);
+  }
+});
 el.stage.addEventListener('wheel', e => {
   if (!frames.length) return;
   e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
@@ -858,7 +1240,10 @@ el.stage.addEventListener('pointercancel', stopDrag);
 // Field lab: user-facing mail, learning prompts and real-data games.
 const lab = {
   tabs: Array.from(document.querySelectorAll('[data-lab-tab]')),
-  panels: { mail: $('labMail'), learn: $('labLearn'), games: $('labGames') },
+  panels: {
+    wavelength: $('labWavelength'), constellation: $('labConstellation'), verify: $('labVerify'),
+    mail: $('labMail'), learn: $('labLearn'), games: $('labGames')
+  },
   shortcut: $('mailShortcut'), mailTo: $('mailTo'), mailNote: $('mailNote'),
   mailOpen: $('mailOpen'), mailCopy: $('mailCopy'), mailStatus: $('mailStatus'), mailPreview: $('mailPreview'),
   learnConstellation: $('learnConstellation'), learnPosition: $('learnPosition'),
@@ -866,7 +1251,9 @@ const lab = {
   learnQuestion: $('learnQuestion'), learnOptions: $('learnOptions'), learnFeedback: $('learnFeedback'),
   learnNext: $('learnNext'), learnScore: $('learnScore'),
   brighterChoices: $('brighterChoices'), brighterFeedback: $('brighterFeedback'), brighterNext: $('brighterNext'),
-  waveChoices: $('waveChoices'), waveFeedback: $('waveFeedback'), waveNext: $('waveNext')
+  waveChoices: $('waveChoices'), waveFeedback: $('waveFeedback'), waveNext: $('waveNext'),
+  bandGamePrompt: $('bandGamePrompt'), bandChoices: $('bandChoices'), bandFeedback: $('bandFeedback'),
+  bandNext: $('bandNext'), bandGameScore: $('bandGameScore')
 };
 
 const labState = {
@@ -874,7 +1261,9 @@ const labState = {
   question: null,
   frameSetKey: '',
   brighter: null,
-  wave: null
+  wave: null,
+  band: null,
+  bandScore: 0
 };
 
 function shuffle(values) {
@@ -971,6 +1360,7 @@ function updateLab() {
     labState.frameSetKey = frameSetKey;
     newBrighterRound();
     newWaveRound();
+    newBandRound();
   }
 }
 
@@ -1019,6 +1409,23 @@ function newLearnQuestion() {
       options: shuffle([...new Set(options)]),
       correct: `${middle.toFixed(3)} μm`,
       explanation: `The measured WCS-WAVE range is ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`
+    });
+  }
+
+  if (data.band) {
+    const ordered = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'];
+    const farther = ordered.filter(name => name !== data.band);
+    questions.push({
+      question: 'Which detector sees the longest infrared wavelengths?',
+      options: shuffle(['D1', 'D4', 'D6']),
+      correct: 'D6',
+      explanation: 'D6 covers roughly 4.40–5.02 μm, the reddest end of the six SPHEREx bands.'
+    });
+    questions.push({
+      question: 'Which detector is the closest match for this frame?',
+      options: shuffle([data.band, ...shuffle(farther).slice(0, 2)]),
+      correct: data.band,
+      explanation: `The displayed visit is a real ${data.band} product; the FITS header confirms its measured wavelength range.`
     });
   }
 
@@ -1116,6 +1523,38 @@ function newWaveRound() {
   }
 }
 
+function newBandRound() {
+  const data = labData();
+  lab.bandChoices.replaceChildren();
+  lab.bandFeedback.textContent = '';
+  lab.bandNext.disabled = true;
+  if (!data.frame || data.waveMin === null || data.waveMax === null || !BAND_INFO[data.band]) {
+    lab.bandGamePrompt.textContent = 'Load a measured frame to play.';
+    lab.bandChoices.innerHTML = '<p class="small muted">The game uses the real measured WCS-WAVE range.</p>';
+    labState.band = null;
+    return;
+  }
+  const correct = data.band;
+  const middle = (data.waveMin + data.waveMax) / 2;
+  lab.bandGamePrompt.textContent = `A real frame measures ${middle.toFixed(3)} μm. Which detector is it?`;
+  const otherBands = shuffle(Object.keys(BAND_INFO).filter(band => band !== correct)).slice(0, 2);
+  labState.band = { correct, answered: false };
+  for (const option of shuffle([correct, ...otherBands])) {
+    addLabChoice(lab.bandChoices, `${option} · ${BAND_INFO[option].low.toFixed(2)}–${BAND_INFO[option].high.toFixed(2)} μm`, event => {
+      if (!labState.band || labState.band.answered) return;
+      labState.band.answered = true;
+      const isCorrect = option === correct;
+      for (const button of lab.bandChoices.querySelectorAll('button')) button.disabled = true;
+      event.currentTarget.classList.add(isCorrect ? 'correct' : 'wrong');
+      if (isCorrect) labState.bandScore += 1;
+      lab.bandGameScore.textContent = `GAME 03 · ${labState.bandScore} ${labState.bandScore === 1 ? 'pt' : 'pts'}`;
+      lab.bandFeedback.textContent = `${isCorrect ? 'Correct.' : 'Not quite.'} The frame is ${correct}; its measured range is ${data.waveMin.toFixed(3)}–${data.waveMax.toFixed(3)} μm.`;
+      lab.bandFeedback.className = `quiz-feedback ${isCorrect ? 'correct-text' : 'wrong-text'}`;
+      lab.bandNext.disabled = false;
+    });
+  }
+}
+
 async function copyMail() {
   if (!frames[frameIndex]) {
     lab.mailStatus.textContent = 'Load real frames before copying an observation.';
@@ -1165,10 +1604,12 @@ function initLab() {
   lab.learnNext.addEventListener('click', newLearnQuestion);
   lab.brighterNext.addEventListener('click', newBrighterRound);
   lab.waveNext.addEventListener('click', newWaveRound);
-  setLabTab('mail');
+  lab.bandNext.addEventListener('click', newBandRound);
+  setLabTab('wavelength');
   newLearnQuestion();
   newBrighterRound();
   newWaveRound();
+  newBandRound();
 }
 
 restoreFromUrl();

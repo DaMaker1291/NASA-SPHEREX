@@ -12,24 +12,46 @@ import {
 } from '../lib/fits'
 import { skyContext } from './sky'
 
-const STOPS = [
-  [4, 3, 14],
-  [24, 10, 68],
-  [72, 15, 176],
-  [139, 28, 246],
-  [255, 93, 204],
-  [255, 218, 236],
-  [255, 250, 232],
-]
+export type PaletteName = 'iridescent' | 'gold' | 'ice' | 'mono'
+export type StretchName = 'linear' | 'asinh' | 'log'
 
-const LUT = Array.from({ length: 256 }, (_, index) => {
-  const scaled = (index / 255) * (STOPS.length - 1)
-  const stop = Math.min(STOPS.length - 2, Math.floor(scaled))
-  const mix = scaled - stop
-  return [0, 1, 2].map((channel) =>
-    Math.round(STOPS[stop][channel] * (1 - mix) + STOPS[stop + 1][channel] * mix),
-  )
-})
+const PALETTES: Record<PaletteName, number[][]> = {
+  iridescent: [
+    [4, 3, 14], [24, 10, 68], [72, 15, 176], [139, 28, 246],
+    [255, 93, 204], [255, 218, 236], [255, 250, 232],
+  ],
+  gold: [
+    [7, 5, 2], [38, 19, 4], [96, 49, 9], [172, 98, 22],
+    [235, 166, 72], [255, 224, 160], [255, 250, 230],
+  ],
+  ice: [
+    [2, 5, 12], [7, 18, 44], [12, 49, 92], [31, 111, 151],
+    [99, 190, 210], [196, 239, 247], [247, 254, 255],
+  ],
+  mono: [
+    [3, 3, 3], [28, 28, 28], [72, 72, 72], [126, 126, 126],
+    [184, 184, 184], [232, 232, 232], [255, 255, 255],
+  ],
+}
+
+function paletteLut(name: PaletteName) {
+  const stops = PALETTES[name]
+  return Array.from({ length: 256 }, (_, index) => {
+    const scaled = (index / 255) * (stops.length - 1)
+    const stop = Math.min(stops.length - 2, Math.floor(scaled))
+    const mix = scaled - stop
+    return [0, 1, 2].map((channel) =>
+      Math.round(stops[stop][channel] * (1 - mix) + stops[stop + 1][channel] * mix),
+    )
+  })
+}
+
+const LUTS: Record<PaletteName, number[][]> = {
+  iridescent: paletteLut('iridescent'),
+  gold: paletteLut('gold'),
+  ice: paletteLut('ice'),
+  mono: paletteLut('mono'),
+}
 
 const CRC_TABLE = new Uint32Array(256).map((_, index) => {
   let value = index
@@ -118,7 +140,13 @@ const RASTER_CACHE_TTL_MS = 10 * 60_000
 const RASTER_CACHE_MAX_ENTRIES = 64
 const rasterCache = new Map<string, { raster: CutoutRaster; at: number }>()
 
-export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster> {
+export async function rasterizeCutout(
+  buffer: ArrayBuffer,
+  options: { palette?: PaletteName; stretch?: StretchName } = {},
+): Promise<CutoutRaster> {
+  const palette = options.palette ?? 'iridescent'
+  const stretch = options.stretch ?? 'asinh'
+  const lut = LUTS[palette] ?? LUTS.iridescent
   const fits = parseFits(buffer)
   const image = fits.hdus.find((hdu) => hdu.name.toUpperCase() === 'IMAGE') ?? fits.hdus[0]
   if (!image) throw new Error('The cutout has no image extension.')
@@ -145,7 +173,7 @@ export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster
       rgba[at + 3] = 255
       continue
     }
-    const color = LUT[Math.round(stretchValue(value, stats, 'asinh') * 255)]
+    const color = lut[Math.round(stretchValue(value, stats, stretch) * 255)]
     rgba[at] = color[0]
     rgba[at + 1] = color[1]
     rgba[at + 2] = color[2]
@@ -173,14 +201,18 @@ export async function rasterizeCutout(buffer: ArrayBuffer): Promise<CutoutRaster
   }
 }
 
-export async function rasterizeCutoutCached(key: string, buffer: ArrayBuffer) {
+export async function rasterizeCutoutCached(
+  key: string,
+  buffer: ArrayBuffer,
+  options: { palette?: PaletteName; stretch?: StretchName } = {},
+) {
   const cached = rasterCache.get(key)
   if (cached && Date.now() - cached.at <= RASTER_CACHE_TTL_MS) {
     return { raster: cached.raster, cached: true }
   }
   if (cached) rasterCache.delete(key)
 
-  const raster = await rasterizeCutout(buffer)
+  const raster = await rasterizeCutout(buffer, options)
   if (rasterCache.size >= RASTER_CACHE_MAX_ENTRIES) {
     const oldest = rasterCache.keys().next()
     if (!oldest.done) rasterCache.delete(oldest.value)

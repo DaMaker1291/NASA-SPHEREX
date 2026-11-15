@@ -15,7 +15,7 @@ import {
 } from './irsa'
 import { ApiError, TtlCache, queryEnum, queryNumber, validateIrsaProductUri } from './http'
 import { rasterizeCutoutCached } from './imaging'
-import { skyContext } from './sky'
+import { skyContext, skyNeighborhood } from './sky'
 import { getSourceHealth } from './sources'
 
 type Env = {
@@ -239,11 +239,17 @@ app.get('/api/spherex/frames', async (c) => {
   let dec: number
   let fov: number
   let limit: number
+  let requestedDetector: 'D1' | 'D2' | 'D3' | 'D4' | 'D5' | 'D6'
+  let palette: 'iridescent' | 'gold' | 'ice' | 'mono'
+  let stretch: 'linear' | 'asinh' | 'log'
   try {
     ra = queryNumber(c.req.query('ra'), { label: 'ra', min: 0, max: 360, fallback: 150 })
     dec = queryNumber(c.req.query('dec'), { label: 'dec', min: -90, max: 90, fallback: 19.5 })
     fov = queryNumber(c.req.query('fov'), { label: 'fov', min: 0.1, max: 0.9, fallback: 0.3 })
     limit = Math.round(queryNumber(c.req.query('limit'), { label: 'limit', min: 2, max: 8, fallback: 6 }))
+    requestedDetector = queryEnum(c.req.query('detector'), ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'] as const, 'D2')
+    palette = queryEnum(c.req.query('palette'), ['iridescent', 'gold', 'ice', 'mono'] as const, 'iridescent')
+    stretch = queryEnum(c.req.query('stretch'), ['linear', 'asinh', 'log'] as const, 'asinh')
   } catch (error) {
     return apiError(c, error)
   }
@@ -278,8 +284,7 @@ app.get('/api/spherex/frames', async (c) => {
     for (const rows of groups.values()) {
       for (const observation of rows) for (const detector of observation.detectors) available.add(detector.detector)
     }
-    const requested = queryEnum(c.req.query('detector'), ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'] as const, 'D2')
-    const detector = available.has(requested) ? requested : [...available].sort()[0]
+    const detector = available.has(requestedDetector) ? requestedDetector : [...available].sort()[0]
     if (!detector) throw new ApiError(502, 'No detector products were returned for this field.', 'NO_DETECTORS')
 
     const frames = [...groups.values()]
@@ -302,7 +307,10 @@ app.get('/api/spherex/frames', async (c) => {
           (index) => frames[index],
         )
     const query = (uri: string) =>
-      `/api/spherex/png?${new URLSearchParams({ uri, ra: String(ra), dec: String(dec), fov: String(fov), v: '5' }).toString()}`
+      `/api/spherex/png?${new URLSearchParams({
+        uri, ra: String(ra), dec: String(dec), fov: String(fov),
+        palette, stretch, v: '6',
+      }).toString()}`
 
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
     c.header('X-Data-Source', asciiHeader(data.source.label))
@@ -313,6 +321,10 @@ app.get('/api/spherex/frames', async (c) => {
       summary: data.summary,
       sky: skyContext(ra, dec),
       detector,
+      detectorRequested: requestedDetector,
+      availableDetectors: [...available].sort(),
+      palette,
+      stretch,
       frames: picked.map(({ row, product }) => ({
         id: row.obsid.replace(/_\d+$/, ''),
         obsid: row.obsid,
@@ -340,16 +352,23 @@ app.get('/api/spherex/png', async (c) => {
     const ra = queryNumber(c.req.query('ra'), { label: 'ra', min: 0, max: 360 })
     const dec = queryNumber(c.req.query('dec'), { label: 'dec', min: -90, max: 90 })
     const fov = queryNumber(c.req.query('fov'), { label: 'fov', min: 0.02, max: 0.9, fallback: 0.3 })
+    const palette = queryEnum(c.req.query('palette'), ['iridescent', 'gold', 'ice', 'mono'] as const, 'iridescent')
+    const stretch = queryEnum(c.req.query('stretch'), ['linear', 'asinh', 'log'] as const, 'asinh')
+    const pixels = c.req.query('pixels')
+      ? Math.round(queryNumber(c.req.query('pixels'), { label: 'pixels', min: 128, max: 1400 }))
+      : null
+    const sizeOverride = pixels ? `${pixels}pix` : undefined
 
     const cached = await edgeMatch(c.req.raw)
     if (cached) return withCacheState(cached, 'HIT')
 
-    const cutout = await getCutout(uri, ra, dec, fov)
+    const cutout = await getCutout(uri, ra, dec, fov, sizeOverride)
     let rasterResult
     try {
       rasterResult = await rasterizeCutoutCached(
-        `${cutout.uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${fov.toFixed(3)}`,
+        `${cutout.uri}|${ra.toFixed(6)}|${dec.toFixed(6)}|${cutout.sizeLabel}|${palette}|${stretch}`,
         cutout.buffer,
+        { palette, stretch },
       )
     } catch {
       throw new ApiError(502, 'IRSA returned a cutout the service could not rasterize.', 'BAD_UPSTREAM_RESPONSE')
@@ -361,7 +380,10 @@ app.get('/api/spherex/png', async (c) => {
     c.header('X-Data-Source', 'IRSA SPHEREx cutout raster')
     c.header('X-Data-Url', cutout.uri)
     c.header('X-Cutout-Cache', cutout.cached ? 'HIT' : 'MISS')
+    c.header('X-Cutout-Size', cutout.sizeLabel)
     c.header('X-Raster-Cache', rasterResult.cached ? 'HIT' : 'MISS')
+    c.header('X-Frame-Palette', palette)
+    c.header('X-Frame-Stretch', stretch)
     c.header('X-Frame-Width', String(raster.width))
     c.header('X-Frame-Height', String(raster.height))
     c.header('X-Frame-Min', String(raster.stats.min))
@@ -521,6 +543,26 @@ app.get('/api/spherex/spectrum', async (c) => {
       segments,
       errors,
     })
+    edgeStore(c, response)
+    return withCacheState(response, 'MISS')
+  } catch (error) {
+    return apiError(c, error)
+  }
+})
+
+app.get('/api/sky/context', async (c) => {
+  try {
+    const ra = queryNumber(c.req.query('ra'), { label: 'ra', min: 0, max: 360, fallback: 150 })
+    const dec = queryNumber(c.req.query('dec'), { label: 'dec', min: -90, max: 90, fallback: 19.5 })
+    const radius = queryNumber(c.req.query('radius'), { label: 'radius', min: 0.05, max: 10, fallback: 2 })
+
+    const cached = await edgeMatch(c.req.raw)
+    if (cached) return withCacheState(cached, 'HIT')
+
+    const data = skyNeighborhood(ra, dec, radius)
+    c.header('Cache-Control', 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=3600')
+    c.header('X-Data-Source', 'astronomy-engine IAU constellation geometry')
+    const response = c.json({ source: { label: 'IAU constellation geometry · astronomy-engine', method: data.method }, ra, dec, ...data })
     edgeStore(c, response)
     return withCacheState(response, 'MISS')
   } catch (error) {

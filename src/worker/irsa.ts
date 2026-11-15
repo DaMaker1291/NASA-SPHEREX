@@ -567,14 +567,14 @@ async function getCutoutBuffer(uri: string, ra: number, dec: number, size: strin
   return { buffer, cached: false }
 }
 
-export async function getCutout(uri: string, ra: number, dec: number, fov: number) {
+export async function getCutout(uri: string, ra: number, dec: number, fov: number, sizeOverride?: string) {
   const safeUri = validateIrsaProductUri(uri)
   if (!finite(ra) || ra < 0 || ra > 360 || !finite(dec) || dec < -90 || dec > 90) {
     throw new ApiError(400, 'Invalid cutout center.', 'OUT_OF_RANGE')
   }
   const size = clamp(fov, 0.02, 0.9).toFixed(3)
-  const result = await getCutoutBuffer(safeUri, ra, dec, `${size}d`)
-  return { buffer: result.buffer, size: Number(size), uri: safeUri, cached: result.cached }
+  const result = await getCutoutBuffer(safeUri, ra, dec, sizeOverride ?? `${size}d`)
+  return { buffer: result.buffer, size: Number(size), sizeLabel: sizeOverride ?? `${size}d`, uri: safeUri, cached: result.cached }
 }
 
 function hduByName(fits: FitsFile, name: string) {

@@ -22,6 +22,49 @@ function sexagesimal(value: number, units: ['h', 'm', 's'] | ['°', '′', '″'
   return `${sign}${first}${units[0]} ${String(minutes).padStart(2, '0')}${units[1]} ${seconds.toFixed(2).padStart(5, '0')}${units[2]}`
 }
 
+export function skyNeighborhood(ra: number, dec: number, radiusDeg = 1.5) {
+  const center = skyContext(ra, dec)
+  const radius = Math.min(10, Math.max(0.05, radiusDeg))
+  const bearings = [
+    ['north', 0], ['north-east', 45], ['east', 90], ['south-east', 135],
+    ['south', 180], ['south-west', 225], ['west', 270], ['north-west', 315],
+  ] as const
+  const neighbors = new Map<string, { name: string; symbol: string; direction: string; ra: number; dec: number; separation: number }>()
+  for (const [direction, bearing] of bearings) {
+    const angle = bearing * RAD
+    const decRad = dec * RAD
+    const raRad = ra * RAD
+    const targetDec = Math.asin(
+      Math.sin(decRad) * Math.cos(radius * RAD) +
+      Math.cos(decRad) * Math.sin(radius * RAD) * Math.cos(angle),
+    )
+    const targetRa = raRad + Math.atan2(
+      Math.sin(angle) * Math.sin(radius * RAD) * Math.cos(decRad),
+      Math.cos(radius * RAD) - Math.sin(decRad) * Math.sin(targetDec),
+    )
+    const neighborRa = ((targetRa * DEG) % 360 + 360) % 360
+    const neighborDec = targetDec * DEG
+    const constellation = Constellation(neighborRa / 15, neighborDec)
+    if (constellation.name === center.constellation.name) continue
+    const key = constellation.name
+    if (neighbors.has(key)) continue
+    neighbors.set(key, {
+      name: constellation.name,
+      symbol: constellation.symbol,
+      direction,
+      ra: neighborRa,
+      dec: neighborDec,
+      separation: radius,
+    })
+  }
+  return {
+    ...center,
+    radiusDeg: radius,
+    neighbors: [...neighbors.values()],
+    method: 'astronomy-engine IAU constellation lookup at eight offset bearings',
+  }
+}
+
 export function skyContext(ra: number, dec: number) {
   // astronomy-engine's Constellation() takes right ascension in hours, not degrees.
   const constellation = Constellation(ra / 15, dec)
