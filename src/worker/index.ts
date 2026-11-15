@@ -411,11 +411,10 @@ app.get('/api/spherex/frames', async (c) => {
       : Array.from(new Set(Array.from({ length: frameLimit }, (_, index) => Math.round((index * (frames.length - 1)) / (frameLimit - 1))))).map(
           (index) => frames[index],
         )
-    const indexed = data.source.label.includes('S3 index')
     const query = (uri: string) =>
       `/api/spherex/png?${new URLSearchParams({
         uri, ra: String(ra), dec: String(dec), fov: String(fov),
-        palette, stretch, v: '7', ...(indexed ? { preferS3: '1' } : {}),
+        palette, stretch, v: '7', preferS3: '1',
       }).toString()}`
 
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
@@ -469,7 +468,7 @@ app.get('/api/spherex/png', async (c) => {
     const cached = await edgeMatch(c.req.raw)
     if (cached) return withCacheState(cached, 'HIT')
 
-    const preferS3 = c.req.query('preferS3') === '1'
+    const preferS3 = c.req.query('preferS3') !== '0'
     // Use the same real image, variance, zodi and WCS-WAVE planes for the
     // interactive PNG as the FITS route; both now crop S3 rows instead of
     // downloading the full 60 MB product.
