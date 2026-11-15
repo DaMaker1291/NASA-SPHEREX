@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-38">
-  <script type="module" src="script.js?v=next-68"></script>
+  <link rel="stylesheet" href="style.css?v=next-39">
+  <script type="module" src="script.js?v=next-70"></script>
 </head>
 <body>
   <header class="site-header">
@@ -20,6 +20,7 @@
       <span class="live-chip"><span class="live-dot"></span> Real IRSA data</span>
       <button id="navMapApp" class="text-button" type="button">Map app ↗</button>
       <a class="text-button" href="#lab">Workspace</a>
+      <a class="text-button" href="game.html">Spot the difference</a>
       <button id="mailShortcut" class="text-button" type="button">✉ Mail observation</button>
       <a class="text-button" href="#how-it-works">How it works</a>
       <a class="text-button" href="#data-sources">Data sources</a>
@@ -332,13 +333,13 @@
       <div class="sources-intro">
         <p class="kicker">LIVE DATA &amp; PROVENANCE</p>
         <h2 id="sourcesTitle">What is live, what is cached.</h2>
-        <p>Every frame is real archive data, but the route can change when a service is degraded. This panel probes the actual endpoints the viewer uses and keeps the fallback labels honest.</p>
+        <p>Every frame is real archive data, but the route can change when a service is degraded. This panel probes the actual endpoints the viewer uses and keeps the fallback labels honest. A failed probe is a request-level timeout or error, not a confirmed IRSA-wide outage.</p>
       </div>
 
       <div class="sources-layout">
         <article class="source-status-card" aria-labelledby="sourceStatusTitle">
           <div class="source-status-head">
-            <div><h3 id="sourceStatusTitle">Source health</h3><p>Server-side probes · cached briefly by the API</p></div>
+            <div><h3 id="sourceStatusTitle">Source health</h3><p>Server-side probes · 6 s window · the data path waits longer</p></div>
             <button id="sourceRefresh" class="button secondary compact" type="button">Recheck now</button>
           </div>
           <p id="sourceStatusSummary" class="source-summary" role="status">Checking IRSA, S3, HiPS and ESA Gaia…</p>
@@ -393,7 +394,7 @@
     <section class="lab-panel" id="lab" aria-label="Observation toolkit">
       <div class="lab-heading">
         <div><p class="kicker">OBSERVATION WORKSPACE</p><h2>Go deeper than one picture.</h2></div>
-        <div class="lab-heading-actions"><span class="lab-caption">WAVELENGTH · SKY · LEARN · GAME · VERIFY</span><button id="appToolsClose" class="app-sheet-close" type="button">Close ✕</button></div>
+        <div class="lab-heading-actions"><span class="lab-caption">WAVELENGTH · SKY · LEARN · DIFFERENCE · VERIFY</span><button id="appToolsClose" class="app-sheet-close" type="button">Close ✕</button></div>
       </div>
       <div class="tools-sky-context" aria-label="Current sky context">
         <div id="toolsSkyImage" class="tools-sky-thumb" role="img" aria-label="Current SPHEREx sky preview"></div>
@@ -408,7 +409,7 @@
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labConstellation" data-lab-tab="constellation">Constellations</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labVerify" data-lab-tab="verify">Data verification</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learning lab</button>
-        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labGames" data-lab-tab="games">Sky games</button>
+        <a class="lab-tab lab-tab-link" href="game.html">Spot the difference ↗</a>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labDiscover" data-lab-tab="discover">Change finder</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labMail" data-lab-tab="mail">✉ Mail observation</button>
       </div>

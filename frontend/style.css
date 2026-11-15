@@ -416,6 +416,7 @@ img, canvas { max-width: 100%; }
 .lab-tabs { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 0 14px; }
 .lab-tab { border: 1px solid transparent; border-radius: 100px; background: transparent; color: var(--quiet); padding: 7px 12px; font-size: 10px; font-weight: 700; }
 .lab-tab:hover { color: var(--text); }
+.lab-tab-link { display: inline-flex; align-items: center; text-decoration: none; }
 .lab-tab.active { border-color: #4c6280; background: #172334; color: var(--gold); }
 .lab-content[hidden] { display: none; }
 .desk-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(280px, .95fr); gap: 12px; }

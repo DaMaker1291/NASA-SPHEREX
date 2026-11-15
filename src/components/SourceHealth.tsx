@@ -50,7 +50,7 @@ export function SourceHealthPanel({ health, error }: { health: SourceHealth | nu
               ? 'Core discovery and pixel sources are reachable. No synthetic sky is drawn.'
               : health.discoveryOk
                 ? 'Discovery is up; a real pixel source is degraded. The viewer keeps the last real frame visible.'
-                : 'Discovery is down. Cached real fields remain visible; no synthetic sky is drawn.'
+                : 'Discovery did not respond on the last probe. Cached real fields remain visible; no synthetic sky is drawn.'
             : 'Checking SIA2 DR1, SIA2 QR3, TAP, S3 and HIPS from the Worker.')}
       </p>
     </Card>

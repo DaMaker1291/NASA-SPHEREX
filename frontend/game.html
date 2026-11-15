@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080b12">
+  <meta name="description" content="Spot real changes between two SPHEREx visits of the same patch of sky.">
+  <title>Spot the difference | SPHEREx Explorer</title>
+  <link rel="stylesheet" href="style.css?v=next-39">
+  <link rel="stylesheet" href="game.css?v=next-1">
+  <script type="module" src="game.js?v=next-4"></script>
+</head>
+<body class="game-page">
+  <header class="site-header game-header">
+    <a class="brand" href="./" aria-label="DRIFT — SPHEREx Explorer home">
+      <img class="brand-logo" src="assets/drift-logo.svg" alt="DRIFT" width="128" height="44">
+      <span class="brand-divider" aria-hidden="true"></span>
+      <span class="brand-name">SPHEREx <em>Explorer</em></span>
+    </a>
+    <div class="game-header-actions">
+      <span class="live-chip"><span class="live-dot"></span> Real SPHEREx visits</span>
+      <a class="game-back" href="./">← Back to explorer</a>
+    </div>
+  </header>
+
+  <main class="game-main">
+    <section class="game-hero" aria-labelledby="gameTitle">
+      <div class="game-hero-copy">
+        <p class="kicker">SPOT THE DIFFERENCE · REAL SPHEREX VISITS</p>
+        <h1 id="gameTitle">Same sky. <span>Different night.</span></h1>
+        <p class="game-lede">Two real visits of the same patch, recorded at different times. Click the stars, smudges or bright spots that changed between them. Every target is measured from the actual pixels.</p>
+        <div class="game-how" aria-label="How to play">
+          <div><span>01</span><p>Compare visit A with visit B.</p></div>
+          <div><span>02</span><p>Click a change in either image.</p></div>
+          <div><span>03</span><p>Find them all, then load a new pair.</p></div>
+        </div>
+      </div>
+      <aside class="game-note">
+        <span class="kicker">WHAT COUNTS</span>
+        <p>A variable star brightening, an object that moved, or a real difference between exposures. The game ranks the strongest measured pixel changes, not decorative marks.</p>
+        <a href="./#lab" class="game-note-link">Prefer the full observation workspace? Open it here ↗</a>
+      </aside>
+    </section>
+
+    <section class="game-shell" id="game" aria-labelledby="roundTitle">
+      <div class="game-toolbar">
+        <div class="game-heading">
+          <p id="roundMeta" class="kicker">LOADING REAL VISITS</p>
+          <h2 id="roundTitle">Preparing a sky pair…</h2>
+        </div>
+        <div class="game-scoreboard" aria-label="Round score">
+          <div><span>Found</span><strong id="gameScore">0 / 0</strong></div>
+          <div><span>Misses</span><strong id="gameMisses">0</strong></div>
+          <div><span>Hints</span><strong id="gameHints">0</strong></div>
+        </div>
+      </div>
+
+      <div id="gameBoard" class="game-board" data-candidates="0">
+        <article class="game-frame">
+          <div class="game-frame-head"><span>VISIT A</span><time id="frameDateA">Loading…</time></div>
+          <div class="game-canvas-wrap">
+            <canvas id="frameA" width="480" height="480" role="img" aria-label="First SPHEREx visit. Click a difference in either image.">Visit A image</canvas>
+            <div id="frameLoadingA" class="game-frame-loading">Loading real visit…</div>
+          </div>
+        </article>
+        <article class="game-frame">
+          <div class="game-frame-head"><span>VISIT B</span><time id="frameDateB">Loading…</time></div>
+          <div class="game-canvas-wrap">
+            <canvas id="frameB" width="480" height="480" role="img" aria-label="Second SPHEREx visit. Click a difference in either image.">Visit B image</canvas>
+            <div id="frameLoadingB" class="game-frame-loading">Loading real visit…</div>
+          </div>
+        </article>
+      </div>
+
+      <div class="game-controls">
+        <p id="gameStatus" class="game-status" role="status" aria-live="polite">Loading two real SPHEREx visits…</p>
+        <div class="game-actions">
+          <button id="gameHint" class="button secondary" type="button" disabled>Hint</button>
+          <button id="gameReveal" class="button secondary" type="button" disabled>Reveal</button>
+          <button id="gameNew" class="button primary" type="button" disabled>New pair</button>
+        </div>
+      </div>
+
+      <div class="game-progress-row">
+        <div id="gameProgress" class="game-progress" aria-hidden="true"></div>
+        <p id="gameSource" class="game-source">Images come from the bundled real SPHEREx DR1 mirror.</p>
+      </div>
+    </section>
+
+    <section class="game-footer-note">
+      <div>
+        <p class="kicker">REAL DATA, NOT A CARTOON</p>
+        <h2>The sky is the puzzle.</h2>
+      </div>
+      <p>These are archived SPHEREx detector frames from the same field. The game does not invent stars or paint fake differences: it compares the two visits in your browser and asks you to find the strongest real changes.</p>
+      <a class="button secondary" href="./">← Back to the explorer</a>
+    </section>
+  </main>
+
+  <footer class="site-footer game-site-footer">
+    <span>SPHEREx Explorer · Spot the difference</span>
+    <span>Real IRSA data · Not affiliated with or endorsed by NASA</span>
+    <a href="https://irsa.ipac.caltech.edu/Missions/spherex.html" target="_blank" rel="noreferrer">SPHEREx at IRSA ↗</a>
+  </footer>
+</body>
+</html>

@@ -14,6 +14,7 @@ export type SourceHealth = {
   ok: boolean
   discoveryOk: boolean
   pixelsOk: boolean
+  probeWindowMs: number
   sources: SourceProbe[]
 }
 
@@ -71,7 +72,7 @@ async function probe(
       ok: false,
       status: null,
       latencyMs: Math.max(0, Date.now() - startedAt),
-      detail: timedOut ? `timed out after ${PROBE_TIMEOUT_MS / 1000}s` : 'network error',
+      detail: timedOut ? `no response within ${PROBE_TIMEOUT_MS / 1000}s` : 'network error',
     }
   } finally {
     clearTimeout(timer)
@@ -98,6 +99,7 @@ async function buildHealth(): Promise<SourceHealth> {
     ok: discoveryOk && pixelsOk,
     discoveryOk,
     pixelsOk,
+    probeWindowMs: PROBE_TIMEOUT_MS,
     sources,
   }
 }

@@ -376,7 +376,7 @@ export function Tool() {
                 {loadingFind
                   ? 'querying IRSA'
                   : findError
-                    ? 'IRSA unavailable'
+                    ? 'IRSA query failed'
                     : find?.coverage?.observed === false
                       ? 'not observed yet'
                       : `${visits.length} real visits`}

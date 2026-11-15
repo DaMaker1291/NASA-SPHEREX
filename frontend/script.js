@@ -1392,7 +1392,7 @@ function loadVerificationGaia(frame, analysis) {
     })
     .catch(error => {
       if (labState.verifyGaiaKey === key) {
-        setVerificationGaia('unavailable', `ESA Gaia DR3 could not be reached (${error.message}). Gaia is independent of IRSA, so an IRSA outage is not the cause of this specific failure. Not counted as an agreement.`);
+        setVerificationGaia('unavailable', `ESA Gaia DR3 could not be reached (${error.message}). Gaia is independent of IRSA, so an IRSA problem is not necessarily the cause of this specific failure. Not counted as an agreement.`);
       }
     });
 }
@@ -1858,7 +1858,7 @@ function updateVisitNotice() {
   el.visitNoticeRetry.hidden = noCoverage;
   el.visitNoticeText.textContent = noCoverage
     ? 'This is the 2025 30° all-sky mosaic context, not a visit. IRSA has no per-visit coverage for this exact patch, so there are no visits to play. Try another patch, or load the verified Leo field.'
-    : 'This is the 2025 30° all-sky mosaic context, not a visit or a time series. IRSA is not responding and this patch has no verified local visit frames. The verified Leo field stays available offline.';
+    : 'This is the 2025 30° all-sky mosaic context, not a visit or a time series. IRSA did not answer this request and this patch has no verified local visit frames. The verified Leo field stays available offline.';
 }
 
 function pixelRouteLabel(frame, analysis = null) {
@@ -1957,9 +1957,10 @@ function renderSourceHealth(data) {
   const pixels = Boolean(data?.pixelsOk);
   const reachable = sources.filter(source => source.ok).length;
   const allReachable = sources.length > 0 && reachable === sources.length;
+  const probeWindow = Math.round((data?.probeWindowMs ?? 6_000) / 1000);
   el.sourceStatusSummary.textContent = allReachable
-    ? `All ${sources.length} probes are reachable. Live discovery, real pixel stores and Gaia are online.`
-    : `${reachable} of ${sources.length} probes reachable. Discovery is ${discovery ? 'available' : 'degraded'}; real pixel stores are ${pixels ? 'available' : 'degraded'}. Check the individual rows before assuming a route is live.`;
+    ? `All ${sources.length} probes answered within ${probeWindow}s. Live discovery, real pixel stores and Gaia are online.`
+    : `${reachable} of ${sources.length} probes answered within ${probeWindow}s. Discovery is ${discovery ? 'available' : 'not confirmed in this probe window'}; real pixel stores are ${pixels ? 'available' : 'not confirmed in this probe window'}. Slow catalog responses are not a total outage.`;
   el.sourceStatusSummary.className = `source-summary ${allReachable ? 'state-ok' : 'state-degraded'}`;
   const checked = data?.checkedAt ? new Date(data.checkedAt) : null;
   el.sourceCheckedAt.textContent = checked && !Number.isNaN(checked.getTime())
@@ -2018,7 +2019,7 @@ function setLoading(isLoading) {
 
 function updateAppLive(state = 'live') {
   if (!el.appLive) return;
-  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', offline: 'IRSA OFFLINE', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
+  const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', offline: 'IRSA QUERY FAILED', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
   if (el.appLiveText) el.appLiveText.textContent = labels[state] || labels.live;
   el.appLive.dataset.state = state;
 }
@@ -2344,7 +2345,7 @@ function showNearestMirrorFallback(mirror, note) {
   el.emptyReal.textContent = 'Load this field';
   showMirrorField(mirror, fallbackField, { record: true, note });
   updateAppLive('mirror');
-  notify(`IRSA is unavailable. Showing the nearest verified local field at ${coordinateText(fallbackField.ra, fallbackField.dec)}. This is real SPHEREx archive data, not the clicked patch.`);
+  notify(`IRSA did not answer this request. Showing the nearest verified local field at ${coordinateText(fallbackField.ra, fallbackField.dec)}. This is real SPHEREx archive data, not the clicked patch.`);
 }
 
 async function loadRealFrames(options = {}) {
@@ -2380,8 +2381,8 @@ async function loadRealFrames(options = {}) {
       notify(`Showing ${mirror.frames.length} verified local visits while IRSA refreshes.`);
     } else if (archiveUnavailableUntil > Date.now()) {
       // Every arbitrary sky position now has real local context from the
-      // checked-in NASA/JPL-Caltech mosaic. Do not make a recent outage empty.
-      mosaicShown = await showMosaicField(field, 'IRSA unavailable');
+      // checked-in NASA/JPL-Caltech mosaic. Do not make a recent failure empty.
+      mosaicShown = await showMosaicField(field, 'IRSA query failed');
       if (request !== loadRequest) return;
       if (mosaicShown) {
         setLoading(false);
@@ -2408,7 +2409,7 @@ async function loadRealFrames(options = {}) {
       ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '24', v: '10',
       detector, palette, stretch
     });
-    const timeout = setTimeout(() => controller.abort(), 20_000);
+    const timeout = setTimeout(() => controller.abort(), 50_000);
     let response;
     try {
       response = await fetch(`/api/spherex/frames?${params.toString()}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
@@ -2495,10 +2496,10 @@ async function loadRealFrames(options = {}) {
     archiveUnavailableUntil = Date.now() + 30_000;
     if (mosaicShown) {
       updateAppLive('mosaic');
-      el.sourceLabel.textContent = `NASA/JPL-Caltech all-sky mosaic · local · IRSA unavailable: ${archiveError}`;
+      el.sourceLabel.textContent = `NASA/JPL-Caltech all-sky mosaic · local · IRSA query failed: ${archiveError}`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = 'LOCAL MOSAIC · REAL NASA IMAGE';
-      notify(`IRSA is unavailable; keeping the real local all-sky mosaic. ${archiveError}`);
+      notify(`IRSA did not answer this request; keeping the real local all-sky mosaic. ${archiveError}`);
       return;
     }
     const fallback = await loadVerifiedMirror(field, { nearest: true });
@@ -2507,26 +2508,26 @@ async function loadRealFrames(options = {}) {
       return;
     }
     if (fallback) {
-      showNearestMirrorFallback(fallback, 'IRSA unavailable · nearest verified field');
+      showNearestMirrorFallback(fallback, 'IRSA query failed · nearest verified field');
       return;
     }
     updateAppLive('offline');
     if (frames.length) {
-      el.sourceLabel.textContent = `IRSA unavailable: ${archiveError} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
+      el.sourceLabel.textContent = `IRSA query failed: ${archiveError} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = realBadge;
     } else {
-      el.sourceLabel.textContent = `IRSA unavailable: ${archiveError}`;
+      el.sourceLabel.textContent = `IRSA query failed: ${archiveError}`;
       el.empty.hidden = false;
       const isDefaultField = Math.abs(field.ra - 150) < 0.01 && Math.abs(field.dec - 19.5) < 0.01 && Math.abs(field.fov - 0.3) < 0.01;
       if (isDefaultField) {
         emptyDefaultFallback = false;
         el.emptyReal.textContent = 'Load this field';
-        setEmptyState('ARCHIVE NOT AVAILABLE', 'IRSA is not answering', `${archiveError} The archive can be busy; try again in a moment.`);
+        setEmptyState('IRSA DID NOT RESPOND', 'The discovery request failed', `${archiveError} This is a request-level timeout, not a confirmed IRSA-wide outage; try again in a moment.`);
       } else {
         emptyDefaultFallback = true;
         el.emptyReal.textContent = 'Load verified default field';
-        setEmptyState('ARCHIVE NOT AVAILABLE', 'This field needs IRSA discovery', `${archiveError} The verified default field (RA 150°, Dec +19.5°) is still available offline; the other presets need IRSA's discovery service.`);
+        setEmptyState('IRSA DISCOVERY UNAVAILABLE', 'This field needs IRSA discovery', `${archiveError} This request did not reach the discovery service; it is not a confirmed IRSA-wide outage. The verified default field (RA 150°, Dec +19.5°) is still available offline; the other presets need IRSA's discovery service.`);
       }
     }
     notify(`IRSA request failed: ${archiveError}`);
@@ -3303,7 +3304,7 @@ function measurementGamePool() {
 function setGameSource(pool) {
   let text = '';
   if (pool.source === 'archive') {
-    text = `IRSA is offline; games use real local-mirror visits from ${labState.gameArchive?.fieldLabel || 'the bundled field'}.`;
+    text = `IRSA did not answer this request; games use real local-mirror visits from ${labState.gameArchive?.fieldLabel || 'the bundled field'}.`;
   } else if (pool.source === 'displayed') {
     text = 'Rounds use the measured visits loaded from this field.';
   } else if (pool.source === 'loading') {

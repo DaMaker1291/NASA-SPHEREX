@@ -168,6 +168,7 @@ function releaseFromUri(uri: string) {
 }
 
 const SIA_COOLDOWN_MS = 30_000
+const SIA_TOTAL_BUDGET_MS = 40_000
 const UPSTREAM_COOLDOWN_MS = 8_000
 const LAST_GOOD_MS = 86_400_000
 const searchCache = new TtlCache<string, IrsaFind>(300_000, 64)
@@ -336,10 +337,15 @@ function parseSiaHtml(text: string): Array<Record<string, string>> {
   return rows
 }
 
-async function fetchSiaRows(ra: number, dec: number, collection: string): Promise<Array<Record<string, string>>> {
+async function fetchSiaRows(ra: number, dec: number, collection: string, budgetMs: number): Promise<Array<Record<string, string>>> {
   // SIA is a coverage query: ask for products whose footprint overlaps the
   // target point, not every product inside the display FOV. A 0.02-degree
   // cone is enough for a valid cutout and avoids enormous SIA result sets.
+  const deadline = Date.now() + Math.max(0, budgetMs)
+  const remaining = () => Math.max(0, deadline - Date.now())
+  if (remaining() < 1_000) {
+    throw new ApiError(504, 'IRSA SIA2 overall deadline expired.', 'UPSTREAM_TIMEOUT')
+  }
   const radius = 0.02
   const base = new URLSearchParams({
     COLLECTION: collection,
@@ -351,10 +357,11 @@ async function fetchSiaRows(ra: number, dec: number, collection: string): Promis
   try {
     const params = new URLSearchParams(base)
     params.set('RESPONSEFORMAT', 'CSV')
+    const csvBudget = remaining()
     const response = await fetchWithRetry(
       `${IRSA}/SIA?${params.toString()}`,
       { headers: { Accept: 'text/csv' } },
-      { attempts: 2, timeoutMs: 6_000, totalTimeoutMs: 12_000 },
+      { attempts: 1, timeoutMs: Math.min(30_000, csvBudget), totalTimeoutMs: csvBudget },
     )
     await assertUpstreamOk(response, 'IRSA SIA2')
     const text = await readTextLimited(response, MAX_SIA_BYTES)
@@ -368,12 +375,17 @@ async function fetchSiaRows(ra: number, dec: number, collection: string): Promis
   }
 
   try {
+    const htmlBudget = remaining()
+    if (htmlBudget < 1_000) {
+      if (csvError instanceof ApiError) throw csvError
+      throw new ApiError(504, 'IRSA SIA2 overall deadline expired.', 'UPSTREAM_TIMEOUT')
+    }
     const params = new URLSearchParams(base)
     params.set('RESPONSEFORMAT', 'HTML')
     const response = await fetchWithRetry(
       `${IRSA}/SIA?${params.toString()}`,
       { headers: { Accept: 'text/html' } },
-      { attempts: 2, timeoutMs: 8_000, totalTimeoutMs: 16_000 },
+      { attempts: 1, timeoutMs: Math.min(12_000, htmlBudget), totalTimeoutMs: htmlBudget },
     )
     await assertUpstreamOk(response, 'IRSA SIA2')
     const text = await readTextLimited(response, MAX_SIA_HTML_BYTES)
@@ -516,10 +528,17 @@ async function querySia(ra: number, dec: number, fov: number, cacheKey: string):
     let sourceCollection: string = SIA_COLLECTIONS[0].id
     let lastError: unknown = null
     let answeredEmpty = false
+    let deadlineExpired = false
+    const deadline = Date.now() + SIA_TOTAL_BUDGET_MS
 
     for (const collection of SIA_COLLECTIONS) {
+      const remaining = deadline - Date.now()
+      if (remaining < 1_000) {
+        deadlineExpired = true
+        break
+      }
       try {
-        const candidate = await fetchSiaRows(ra, dec, collection.id)
+        const candidate = await fetchSiaRows(ra, dec, collection.id, remaining)
         if (!candidate.length) {
           answeredEmpty = true
           continue
@@ -538,6 +557,10 @@ async function querySia(ra: number, dec: number, fov: number, cacheKey: string):
       // A successful empty SIA2 response is a coverage result. If another
       // collection failed, do not turn an availability problem into a false
       // "not observed" claim.
+      if (deadlineExpired) {
+        if (lastError instanceof ApiError) throw lastError
+        throw new ApiError(504, `IRSA SIA2 did not answer within ${SIA_TOTAL_BUDGET_MS / 1000}s.`, 'UPSTREAM_TIMEOUT')
+      }
       if (answeredEmpty && !lastError) return emptyFind(ra, dec, fov, `${sourceLabel} · no coverage`, `${sourceCollection} · POS circle · no rows`)
       if (lastError instanceof ApiError) throw lastError
       throw new ApiError(502, 'IRSA returned no SIA2 products for that field.', 'NO_ROWS')

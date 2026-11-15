@@ -130,7 +130,7 @@ does not generate demo pixels.
   (`X-Raster-Cache`), and cutout summaries in a 64-entry cache
   (`X-Summary-Cache`). This avoids repeatedly downloading and reparsing the
   same IRSA product for the PNG, summary and spectrum paths.
-- **Source health** — `/api/health/sources` separates discovery (SIA2/TAP) from real pixel stores (S3/HiPS) and also probes ESA Gaia. A degraded provider does not imply the others failed; the UI prints each result rather than collapsing them into one badge.
+- **Source health** — `/api/health/sources` separates discovery (SIA2/TAP) from real pixel stores (S3/HiPS) and also probes ESA Gaia. A degraded provider does not imply the others failed; the UI prints each result rather than collapsing them into one badge. The health probes use a 6-second window, while the real SIA data path allows a longer response, so a slow catalogue row can read “not confirmed” here and still answer on an actual field request.
 - **Failure handling** — a failed field enters a 30 s per-key cooldown, while
   infrastructure failures add a short 8 s service-wide circuit breaker. One bad
   field therefore cannot poison unrelated SIA2 or catalogue searches.
@@ -187,8 +187,8 @@ discovery is unavailable. The ingestor talks directly to IRSA TAP/SIA2 and the
 IRSA/S3 cutout sources, so it does not need the app API; a fresh run mirrors up
 to 24 visits per detector by default and can mirror every available visit with
 `--limit 0`. The mirror contains real archive products only; it does not invent
-missing fields. If a map click has no local coverage and IRSA is unavailable,
-the viewer moves to the nearest verified field and labels it as a fallback; it
+missing fields. If a map click has no local coverage and the IRSA request does
+not answer, the viewer moves to the nearest verified field and labels it as a fallback; it
 never displays that field's pixels under the clicked coordinates. See
 `docs/mirror.md` for the ingestion CLI and the limits of a selected-field mirror.
 
@@ -226,7 +226,7 @@ range. The six-array, 102-channel band plan is instrument geometry, not a claim
 that the viewer has a full 102-band image cube. Gaps in the spectrum are real
 detector coverage gaps. No astrometric or photometric correction beyond the IRSA
 level-2 pipeline is applied. IRSA availability is a hard dependency for new
-discovery; the verified default-field mirror remains available when it is down.
+discovery; the verified default-field mirror remains available when the live route is unavailable.
 Other fields still require the live archive to be discovered; no synthetic
 pixel path exists for them.
 
@@ -281,8 +281,8 @@ The RA/Dec parser accepts decimal degrees or sexagesimal values. Real visits
 load progressively; partial detector-edge frames are removed so the sequence
 does not jump in shape. **Blink A/B** toggles two visits; **Difference**
 subtracts their PNG rasters in the browser. The workspace below the viewer has
-separate Wavelength, Constellations, Data verification, Learning lab, Sky games
-and Mail sections. Wavelength uses the six real detector bands and server-side
+separate Wavelength, Constellations, Data verification, Learning lab and Mail
+sections, plus a standalone Spot the difference page. Wavelength uses the six real detector bands and server-side
 palette/stretch filters; the wide button requests a larger native-scale cutout;
 constellation membership and neighbourhoods come from IAU geometry; and the
 verification panel cross-checks SIA2 metadata, FITS headers, IAU geometry,
@@ -348,7 +348,8 @@ chrome instead of sitting in a page column:
 - **Sequence** opens playback, speed, blink, difference, the visit filmstrip and
   side-by-side comparison.
 - **Tools** opens the full observation workspace in a drawer, including bands,
-  constellations, verification, lessons, games, change finder and mail.
+  constellations, verification, lessons, change finder and mail. A separate
+  Spot the difference page compares two real D2 visits pixel by pixel.
 - **Link** copies the current field state; **Exit** restores the normal page.
 
 The app uses `?app=1` in the URL. Exiting writes `app=0`, so reloading a normal
