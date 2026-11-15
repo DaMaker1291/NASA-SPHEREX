@@ -18,6 +18,9 @@ const el = {
   stageDate: $('stageDate'), stageMode: $('stageMode'), filmstrip: $('filmstrip'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomNative: $('zoomNative'), resetView: $('resetView'), zoomLevel: $('zoomLevel'), copyLink: $('copyLink'),
   hdToggle: $('hdToggle'), hdToggleLab: $('hdToggleLab'), stageResolution: $('stageResolution'), fullscreen: $('fullscreen'),
+  appToggle: $('appToggle'), navMapApp: $('navMapApp'), appToolbar: $('appToolbar'), appHome: $('appHome'),
+  appDetails: $('appDetails'), appSequence: $('appSequence'), appTools: $('appTools'), appShare: $('appShare'), appExit: $('appExit'),
+  appDetailsClose: $('appDetailsClose'), appToolsClose: $('appToolsClose'), sequenceClose: $('sequenceClose'), appScrim: $('appScrim'),
   mapSearchForm: $('mapSearchForm'), mapSearch: $('mapSearch'), navBack: $('navBack'), navForward: $('navForward'), minimapToggle: $('minimapToggle'),
   skyMinimapWrap: $('skyMinimapWrap'), skyMinimap: $('skyMinimap'), minimapField: $('minimapField'),
   mapCursor: $('mapCursor'), mapScaleBar: $('mapScaleBar'), mapScaleText: $('mapScaleText'), mapCompass: $('mapCompass'), mapHelp: $('mapHelp'),
@@ -180,6 +183,74 @@ function updateUrl(field, key) {
   url.searchParams.set('palette', palette);
   url.searchParams.set('stretch', stretch);
   window.history.replaceState(null, '', url);
+}
+
+// The map app is a focus mode for the real viewer. It deliberately reuses the
+// existing controls instead of building a second, divergent set of state.
+const APP_SHEETS = {
+  details: { className: 'sheet-details', button: 'appDetails' },
+  sequence: { className: 'sheet-sequence', button: 'appSequence' },
+  tools: { className: 'sheet-tools', button: 'appTools' }
+};
+let appReturnScroll = 0;
+
+function appIsActive() {
+  return document.body.classList.contains('map-app');
+}
+
+function setAppParam(active) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('app', active ? '1' : '0');
+  window.history.replaceState(null, '', url);
+}
+
+function closeAppSheets() {
+  for (const [name, sheet] of Object.entries(APP_SHEETS)) {
+    document.body.classList.remove(sheet.className);
+    const button = el[sheet.button];
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+  if (el.appScrim) el.appScrim.hidden = true;
+}
+
+function openAppSheet(name) {
+  const sheet = APP_SHEETS[name];
+  if (!sheet || !appIsActive()) return;
+  const wasOpen = document.body.classList.contains(sheet.className);
+  closeAppSheets();
+  if (wasOpen) return;
+  document.body.classList.add(sheet.className);
+  el[sheet.button]?.setAttribute('aria-expanded', 'true');
+  if (el.appScrim) el.appScrim.hidden = false;
+  const close = name === 'details' ? el.appDetailsClose : name === 'tools' ? el.appToolsClose : el.sequenceClose;
+  close?.focus({ preventScroll: true });
+}
+
+function enterMapApp({ native = false, quiet = false } = {}) {
+  if (!appIsActive()) appReturnScroll = window.scrollY;
+  closeAppSheets();
+  document.body.classList.add('map-app');
+  setAppParam(true);
+  window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  requestAnimationFrame(() => {
+    render();
+    drawMinimap();
+  });
+  if (native && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {
+      if (!quiet) notify('Map app is active. Your browser did not enter native full screen.');
+    });
+  }
+}
+
+function exitMapApp({ top = false } = {}) {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  closeAppSheets();
+  document.body.classList.remove('map-app');
+  setAppParam(false);
+  const destination = top ? 0 : (appReturnScroll || document.getElementById('explorer')?.offsetTop || 0);
+  window.scrollTo({ top: destination, left: 0, behavior: 'instant' });
+  requestAnimationFrame(() => window.scrollTo({ top: destination, left: 0, behavior: 'instant' }));
 }
 
 function restoreFromUrl() {
@@ -452,6 +523,10 @@ function applyDisplayFilters() {
 function openFilterWorkspace() {
   const tab = document.querySelector('[data-lab-tab="wavelength"]');
   if (tab) tab.click();
+  if (appIsActive()) {
+    openAppSheet('tools');
+    return;
+  }
   document.getElementById('lab')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -1784,7 +1859,7 @@ for (const preset of document.querySelectorAll('[data-target]')) {
   preset.addEventListener('click', () => {
     const key = preset.dataset.target;
     setTarget(key, true);
-    document.getElementById('explorer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    enterMapApp();
   });
 }
 el.loadReal.addEventListener('click', loadRealFrames);
@@ -1896,9 +1971,34 @@ el.copyLink.addEventListener('click', async () => {
 el.fullscreen.addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
-    else await el.stage.requestFullscreen();
+    else enterMapApp({ native: true });
   } catch (error) {
     notify(`Full screen is unavailable: ${error.message}`);
+  }
+});
+el.appToggle?.addEventListener('click', () => {
+  if (appIsActive()) exitMapApp();
+  else enterMapApp();
+});
+el.navMapApp?.addEventListener('click', () => enterMapApp());
+el.appHome?.addEventListener('click', () => exitMapApp({ top: true }));
+el.appExit?.addEventListener('click', () => exitMapApp());
+el.appDetails?.addEventListener('click', () => openAppSheet('details'));
+el.appSequence?.addEventListener('click', () => openAppSheet('sequence'));
+el.appTools?.addEventListener('click', () => openAppSheet('tools'));
+el.appShare?.addEventListener('click', () => el.copyLink?.click());
+el.appDetailsClose?.addEventListener('click', closeAppSheets);
+el.appToolsClose?.addEventListener('click', closeAppSheets);
+el.sequenceClose?.addEventListener('click', closeAppSheets);
+el.appScrim?.addEventListener('click', closeAppSheets);
+// The scrim belongs inside the viewer's stacking context so it dims the map
+// without covering the drawers that sit above it.
+document.querySelector('.viewer-panel')?.appendChild(el.appScrim);
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if (Object.values(APP_SHEETS).some(sheet => document.body.classList.contains(sheet.className))) {
+    event.preventDefault();
+    closeAppSheets();
   }
 });
 function stageLocalPoint(event) {
@@ -2856,9 +2956,14 @@ function initLab() {
   updateDiscovery();
 }
 
+const bootParams = new URLSearchParams(window.location.search);
+const shouldOpenMapApp = bootParams.get('app') !== '0' &&
+  (bootParams.get('app') === '1' || bootParams.has('target') || (bootParams.has('ra') && bootParams.has('dec')));
+if (shouldOpenMapApp) document.body.classList.add('map-app');
 restoreFromUrl();
 syncQuickFilters();
 syncQuickTime();
 initLab();
 render();
 loadRealFrames();
+if (shouldOpenMapApp) enterMapApp({ quiet: true });

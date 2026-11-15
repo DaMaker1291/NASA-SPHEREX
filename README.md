@@ -285,6 +285,26 @@ The dock mirrors the transport, band rail and lab selectors in both directions;
 there is one viewer state, not two competing ones. It is responsive at phone
 width and uses native range/select controls for keyboard and assistive access.
 
+## Map app
+
+Opening a target link, any preset, **Map app**, or **Full screen** puts the real
+viewer into a full-viewport map application. The sky canvas runs behind floating
+chrome instead of sitting in a page column:
+
+- Search, live-IRSA status, history and zoom stay over the map.
+- The time/filter dock stays at the bottom, with the coordinates/scale strip above it.
+- **Details** opens the measured FITS observation drawer.
+- **Sequence** opens playback, speed, blink, difference, the visit filmstrip and
+  side-by-side comparison.
+- **Tools** opens the full observation workspace in a drawer, including bands,
+  constellations, verification, lessons, games, change finder and mail.
+- **Link** copies the current field state; **Exit** restores the normal page.
+
+The app uses `?app=1` in the URL. Exiting writes `app=0`, so reloading a normal
+target link does not force the app back open. All labels, fields and values are
+serialised from the same real frame/workspace state used outside the app; there
+is no second viewer or mock data path.
+
 ## Map-like sky navigation
 
 The viewer behaves like a map over real SPHEREx cutouts:

@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-21">
-  <script defer src="script.js?v=next-41"></script>
+  <link rel="stylesheet" href="style.css?v=next-27">
+  <script defer src="script.js?v=next-46"></script>
 </head>
 <body>
   <header class="site-header">
@@ -17,6 +17,7 @@
     </a>
     <nav class="site-nav" aria-label="Main navigation">
       <span class="live-chip"><span class="live-dot"></span> Real IRSA data</span>
+      <button id="navMapApp" class="text-button" type="button">Map app ↗</button>
       <a class="text-button" href="#lab">Workspace</a>
       <button id="mailShortcut" class="text-button" type="button">✉ Mail observation</button>
       <a class="text-button" href="#how-it-works">How it works</a>
@@ -106,6 +107,17 @@
       </aside>
 
       <section class="viewer-panel" aria-label="Sky image viewer">
+        <div id="appToolbar" class="app-toolbar" aria-label="Map application controls">
+          <button id="appHome" class="app-brand" type="button" title="Leave the map app" aria-label="SPHEREx Explorer home"><span aria-hidden="true">✦</span><strong>SPHEREx</strong><em>Explorer</em></button>
+          <span class="app-live"><span class="live-dot"></span> LIVE IRSA</span>
+          <div class="app-actions">
+            <button id="appDetails" class="app-action" type="button" aria-expanded="false" aria-controls="infoPanel">Details</button>
+            <button id="appSequence" class="app-action" type="button" aria-expanded="false" aria-controls="sequenceSheet">Sequence</button>
+            <button id="appTools" class="app-action" type="button" aria-expanded="false" aria-controls="lab">Tools</button>
+            <button id="appShare" class="app-action" type="button">Link</button>
+            <button id="appExit" class="app-action app-exit" type="button">Exit</button>
+          </div>
+        </div>
         <div class="viewer-head">
           <div class="viewer-title-block">
             <p id="fieldConstellation" class="kicker">SKY FIELD</p>
@@ -120,6 +132,7 @@
             <button id="zoomNative" class="text-button" type="button" title="Show one image pixel per screen pixel">1:1</button>
             <button id="copyLink" class="text-button" type="button">Copy link</button>
             <button id="hdToggle" class="text-button" type="button" disabled>Wide 0.90°</button>
+            <button id="appToggle" class="text-button" type="button">Map app ↗</button>
             <button id="fullscreen" class="text-button" type="button">Full screen</button>
             <a class="jump-query" href="#queryPanel">Coordinates ↓</a>
             <label class="marker-toggle" for="showCrosshair"><input id="showCrosshair" type="checkbox" checked> Centre marker</label>
@@ -129,7 +142,7 @@
         <div class="map-nav">
           <form id="mapSearchForm" class="map-search" role="search">
             <span class="map-search-icon" aria-hidden="true">⌖</span>
-            <input id="mapSearch" type="search" list="placeList" placeholder="Search a place or RA, Dec — e.g. 248.17, 66.75" autocomplete="off" spellcheck="false" aria-label="Search the sky">
+            <input id="mapSearch" type="search" list="placeList" placeholder="Search a place or RA, Dec" autocomplete="off" spellcheck="false" aria-label="Search the sky">
             <datalist id="placeList">
               <option value="Barnard’s Star"></option>
               <option value="Epsilon Indi B"></option>
@@ -203,6 +216,11 @@
           </div>
         </div>
 
+        <div id="sequenceSheet" class="sequence-sheet">
+          <div class="app-sheet-head">
+            <span>SEQUENCE &amp; COMPARISON</span>
+            <button id="sequenceClose" class="app-sheet-close" type="button">Close ✕</button>
+          </div>
         <div class="transport">
           <div class="transport-main">
             <div class="transport-buttons">
@@ -242,10 +260,11 @@
             </div>
           </div>
         </details>
+        </div>
       </section>
 
-      <aside class="info-panel" aria-label="Observation details">
-        <div class="section-heading"><span class="section-number">03</span><h2>What you’re seeing</h2></div>
+      <aside class="info-panel" id="infoPanel" aria-label="Observation details">
+        <div class="section-heading"><span class="section-number">03</span><h2>What you’re seeing</h2><button id="appDetailsClose" class="app-sheet-close" type="button">Close ✕</button></div>
         <div class="visit-card">
           <p class="kicker">CURRENT VISIT</p>
           <strong id="detailDateBig">No visit yet</strong>
@@ -298,7 +317,7 @@
     <section class="lab-panel" id="lab" aria-label="Observation toolkit">
       <div class="lab-heading">
         <div><p class="kicker">OBSERVATION WORKSPACE</p><h2>Go deeper than one picture.</h2></div>
-        <span class="lab-caption">WAVELENGTH · SKY · LEARN · GAME · VERIFY</span>
+        <div class="lab-heading-actions"><span class="lab-caption">WAVELENGTH · SKY · LEARN · GAME · VERIFY</span><button id="appToolsClose" class="app-sheet-close" type="button">Close ✕</button></div>
       </div>
       <div class="lab-tabs" role="tablist" aria-label="Observation workspace tools">
         <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labWavelength" data-lab-tab="wavelength">Wavelength & filters</button>
@@ -453,6 +472,7 @@
     </section>
   </main>
 
+  <div id="appScrim" class="app-scrim" hidden></div>
   <footer class="site-footer">
     <span>SPHEREx Explorer</span>
     <span>Real IRSA data · Not affiliated with or endorsed by NASA</span>
