@@ -1854,11 +1854,11 @@ function updateVisitNotice() {
   const checking = /checking IRSA/i.test(el.sourceLabel.textContent || '');
   el.visitNotice.hidden = !contextOnly || loadingReal || checking;
   if (!contextOnly) return;
-  const noCoverage = /no per-visit coverage|no coverage/i.test(el.sourceLabel.textContent || '');
+  const noCoverage = /no (?:indexed )?coverage|not covered|outside.*coverage/i.test(el.sourceLabel.textContent || '');
   el.visitNoticeRetry.hidden = noCoverage;
   el.visitNoticeText.textContent = noCoverage
-    ? 'This is the 2025 30° all-sky mosaic context, not a visit. IRSA has no per-visit coverage for this exact patch, so there are no visits to play. Try another patch, or load the verified Leo field.'
-    : 'This is the 2025 30° all-sky mosaic context, not a visit or a time series. IRSA did not answer this request and this patch has no verified local visit frames. The verified Leo field stays available offline.';
+    ? 'This is the 2025 30° all-sky mosaic context, not a visit. The S3 index has no per-visit coverage for this exact patch, so there are no visits to play. Try another patch, or load the verified Leo field.'
+    : 'This is the 2025 30° all-sky mosaic context, not a visit or a time series. The S3-backed archive did not answer this request, and this patch has no verified local visit frames. The verified Leo field stays available offline.';
 }
 
 function pixelRouteLabel(frame, analysis = null) {
@@ -2345,7 +2345,17 @@ function showNearestMirrorFallback(mirror, note) {
   el.emptyReal.textContent = 'Load this field';
   showMirrorField(mirror, fallbackField, { record: true, note });
   updateAppLive('mirror');
-  notify(`IRSA did not answer this request. Showing the nearest verified local field at ${coordinateText(fallbackField.ra, fallbackField.dec)}. This is real SPHEREx archive data, not the clicked patch.`);
+  notify(`The S3-backed archive did not answer this request. Showing the nearest verified local field at ${coordinateText(fallbackField.ra, fallbackField.dec)}. This is real SPHEREx archive data, not the clicked patch.`);
+}
+
+async function fetchFramesWithRetry(url, signal) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(url, { headers: { Accept: 'application/json' }, signal });
+    if (response.ok || attempt === 1 || ![502, 503, 504].includes(response.status)) return response;
+    // Render can briefly return 502 while a deploy or cold start settles.
+    await new Promise(resolve => setTimeout(resolve, 1_500));
+  }
+  throw new Error('The archive API did not answer.');
 }
 
 async function loadRealFrames(options = {}) {
@@ -2378,17 +2388,17 @@ async function loadRealFrames(options = {}) {
       el.stageLoading.hidden = true;
       // The mirror is usable now; the IRSA request is the background refresh.
       setLoading(false);
-      notify(`Showing ${mirror.frames.length} verified local visits while IRSA refreshes.`);
+      notify(`Showing ${mirror.frames.length} verified local visits while the archive refreshes.`);
     } else if (archiveUnavailableUntil > Date.now()) {
       // Every arbitrary sky position now has real local context from the
       // checked-in NASA/JPL-Caltech mosaic. Do not make a recent failure empty.
-      mosaicShown = await showMosaicField(field, 'IRSA query failed');
+      mosaicShown = await showMosaicField(field, 'archive query failed');
       if (request !== loadRequest) return;
       if (mosaicShown) {
         setLoading(false);
         return;
       }
-      el.sourceLabel.textContent = 'Querying IRSA SIA2 for real visits…';
+      el.sourceLabel.textContent = 'Querying the S3 archive for real visits…';
       notify('Finding real SPHEREx visits for this patch.');
     } else {
       // Show the real local all-sky mosaic immediately, then replace it with
@@ -2400,7 +2410,7 @@ async function loadRealFrames(options = {}) {
         setLoading(false);
         notify('Showing the real local all-sky mosaic while IRSA is checked.');
       } else {
-        el.sourceLabel.textContent = 'Querying IRSA SIA2 for real visits…';
+        el.sourceLabel.textContent = 'Querying the S3 archive for real visits…';
         notify('Finding real SPHEREx visits for this patch.');
       }
     }
@@ -2412,7 +2422,7 @@ async function loadRealFrames(options = {}) {
     const timeout = setTimeout(() => controller.abort(), 50_000);
     let response;
     try {
-      response = await fetch(`/api/spherex/frames?${params.toString()}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
+      response = await fetchFramesWithRetry(`/api/spherex/frames?${params.toString()}`, controller.signal);
     } finally {
       clearTimeout(timeout);
     }
@@ -2432,7 +2442,7 @@ async function loadRealFrames(options = {}) {
       showNoCoverage(payload, field, targets[el.target.value]);
       return;
     }
-    if (!Array.isArray(payload.frames) || !payload.frames.length) throw new Error('IRSA returned no real products for this field.');
+    if (!Array.isArray(payload.frames) || !payload.frames.length) throw new Error('The archive returned no real products for this field.');
 
     detector = payload.detector || detector;
     el.detector.value = detector;
@@ -2484,24 +2494,24 @@ async function loadRealFrames(options = {}) {
     notify(`Loaded ${realFrames.length} real visits in ${detector}. Press play, blink, or difference.`);
   } catch (error) {
     if (request !== loadRequest) return;
-    const archiveError = error?.name === 'AbortError' ? 'IRSA did not answer within 20 seconds.' : error.message;
+    const archiveError = error?.name === 'AbortError' ? 'The archive API did not answer within 50 seconds.' : error.message;
     el.stageLoading.hidden = true;
     el.sourceLabel.classList.add('error');
     if (mirror) {
       updateAppLive('mirror');
-      el.sourceLabel.textContent = `${mirror.source} · IRSA refresh failed: ${archiveError}`;
+      el.sourceLabel.textContent = `${mirror.source} · archive refresh failed: ${archiveError}`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = 'LOCAL MIRROR · REAL FITS';
-      notify(`IRSA refresh failed: ${archiveError}. Keeping the verified local mirror.`);
+      notify(`Archive refresh failed: ${archiveError}. Keeping the verified local mirror.`);
       return;
     }
     archiveUnavailableUntil = Date.now() + 30_000;
     if (mosaicShown) {
       updateAppLive('mosaic');
-      el.sourceLabel.textContent = `NASA/JPL-Caltech all-sky mosaic · local · IRSA query failed: ${archiveError}`;
+      el.sourceLabel.textContent = `NASA/JPL-Caltech all-sky mosaic · local · archive query failed: ${archiveError}`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = 'LOCAL MOSAIC · REAL NASA IMAGE';
-      notify(`IRSA did not answer this request; keeping the real local all-sky mosaic. ${archiveError}`);
+      notify(`The S3-backed archive did not answer this request; keeping the real local all-sky mosaic. ${archiveError}`);
       return;
     }
     const fallback = await loadVerifiedMirror(field, { nearest: true });
@@ -2510,16 +2520,16 @@ async function loadRealFrames(options = {}) {
       return;
     }
     if (fallback) {
-      showNearestMirrorFallback(fallback, 'IRSA query failed · nearest verified field');
+      showNearestMirrorFallback(fallback, 'archive query failed · nearest verified field');
       return;
     }
     updateAppLive('offline');
     if (frames.length) {
-      el.sourceLabel.textContent = `IRSA query failed: ${archiveError} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
+      el.sourceLabel.textContent = `Archive query failed: ${archiveError} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = realBadge;
     } else {
-      el.sourceLabel.textContent = `IRSA query failed: ${archiveError}`;
+      el.sourceLabel.textContent = `Archive query failed: ${archiveError}`;
       el.empty.hidden = false;
       const isDefaultField = Math.abs(field.ra - 150) < 0.01 && Math.abs(field.dec - 19.5) < 0.01 && Math.abs(field.fov - 0.3) < 0.01;
       if (isDefaultField) {
@@ -3306,7 +3316,7 @@ function measurementGamePool() {
 function setGameSource(pool) {
   let text = '';
   if (pool.source === 'archive') {
-    text = `IRSA did not answer this request; games use real local-mirror visits from ${labState.gameArchive?.fieldLabel || 'the bundled field'}.`;
+    text = `The archive did not answer this request; games use real local-mirror visits from ${labState.gameArchive?.fieldLabel || 'the bundled field'}.`;
   } else if (pool.source === 'displayed') {
     text = 'Rounds use the measured visits loaded from this field.';
   } else if (pool.source === 'loading') {

@@ -7,7 +7,7 @@
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
   <link rel="stylesheet" href="style.css?v=next-39">
-  <script type="module" src="script.js?v=next-71"></script>
+  <script type="module" src="script.js?v=next-72"></script>
 </head>
 <body>
   <header class="site-header">
@@ -179,7 +179,7 @@
           <div id="stageLoading" class="stage-loading" hidden>
             <span class="loader-orbit" aria-hidden="true"></span>
             <strong>Finding real visits…</strong>
-            <small>Querying IRSA SIA2 and preparing detector cutouts</small>
+            <small>Querying the S3 archive and preparing detector cutouts</small>
           </div>
           <div id="crosshair" class="crosshair" aria-hidden="true"><span></span></div>
           <div id="skyMinimapWrap" class="sky-minimap" aria-label="All-sky navigation map. Background: the real NASA/JPL-Caltech SPHEREx 2025 all-sky mosaic.">
@@ -247,7 +247,7 @@
         <input id="timeline" class="timeline" aria-label="Choose observation frame" type="range" min="0" max="0" value="0" disabled>
         <div id="visitNotice" class="visit-notice" role="status" hidden>
           <span id="visitNoticeText">This image is all-sky context, not a visit.</span>
-          <div class="visit-notice-actions"><button id="visitNoticeRetry" class="button secondary compact" type="button">Retry IRSA</button><button id="visitNoticeAction" class="button primary compact" type="button">Load verified Leo field</button></div>
+          <div class="visit-notice-actions"><button id="visitNoticeRetry" class="button secondary compact" type="button">Retry archive</button><button id="visitNoticeAction" class="button primary compact" type="button">Load verified Leo field</button></div>
         </div>
 
         <div class="filmstrip-block">
