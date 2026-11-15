@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-12">
-  <script defer src="script.js?v=next-10"></script>
+  <link rel="stylesheet" href="style.css?v=next-15">
+  <script defer src="script.js?v=next-13"></script>
 </head>
 <body>
   <header class="site-header">
@@ -42,7 +42,7 @@
     </section>
 
     <section id="explorer" class="explorer" aria-label="SPHEREx sky viewer">
-      <aside class="query-panel" aria-label="Choose a sky patch">
+      <aside class="query-panel" id="queryPanel" aria-label="Choose a sky patch">
         <div class="section-heading"><span class="section-number">01</span><h2>Choose a patch</h2></div>
         <div class="field">
           <label for="target">Named target</label>
@@ -104,6 +104,7 @@
             <button id="zoomIn" class="icon-button" type="button" title="Zoom in" aria-label="Zoom in">+</button>
             <button id="resetView" class="text-button" type="button">Reset</button>
             <button id="copyLink" class="text-button" type="button">Copy link</button>
+            <a class="jump-query" href="#queryPanel">Coordinates ↓</a>
             <label class="marker-toggle" for="showCrosshair"><input id="showCrosshair" type="checkbox" checked> Centre marker</label>
           </div>
         </div>

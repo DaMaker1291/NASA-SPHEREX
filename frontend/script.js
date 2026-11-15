@@ -1,6 +1,7 @@
 // SPHEREx Explorer frontend.
 // Real IRSA frames are loaded through the same-origin backend. Local PNGs stay local.
 const $ = (id) => document.getElementById(id);
+const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const el = {
   target: $('target'), ra: $('ra'), dec: $('dec'), fov: $('fov'),
   loadReal: $('loadReal'), emptyReal: $('emptyReal'), sourceLabel: $('sourceLabel'),
@@ -364,6 +365,8 @@ function readFrameHeaders(response) {
 }
 
 async function loadFrameData(frame) {
+  if (frame.loading || frame.objectUrl) return;
+  frame.loading = true;
   try {
     let response;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -386,7 +389,9 @@ async function loadFrameData(frame) {
     } catch {
       // The stage will report a decode error if the PNG is unusable.
     }
+    frame.objectUrl = objectUrl;
     frame.src = objectUrl;
+    frame.loadError = '';
     if (frame.thumbImg) frame.thumbImg.src = objectUrl;
     if (analysis.measured) {
       frame.analysis = analysis;
@@ -402,10 +407,13 @@ async function loadFrameData(frame) {
     if (frames.includes(frame)) {
       frame.analysis = null;
       frame.measurementError = error.message;
+      frame.loadError = error.message;
       if (frames[frameIndex] === frame) render();
       else updateLab();
     }
     notify(`Could not measure that FITS frame: ${error.message}`);
+  } finally {
+    frame.loading = false;
   }
 }
 
@@ -451,7 +459,7 @@ function buildFilmstrip() {
     button.className = 'film-thumb';
     button.title = `View ${frame.label}`;
     const image = document.createElement('img');
-    image.src = frame.src;
+    image.src = frame.objectUrl || (frame.real ? TRANSPARENT_PIXEL : frame.src);
     image.alt = '';
     image.loading = 'lazy';
     const label = document.createElement('span');
@@ -487,7 +495,8 @@ function setEmptyState(eyebrow, title, message) {
 
 function setLoading(isLoading) {
   loadingReal = isLoading;
-  el.stageLoading.hidden = !isLoading;
+  const current = frames[frameIndex];
+  el.stageLoading.hidden = isLoading ? false : !(current?.real && !current.objectUrl && !current.loadError);
   el.loadReal.disabled = isLoading;
   el.emptyReal.disabled = isLoading;
   el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Show this sky sequence';
@@ -627,8 +636,9 @@ function render() {
     return;
   }
   el.empty.hidden = true;
-  if ((!differenceMode || !el.differenceCanvas.width) && el.image.src !== new URL(f.src, window.location.href).href) el.image.src = f.src;
-  if (!f.width) el.stageLoading.hidden = false;
+  const stageSrc = f.objectUrl || (f.real ? TRANSPARENT_PIXEL : f.src);
+  if ((!differenceMode || !el.differenceCanvas.width) && el.image.src !== new URL(stageSrc, window.location.href).href) el.image.src = stageSrc;
+  if (!f.width) el.stageLoading.hidden = Boolean(f.loadError);
   el.image.onload = () => {
     el.stageLoading.hidden = true;
     if (!f.width) { f.width = el.image.naturalWidth; f.height = el.image.naturalHeight; }
