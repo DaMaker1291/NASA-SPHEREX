@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-39">
-  <script type="module" src="script.js?v=next-73"></script>
+  <link rel="stylesheet" href="style.css?v=next-40">
+  <script type="module" src="script.js?v=next-74"></script>
 </head>
 <body>
   <header class="site-header">
@@ -18,6 +18,7 @@
     </a>
     <nav class="site-nav" aria-label="Main navigation">
       <span class="live-chip"><span class="live-dot"></span> Real IRSA data</span>
+      <button id="tourButton" class="text-button" type="button">Quick tour</button>
       <button id="navMapApp" class="text-button" type="button">Map app ↗</button>
       <a class="text-button" href="#lab">Workspace</a>
       <a class="text-button" href="game.html">Spot the difference</a>
@@ -115,6 +116,7 @@
           <button id="appHome" class="app-brand" type="button" title="Leave the map app" aria-label="DRIFT — leave the map app"><img class="app-brand-logo" src="assets/drift-logo.svg" alt="DRIFT" width="88" height="30"><span class="app-brand-rule" aria-hidden="true"></span><strong>SPHEREx</strong><em>Explorer</em></button>
           <span class="app-live" id="appLive"><span class="live-dot"></span> <span id="appLiveText">S3 INDEX</span></span>
           <div class="app-actions">
+            <button id="appTour" class="app-action" type="button" title="Quick tour" aria-label="Open the quick tour">Tour</button>
             <button id="appDetails" class="app-action" type="button" aria-expanded="false" aria-controls="infoPanel">Details</button>
             <button id="appSequence" class="app-action" type="button" aria-expanded="false" aria-controls="sequenceSheet">Sequence</button>
             <button id="appTools" class="app-action" type="button" aria-expanded="false" aria-controls="lab">Tools</button>
@@ -194,21 +196,22 @@
             <span id="stageResolution">NATIVE CUTOUT</span>
             <span id="stageMode">LIVE FRAME</span>
           </div>
+          <div class="stage-progress" aria-hidden="true"><span id="stageProgress"></span></div>
         </div>
 
         <div class="map-meta" aria-label="Map position and scale">
           <span id="mapCompass" class="map-compass" title="WCS north"><i>N</i><b>↑</b></span>
           <span id="mapCursor" class="map-coordinates">Move over the image to read real sky coordinates</span>
           <span class="map-scale"><i id="mapScaleBar"></i><span id="mapScaleText">0.30°</span></span>
-          <span id="mapHelp" class="map-help">Drag to pan · scroll to zoom · double-click to move</span>
+          <span id="mapHelp" class="map-help">Drag to pan · scroll to zoom · Space play · ← → visits · B blink</span>
         </div>
 
         <div class="quick-controls" aria-label="Time and display filters">
           <div class="quick-group quick-time">
             <span class="quick-title">TIME</span>
-            <button id="quickPrevious" class="icon-button" type="button" title="Previous visit" aria-label="Previous visit" disabled>←</button>
-            <button id="quickPlay" class="quick-play" type="button" title="Play visits" aria-label="Play visits" disabled>▶</button>
-            <button id="quickNext" class="icon-button" type="button" title="Next visit" aria-label="Next visit" disabled>→</button>
+            <button id="quickPrevious" class="icon-button" type="button" title="Previous visit" aria-label="Previous visit" aria-keyshortcuts="ArrowLeft" disabled>←</button>
+            <button id="quickPlay" class="quick-play" type="button" title="Play visits (Space)" aria-label="Play visits" aria-keyshortcuts="Space" disabled>▶</button>
+            <button id="quickNext" class="icon-button" type="button" title="Next visit" aria-label="Next visit" aria-keyshortcuts="ArrowRight" disabled>→</button>
             <input id="quickTimeline" class="quick-timeline" type="range" min="0" max="0" value="0" aria-label="Choose observation visit" disabled>
             <label class="quick-field" for="quickVisit"><span>Visit</span><select id="quickVisit" disabled><option>No visits loaded</option></select></label>
           </div>
@@ -240,8 +243,8 @@
           </div>
           <div class="transport-options">
             <label class="speed-control" for="frameSpeed">Speed <input id="frameSpeed" type="range" min="250" max="2000" step="250" value="1000" disabled><span id="speedValue">1.0×</span></label>
-            <button id="blink" class="button secondary compact" type="button" disabled>Blink A / B</button>
-            <button id="difference" class="button secondary compact" type="button" disabled>Difference</button>
+            <button id="blink" class="button secondary compact" type="button" aria-keyshortcuts="B" disabled>Blink A / B</button>
+            <button id="difference" class="button secondary compact" type="button" aria-keyshortcuts="D" disabled>Difference</button>
           </div>
         </div>
         <input id="timeline" class="timeline" aria-label="Choose observation frame" type="range" min="0" max="0" value="0" disabled>
@@ -564,6 +567,22 @@
     <span>Real IRSA data · Not affiliated with or endorsed by NASA</span>
     <a href="https://irsa.ipac.caltech.edu/Missions/spherex.html" target="_blank" rel="noreferrer">SPHEREx at IRSA ↗</a>
   </footer>
+  <div id="tourRoot" class="tour-root" hidden>
+    <div class="tour-scrim" id="tourScrim"></div>
+    <div class="tour-spotlight" id="tourSpotlight" hidden aria-hidden="true"></div>
+    <section class="tour-card" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle" aria-describedby="tourCopy">
+      <div class="tour-topline"><span id="tourStepLabel">01 / 04</span><button id="tourClose" class="tour-close" type="button">Skip tour</button></div>
+      <p class="kicker tour-kicker">QUICK WALKTHROUGH</p>
+      <h2 id="tourTitle">The sky, visit by visit</h2>
+      <p id="tourCopy" class="tour-copy"></p>
+      <div id="tourDots" class="tour-dots" aria-hidden="true"></div>
+      <div class="tour-actions">
+        <button id="tourBack" class="button secondary compact" type="button">Back</button>
+        <button id="tourNext" class="button primary compact" type="button">Next →</button>
+      </div>
+      <p class="tour-keys"><kbd>Space</kbd> play · <kbd>←</kbd><kbd>→</kbd> visits · <kbd>B</kbd> blink · <kbd>D</kbd> difference · <kbd>?</kbd> tour</p>
+    </section>
+  </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

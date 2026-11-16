@@ -132,7 +132,8 @@ img, canvas { max-width: 100%; }
 }
 .preset span { font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preset small { color: var(--quiet); font-size: 8.5px; white-space: nowrap; }
-.preset:hover { border-color: #5d7692; }
+.preset { transition: border-color .18s, background .18s, transform .18s; }
+.preset:hover { border-color: #5d7692; transform: translateY(-1px); }
 .preset:hover span { color: var(--gold); }
 
 /* Explorer */
@@ -211,6 +212,13 @@ img, canvas { max-width: 100%; }
 .stage-hud span:last-child { color: var(--gold); font-weight: 800; letter-spacing: 1px; font-size: 9px; }
 .stage-hud span:nth-child(2) { color: #8499b0; font-size: 9px; letter-spacing: .7px; }
 .viewer-stage img.pixelated { image-rendering: pixelated; }
+.image-transform img.frame-enter { animation: frameReveal .46s cubic-bezier(.22,.61,.36,1); }
+@keyframes frameReveal {
+  from { opacity: .35; transform: scale(1.012); filter: saturate(.65) brightness(.7); }
+  to { opacity: 1; transform: scale(1); filter: none; }
+}
+.stage-progress { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; height: 2px; background: rgba(119, 143, 169, .16); pointer-events: none; }
+.stage-progress span { display: block; width: 100%; height: 100%; transform: scaleX(0); transform-origin: left center; background: linear-gradient(90deg, rgba(208, 141, 54, .55), var(--gold)); box-shadow: 0 0 10px rgba(242, 187, 109, .45); transition: transform .32s cubic-bezier(.22,.61,.36,1); }
 /* Map controls */
 .sky-minimap { position: absolute; top: 12px; right: 12px; z-index: 4; width: 224px; padding: 7px; border: 1px solid #496077; border-radius: 8px; background: rgba(6,12,20,.9); box-shadow: 0 10px 30px rgba(0,0,0,.35); backdrop-filter: blur(6px); }
 .sky-minimap.is-hidden { display: none; }
@@ -307,11 +315,12 @@ img, canvas { max-width: 100%; }
 .visit-window-cue { color: var(--gold); font-size: 8.5px; letter-spacing: .3px; }
 .visit-window p { margin: 0; padding: 0 9px 9px 22px; color: #8194aa; font-size: 9.5px; line-height: 1.55; }
 .filmstrip { display: flex; gap: 7px; overflow-x: auto; padding: 1px 1px 5px; scrollbar-width: thin; scrollbar-color: #40526a transparent; }
-.film-thumb { flex: 0 0 82px; border: 1px solid #293a4e; border-radius: 7px; background: #0a111b; padding: 0; overflow: hidden; color: var(--muted); text-align: left; }
+.film-thumb { flex: 0 0 82px; border: 1px solid #293a4e; border-radius: 7px; background: #0a111b; padding: 0; overflow: hidden; color: var(--muted); text-align: left; transition: border-color .18s, transform .18s, background .18s; }
 .film-thumb img { display: block; width: 100%; height: 60px; object-fit: cover; background: #060a10; }
 .film-thumb span { display: block; padding: 5px 6px; font-size: 9px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.film-thumb:hover { border-color: #627b97; }
-.film-thumb.active { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(242,187,109,.3); color: #f6e7ce; }
+.film-thumb:hover { border-color: #627b97; transform: translateY(-2px); }
+.film-thumb.active { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(242,187,109,.3), 0 8px 20px rgba(0,0,0,.28); color: #f6e7ce; transform: translateY(-2px); }
+.film-thumb.active img { filter: saturate(1.08); }
 .film-placeholder { color: var(--quiet); font-size: 10px; padding: 10px 0; }
 .compare-panel { border-top: 1px solid #1c2938; padding: 0 17px 14px; }
 .compare-panel summary { padding: 11px 0; cursor: pointer; color: #a8b8ca; font-size: 10px; font-weight: 700; }
@@ -541,6 +550,52 @@ img, canvas { max-width: 100%; }
 .toast { position: fixed; right: 16px; bottom: 16px; z-index: 50; max-width: 360px; padding: 11px 14px; border: 1px solid #46617e; border-radius: 8px; background: #172638; color: #f2f6fa; box-shadow: 0 15px 45px rgba(0,0,0,.45); font-size: 11px; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity .2s, transform .2s; }
 .toast.visible { opacity: 1; transform: translateY(0); }
 
+/* Guided walkthrough. It floats above every viewer surface so it can point
+   at the real controls without duplicating them. */
+body.tour-open { overflow: hidden; }
+.tour-root { position: fixed; inset: 0; z-index: 220; }
+.tour-scrim { position: absolute; inset: 0; background: rgba(3, 7, 12, .78); backdrop-filter: blur(6px) saturate(.8); }
+.tour-root.has-spotlight .tour-scrim { background: transparent; backdrop-filter: none; }
+.tour-spotlight {
+  position: absolute; z-index: 1; border: 1px solid rgba(242, 187, 109, .9); border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgba(3, 7, 12, .82), 0 0 42px rgba(242, 187, 109, .18), inset 0 0 0 1px rgba(255, 255, 255, .05);
+  pointer-events: none;
+  transition: left .32s cubic-bezier(.22,.61,.36,1), top .32s cubic-bezier(.22,.61,.36,1), width .32s cubic-bezier(.22,.61,.36,1), height .32s cubic-bezier(.22,.61,.36,1);
+}
+.tour-card {
+  position: absolute; z-index: 2; width: min(370px, calc(100vw - 24px)); padding: 22px 22px 17px;
+  border: 1px solid #4d6681; border-radius: 14px;
+  background: linear-gradient(155deg, #142131 0%, #0a121d 68%);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .7), inset 0 0 0 1px rgba(255, 255, 255, .04);
+}
+.tour-card::before { content: ""; position: absolute; top: 0; left: 22px; right: 22px; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); opacity: .75; }
+.tour-card-enter { animation: tourCardIn .38s cubic-bezier(.22, .7, .2, 1); }
+@keyframes tourCardIn { from { transform: translateY(10px) scale(.985); } to { transform: none; } }
+.tour-topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.tour-topline span { color: var(--gold); font: 800 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1.2px; }
+.tour-close { border: 0; background: transparent; color: #91a6bb; padding: 5px 0; font: 750 9px/1 var(--sans); letter-spacing: .6px; text-transform: uppercase; }
+.tour-close:hover { color: var(--gold); }
+.tour-kicker { margin-bottom: 8px; color: var(--gold); font-size: 8px; letter-spacing: 1.6px; }
+.tour-card h2 { margin: 0 0 9px; font: 400 27px/1.08 var(--serif); letter-spacing: -.7px; color: #f4f0e7; }
+.tour-copy { margin: 0; color: #aabccf; font-size: 11.5px; line-height: 1.65; }
+.tour-dots { display: flex; gap: 5px; margin-top: 17px; }
+.tour-dots span { width: 22px; height: 2px; border-radius: 2px; background: #31465c; transition: background .2s, box-shadow .2s; }
+.tour-dots span.active { background: var(--gold); box-shadow: 0 0 9px rgba(242, 187, 109, .45); }
+.tour-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; }
+.tour-actions .button { min-width: 92px; }
+.tour-keys { margin: 16px 0 0; padding-top: 11px; border-top: 1px solid #223448; color: #70869c; font-size: 8.5px; line-height: 1.7; }
+.tour-keys kbd { display: inline-block; min-width: 15px; margin: 0 1px; padding: 1px 4px; border: 1px solid #3c536b; border-radius: 3px; background: #0b1622; color: #b9cde0; font: 700 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
+@media (max-width: 720px) {
+  .tour-card { max-height: calc(100dvh - 24px); overflow: auto; padding: 18px 17px 16px; }
+  .tour-card h2 { font-size: 23px; }
+  .tour-keys { font-size: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .image-transform img.frame-enter, .tour-card-enter { animation: none; }
+  .stage-progress span, .tour-spotlight, .tour-dots span, .film-thumb, .preset, .app-action { transition: none; }
+}
+
 /* Map application ------------------------------------------------------------------ */
 .app-toolbar, .app-sheet-head, .app-sheet-close, .app-scrim { display: none; }
 .sequence-sheet { display: contents; }
@@ -595,6 +650,7 @@ body.map-app .app-toolbar {
 .app-action {
   min-height: 30px; padding: 5px 9px; border: 1px solid transparent; border-radius: 100px;
   background: transparent; color: #b7c7d8; font-family: inherit; font-size: 10px; font-weight: 700; white-space: nowrap;
+  transition: background .16s, border-color .16s, color .16s;
 }
 .app-action:hover, .app-action[aria-expanded="true"] { border-color: #405875; background: #142235; color: var(--gold); }
 .app-exit { border-color: #4a6078; color: #e6eff8; }

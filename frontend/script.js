@@ -62,7 +62,8 @@ const el = {
   detailIntensity: $('detailIntensity'), detailRange: $('detailRange'), detailFullRange: $('detailFullRange'),
   detailMean: $('detailMean'), detailVariance: $('detailVariance'), detailZodi: $('detailZodi'),
   detailFlags: $('detailFlags'), detailWave: $('detailWave'),
-  detailExposure: $('detailExposure'), detailPixelScale: $('detailPixelScale'), toast: $('toast')
+  detailExposure: $('detailExposure'), detailPixelScale: $('detailPixelScale'), toast: $('toast'),
+  stageProgress: $('stageProgress')
 };
 
 const BAND_INFO = {
@@ -123,6 +124,7 @@ let constellationRequest = 0, constellationData = null;
 let ownedObjectUrls = [];
 let toastTimeout = null, loadingReal = false, sky = null, realBadge = 'LIVE IRSA • REAL FITS';
 let loadRequest = 0, activeLoadController = null;
+let lastStageKey = '';
 
 function notify(message) {
   el.toast.textContent = message;
@@ -2624,6 +2626,9 @@ function render() {
   const f = frames[frameIndex];
   if (!f) {
     el.image.hidden = true; el.differenceCanvas.hidden = true; el.empty.hidden = false;
+    lastStageKey = '';
+    el.image.classList.remove('frame-enter');
+    if (el.stageProgress) el.stageProgress.style.transform = 'scaleX(0)';
     drawMinimap();
     updateToolsSkyContext();
     updateMapCenter();
@@ -2639,6 +2644,14 @@ function render() {
   el.empty.hidden = true;
   const useHd = hdMode && Boolean(f.hdObjectUrl) && !differenceMode;
   const stageSrc = useHd ? f.hdObjectUrl : f.objectUrl || f.src || (f.real ? TRANSPARENT_PIXEL : '');
+  const stageKey = `${frameIndex}|${stageSrc.length}|${useHd ? 'hd' : 'native'}|${differenceMode ? 'diff' : 'frame'}`;
+  if (!differenceMode && stageKey !== lastStageKey) {
+    el.image.classList.remove('frame-enter');
+    void el.image.offsetWidth;
+    el.image.classList.add('frame-enter');
+  }
+  lastStageKey = stageKey;
+  if (el.stageProgress) el.stageProgress.style.transform = `scaleX(${frames.length > 1 ? frameIndex / (frames.length - 1) : frames.length ? 1 : 0})`;
   if ((!differenceMode || !el.differenceCanvas.width) && el.image.src !== new URL(stageSrc, window.location.href).href) el.image.src = stageSrc;
   if (hdMode && f.real && !f.hdObjectUrl && !f.hdLoading) loadHDFrame(f);
   if (!f.width) el.stageLoading.hidden = Boolean(f.loadError);
@@ -3197,6 +3210,7 @@ el.stage.addEventListener('dblclick', e => {
 
 window.addEventListener('resize', () => { clampPan(); updateTransform(); drawMinimap(); });
 document.addEventListener('keydown', e => {
+  if (document.body.classList.contains('tour-open')) return;
   if (e.target.matches('input, textarea, select, button') || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(zoom * 1.25); }
   else if (e.key === '-' || e.key === '_') { e.preventDefault(); setZoom(zoom / 1.25); }
@@ -4235,3 +4249,223 @@ render();
 loadRealFrames();
 loadSourceHealth();
 if (shouldOpenMapApp) enterMapApp({ quiet: true });
+
+// A short, dismissible walkthrough for the controls that matter. It is
+// deliberately independent of the viewer state so it can teach the app
+// without changing what the archive returns.
+const TOUR_KEY = 'drift-quick-tour-v1';
+const tour = {
+  root: $('tourRoot'), card: $('tourCard'), scrim: $('tourScrim'), spotlight: $('tourSpotlight'),
+  stepLabel: $('tourStepLabel'), title: $('tourTitle'), copy: $('tourCopy'), dots: $('tourDots'),
+  back: $('tourBack'), next: $('tourNext'), close: $('tourClose')
+};
+let tourOpen = false;
+let tourIndex = 0;
+let tourReturnFocus = null;
+let tourPositioned = false;
+
+function tourSeen() {
+  try { return localStorage.getItem(TOUR_KEY) === '1'; } catch { return false; }
+}
+function markTourSeen() {
+  try { localStorage.setItem(TOUR_KEY, '1'); } catch { /* storage can be unavailable in private modes */ }
+}
+function tourSteps() {
+  return [
+    {
+      target: '.viewer-title-block',
+      title: 'A real sky, not a mock-up',
+      copy: 'Every frame is a live cutout from IRSA’s SPHEREx archive. Drag to pan, scroll to zoom, and double-click to recenter. The date and detector under the title belong to the visit on screen.'
+    },
+    {
+      target: '#quickTimeline',
+      title: 'Scrub through the visits',
+      copy: 'This patch holds several real observation dates. Drag the timeline, use the arrows, or open Visit to jump straight to one. Your zoom and position stay put while the sky changes.'
+    },
+    {
+      target: '#quickPlay',
+      title: 'Let the sequence move',
+      copy: 'Press play to run the visits like a short film. Space does the same thing. If 1× feels too quick, open Sequence and slow it down.'
+    },
+    {
+      target: appIsActive() ? '#appSequence' : '#blink',
+      title: 'Now look for what changed',
+      copy: appIsActive()
+        ? 'Open Sequence for Blink A / B and Difference. Blink flips between two visits; Difference subtracts them so motion or a brightness change is easier to spot.'
+        : 'Use Blink A / B to flip between two visits, or Difference to subtract them. Movement and brightness changes stand out immediately.'
+    }
+  ];
+}
+
+function positionTour() {
+  if (!tourOpen || !tour.root) return;
+  const step = tourSteps()[tourIndex];
+  const target = step?.target ? document.querySelector(step.target) : null;
+  const rect = target && target.getClientRects().length ? target.getBoundingClientRect() : null;
+  const hasTarget = Boolean(rect && rect.width > 1 && rect.height > 1);
+  const card = tour.card;
+  const mobile = window.innerWidth <= 720;
+  tour.root.classList.toggle('has-spotlight', hasTarget);
+  tour.spotlight.hidden = !hasTarget;
+
+  if (!tourPositioned) tour.spotlight.style.transition = 'none';
+  if (hasTarget) {
+    const pad = 7;
+    tour.spotlight.style.left = `${Math.max(4, rect.left - pad)}px`;
+    tour.spotlight.style.top = `${Math.max(4, rect.top - pad)}px`;
+    tour.spotlight.style.width = `${Math.min(window.innerWidth - 8, rect.width + pad * 2)}px`;
+    tour.spotlight.style.height = `${Math.min(window.innerHeight - 8, rect.height + pad * 2)}px`;
+  }
+  if (!tourPositioned) requestAnimationFrame(() => {
+    tourPositioned = true;
+    if (tourOpen) tour.spotlight.style.transition = '';
+  });
+
+  const cardWidth = card.offsetWidth || 360;
+  const cardHeight = card.offsetHeight || 260;
+  card.style.right = 'auto';
+  card.style.bottom = 'auto';
+  card.style.top = 'auto';
+  card.style.left = 'auto';
+
+  if (mobile) {
+    card.style.left = '12px';
+    card.style.right = '12px';
+    if (hasTarget && rect.top + rect.height / 2 > window.innerHeight / 2) card.style.top = '12px';
+    else card.style.bottom = '12px';
+    return;
+  }
+
+  if (!hasTarget) {
+    card.style.left = `${Math.max(12, (window.innerWidth - cardWidth) / 2)}px`;
+    card.style.top = `${Math.max(12, (window.innerHeight - cardHeight) / 2)}px`;
+    return;
+  }
+
+  const gap = 18;
+  const rightSpace = window.innerWidth - rect.right;
+  const leftSpace = rect.left;
+  let left;
+  let top;
+  if (rightSpace >= cardWidth + gap) {
+    left = rect.right + gap;
+    top = rect.top + (rect.height - cardHeight) / 2;
+  } else if (leftSpace >= cardWidth + gap) {
+    left = rect.left - cardWidth - gap;
+    top = rect.top + (rect.height - cardHeight) / 2;
+  } else {
+    left = rect.left + (rect.width - cardWidth) / 2;
+    const below = window.innerHeight - rect.bottom;
+    top = below >= cardHeight + gap
+      ? rect.bottom + gap
+      : rect.top - cardHeight - gap;
+  }
+  card.style.left = `${Math.max(12, Math.min(window.innerWidth - cardWidth - 12, left))}px`;
+  card.style.top = `${Math.max(12, Math.min(window.innerHeight - cardHeight - 12, top))}px`;
+}
+
+function showTourStep(index) {
+  const steps = tourSteps();
+  tourIndex = Math.max(0, Math.min(steps.length - 1, index));
+  const step = steps[tourIndex];
+  tour.stepLabel.textContent = `${String(tourIndex + 1).padStart(2, '0')} / ${String(steps.length).padStart(2, '0')}`;
+  tour.title.textContent = step.title;
+  tour.copy.textContent = step.copy;
+  tour.back.disabled = tourIndex === 0;
+  tour.next.textContent = tourIndex === steps.length - 1 ? 'Start exploring' : 'Next →';
+  tour.dots.replaceChildren();
+  steps.forEach((_, dotIndex) => {
+    const dot = document.createElement('span');
+    dot.className = dotIndex === tourIndex ? 'active' : '';
+    tour.dots.append(dot);
+  });
+  tour.card.classList.remove('tour-card-enter');
+  void tour.card.offsetWidth;
+  tour.card.classList.add('tour-card-enter');
+  positionTour();
+  requestAnimationFrame(positionTour);
+}
+
+function startTour({ force = false } = {}) {
+  if (tourOpen) return;
+  if (!force && tourSeen()) return;
+  tourPositioned = false;
+  if (appIsActive()) closeAppSheets();
+  else document.getElementById('explorer')?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  tourOpen = true;
+  tourReturnFocus = document.activeElement;
+  document.body.classList.add('tour-open');
+  tour.root.hidden = false;
+  showTourStep(0);
+  window.addEventListener('resize', positionTour);
+  tour.next.focus({ preventScroll: true });
+}
+
+function endTour() {
+  if (!tourOpen) return;
+  tourOpen = false;
+  tourPositioned = false;
+  markTourSeen();
+  tour.root.hidden = true;
+  document.body.classList.remove('tour-open');
+  window.removeEventListener('resize', positionTour);
+  if (tourReturnFocus && typeof tourReturnFocus.focus === 'function') tourReturnFocus.focus({ preventScroll: true });
+}
+
+for (const button of [$('tourButton'), $('appTour')]) {
+  button?.addEventListener('click', () => startTour({ force: true }));
+}
+tour.close?.addEventListener('click', endTour);
+tour.back?.addEventListener('click', () => showTourStep(tourIndex - 1));
+tour.next?.addEventListener('click', () => {
+  if (tourIndex >= tourSteps().length - 1) endTour();
+  else showTourStep(tourIndex + 1);
+});
+
+function isTypingTarget(target) {
+  return Boolean(target?.closest?.('input, textarea, select, [contenteditable="true"]'));
+}
+
+document.addEventListener('keydown', event => {
+  if (tourOpen) {
+    if (event.key === 'Escape') { event.preventDefault(); endTour(); return; }
+    if (event.key === 'ArrowRight') { event.preventDefault(); if (tourIndex < tourSteps().length - 1) showTourStep(tourIndex + 1); return; }
+    if (event.key === 'ArrowLeft') { event.preventDefault(); if (tourIndex > 0) showTourStep(tourIndex - 1); return; }
+    if (event.key === 'Tab') {
+      const buttons = [...tour.card.querySelectorAll('button:not(:disabled)')];
+      if (!buttons.length) return;
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    return;
+  }
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return;
+  const key = event.key.toLowerCase();
+  if (key === '?') { event.preventDefault(); startTour({ force: true }); return; }
+  if (event.repeat) return;
+  if (key === ' ') {
+    if (event.target.closest?.('button, a, summary')) return;
+    event.preventDefault();
+    togglePlay();
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    nextFrame();
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    previousFrame();
+  } else if (key === 'b') {
+    event.preventDefault();
+    toggleBlink();
+  } else if (key === 'd') {
+    event.preventDefault();
+    toggleDifference();
+  }
+});
+
+const tourParam = bootParams.get('tour');
+if (tourParam === '1') {
+  setTimeout(() => startTour({ force: true }), 450);
+} else if (tourParam !== '0' && !tourSeen()) {
+  setTimeout(() => startTour(), 1600);
+}
