@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-41">
-  <script type="module" src="script.js?v=next-76"></script>
+  <link rel="stylesheet" href="style.css?v=next-43">
+  <script type="module" src="script.js?v=next-78"></script>
 </head>
 <body>
   <header class="site-header">
@@ -118,7 +118,7 @@
           <div class="app-actions">
             <button id="appTour" class="app-action" type="button" title="Quick tour" aria-label="Open the quick tour">Tour</button>
             <button id="appDetails" class="app-action" type="button" aria-expanded="false" aria-controls="infoPanel">Details</button>
-            <button id="appSequence" class="app-action" type="button" aria-expanded="false" aria-controls="sequenceSheet">Sequence</button>
+            <button id="appSequence" class="app-action" type="button" aria-expanded="false" aria-controls="sequenceSheet" aria-label="Compare visits">Compare</button>
             <button id="appTools" class="app-action" type="button" aria-expanded="false" aria-controls="lab">Tools</button>
             <button id="appShare" class="app-action" type="button">Link</button>
             <button id="appExit" class="app-action app-exit" type="button">Exit</button>
@@ -226,9 +226,34 @@
 
         <div id="sequenceSheet" class="sequence-sheet">
           <div class="app-sheet-head">
-            <span>SEQUENCE &amp; COMPARISON</span>
+            <span>COMPARE VISITS</span>
             <button id="sequenceClose" class="app-sheet-close" type="button">Close ✕</button>
           </div>
+        <section class="compare-panel compare-panel-primary" aria-labelledby="compareTitle">
+          <div class="compare-head">
+            <div class="compare-intro">
+              <p class="kicker">A/B COMPARISON</p>
+              <h3 id="compareTitle">Choose two visits</h3>
+              <p class="compare-copy">Blink flips between A and B. Difference subtracts them so motion and brightness changes stand out.</p>
+            </div>
+            <div class="compare-actions">
+              <button id="blink" class="button secondary compact" type="button" title="Blink between visits A and B" aria-keyshortcuts="B" aria-pressed="false" disabled>Blink A / B</button>
+              <button id="difference" class="button secondary compact" type="button" title="Subtract visit A from visit B" aria-keyshortcuts="D" aria-pressed="false" disabled>Difference</button>
+              <button id="showCompare" class="button secondary compact" type="button" aria-pressed="false" disabled>Side by side</button>
+            </div>
+          </div>
+          <div class="compare-selectors">
+            <div class="field"><label for="frameA">Frame A</label><select id="frameA" disabled></select></div>
+            <div class="field"><label for="frameB">Frame B</label><select id="frameB" disabled></select></div>
+            <button id="swapCompare" class="compare-swap" type="button" title="Swap visits A and B" aria-label="Swap visits A and B" disabled>⇄ Swap</button>
+          </div>
+          <div id="compareGrid" class="compare-grid" hidden>
+            <figure><img id="compareImageA" alt="First observation"><figcaption id="compareLabelA">A</figcaption></figure>
+            <figure><img id="compareImageB" alt="Second observation"><figcaption id="compareLabelB">B</figcaption></figure>
+          </div>
+        </section>
+
+        <div class="sequence-subhead"><span class="kicker">SEQUENCE</span><span>Play every visit, or pick one from the strip</span></div>
         <div class="transport">
           <div class="transport-main">
             <div class="transport-buttons">
@@ -243,8 +268,6 @@
           </div>
           <div class="transport-options">
             <label class="speed-control" for="frameSpeed">Speed <input id="frameSpeed" type="range" min="250" max="2000" step="250" value="1000" disabled><span id="speedValue">1.0×</span></label>
-            <button id="blink" class="button secondary compact" type="button" aria-keyshortcuts="B" disabled>Blink A / B</button>
-            <button id="difference" class="button secondary compact" type="button" aria-keyshortcuts="D" disabled>Difference</button>
           </div>
         </div>
         <input id="timeline" class="timeline" aria-label="Choose observation frame" type="range" min="0" max="0" value="0" disabled>
@@ -262,20 +285,6 @@
           <div id="filmstrip" class="filmstrip" aria-label="Observation visit thumbnails"></div>
         </div>
 
-        <details class="compare-panel">
-          <summary>Compare two visits</summary>
-          <div class="compare-content">
-            <div class="compare-selectors">
-              <div class="field"><label for="frameA">Frame A</label><select id="frameA" disabled></select></div>
-              <div class="field"><label for="frameB">Frame B</label><select id="frameB" disabled></select></div>
-              <button id="showCompare" class="button secondary compact" type="button" disabled>Side by side</button>
-            </div>
-            <div id="compareGrid" class="compare-grid" hidden>
-              <figure><img id="compareImageA" alt="First observation"><figcaption id="compareLabelA">A</figcaption></figure>
-              <figure><img id="compareImageB" alt="Second observation"><figcaption id="compareLabelB">B</figcaption></figure>
-            </div>
-          </div>
-        </details>
         </div>
       </section>
 

@@ -50,7 +50,7 @@ const el = {
   checksumValue: $('checksumValue'),
   previous: $('previous'), next: $('next'), play: $('playPause'), timeline: $('timeline'),
   frameLabel: $('frameLabel'), frameCount: $('frameCount'),
-  frameA: $('frameA'), frameB: $('frameB'), blink: $('blink'), showCompare: $('showCompare'),
+  frameA: $('frameA'), frameB: $('frameB'), blink: $('blink'), showCompare: $('showCompare'), swapCompare: $('swapCompare'),
   compareGrid: $('compareGrid'), compareImageA: $('compareImageA'), compareImageB: $('compareImageB'),
   compareLabelA: $('compareLabelA'), compareLabelB: $('compareLabelB'),
   detailSource: $('detailSource'), detailFrame: $('detailFrame'), detailObsid: $('detailObsid'),
@@ -353,6 +353,8 @@ function stopPlayback() {
   clearInterval(interval); interval = null; blinkMode = false;
   el.play.textContent = '▶ Play visits';
   el.blink.textContent = 'Blink A / B';
+  el.blink.classList.remove('active');
+  el.blink.setAttribute('aria-pressed', 'false');
   syncQuickTime();
   clearDifference();
 }
@@ -2039,7 +2041,7 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   const mosaicOnly = newFrames.length > 0 && newFrames.every(frame => frame.mosaic);
   updateAppLive(localOnly ? 'local' : mosaicOnly ? 'mosaic' : mirrorOnly ? 'mirror' : /S3 index/i.test(badge) ? 's3' : /bundled|last known|fallback|last-good|cached/i.test(badge) ? 'cached' : 'live');
   hdMode = false; updateHDControls();
-  el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side';
+  el.compareGrid.hidden = true; el.showCompare.textContent = 'Side by side'; el.showCompare.classList.remove('active'); el.showCompare.setAttribute('aria-pressed', 'false');
   el.sourceLabel.textContent = source;
   el.timeline.max = String(Math.max(0, frames.length - 1));
   populateQuickVisits();
@@ -2053,7 +2055,7 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   for (const item of [el.timeline, el.previous, el.next, el.frameA, el.frameB]) {
     item.disabled = !enabled;
   }
-  for (const item of [el.play, el.blink, el.showCompare, el.difference, el.speed]) {
+  for (const item of [el.play, el.blink, el.showCompare, el.difference, el.speed, el.swapCompare]) {
     item.disabled = frames.length < 2;
   }
   el.empty.hidden = enabled;
@@ -2744,12 +2746,14 @@ function toggleComparison() {
   if (!frames.length) return;
   comparisonOpen = !comparisonOpen; el.compareGrid.hidden = !comparisonOpen;
   el.showCompare.textContent = comparisonOpen ? 'Hide comparison' : 'Side by side';
+  el.showCompare.setAttribute('aria-pressed', String(comparisonOpen));
   if (comparisonOpen) renderComparison();
+  el.showCompare.classList.toggle('active', comparisonOpen);
 }
 function toggleBlink() {
   if (blinkMode) { stopPlayback(); return; }
   if (frames.length < 2) { notify('Load at least 2 frames to blink.'); return; }
-  stopPlayback(); blinkMode = true; el.blink.textContent = 'Stop blinking'; syncQuickTime();
+  stopPlayback(); blinkMode = true; el.blink.textContent = 'Stop blinking'; el.blink.classList.add('active'); el.blink.setAttribute('aria-pressed', 'true'); syncQuickTime();
   let showA = true;
   function tick() { frameIndex = Number(showA ? el.frameA.value : el.frameB.value); showA = !showA; render(); }
   tick(); interval = setInterval(tick, playbackDelay());
@@ -2760,6 +2764,7 @@ function clearDifference() {
   differenceMode = false;
   el.differenceCanvas.hidden = true;
   el.difference.classList.remove('active');
+  el.difference.setAttribute('aria-pressed', 'false');
   el.difference.textContent = 'Difference';
   if (frames[frameIndex]) {
     el.image.hidden = false;
@@ -2818,6 +2823,7 @@ async function showDifference() {
     canvas.hidden = false;
     el.crosshair.hidden = true;
     el.difference.classList.add('active');
+    el.difference.setAttribute('aria-pressed', 'true');
     el.difference.textContent = 'Hide difference';
     el.stageMode.textContent = 'DIFFERENCE A − B';
     el.frameLabel.textContent = `${a.date || 'A'} − ${b.date || 'B'}`;
@@ -2967,6 +2973,17 @@ el.speed.addEventListener('input', () => {
 });
 el.frameA.addEventListener('change', () => { if (differenceMode) showDifference(); else renderComparison(); });
 el.frameB.addEventListener('change', () => { if (differenceMode) showDifference(); else renderComparison(); });
+el.swapCompare.addEventListener('click', () => {
+  if (frames.length < 2) return;
+  const wasDifference = differenceMode;
+  stopPlayback();
+  const previousA = el.frameA.value;
+  el.frameA.value = el.frameB.value;
+  el.frameB.value = previousA;
+  if (wasDifference) toggleDifference();
+  else renderComparison();
+  notify(`A/B swapped: ${frames[Number(el.frameA.value)]?.label || 'A'} ↔ ${frames[Number(el.frameB.value)]?.label || 'B'}.`);
+});
 el.blink.addEventListener('click', toggleBlink);
 el.difference.addEventListener('click', toggleDifference);
 el.showCompare.addEventListener('click', toggleComparison);
@@ -4315,14 +4332,14 @@ function tourSteps() {
     {
       target: '#quickPlay',
       title: 'Let the sequence move',
-      copy: 'Press play to run the visits like a short film. Space does the same thing. If 1× feels too quick, open Sequence and slow it down.'
+      copy: 'Press play to run the visits like a short film. Space does the same thing. If 1× feels too quick, open Compare and slow it down.'
     },
     {
       target: appIsActive() ? '#appSequence' : '#blink',
-      title: 'Now look for what changed',
+      title: 'Now compare what changed',
       copy: appIsActive()
-        ? 'Open Sequence for Blink A / B and Difference. Blink flips between two visits; Difference subtracts them so motion or a brightness change is easier to spot.'
-        : 'Use Blink A / B to flip between two visits, or Difference to subtract them. Movement and brightness changes stand out immediately.'
+        ? 'Open Compare. Choose A and B, then use Blink to flip between them or Difference to subtract them. Side by side puts both visits next to each other.'
+        : 'Choose two visits, then use Blink to flip between them or Difference to subtract them. Side by side puts both visits next to each other.'
     }
   ];
 }
