@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
   <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-44">
-  <script type="module" src="script.js?v=next-78"></script>
+  <link rel="stylesheet" href="style.css?v=next-47">
+  <script type="module" src="script.js?v=next-83"></script>
 </head>
 <body>
   <header class="site-header">
@@ -28,12 +28,35 @@
     </nav>
   </header>
 
+  <nav class="section-nav" aria-label="Explore the observatory">
+    <div class="section-nav-inner">
+      <div class="section-links">
+        <a href="#explorer" class="section-link active" data-section="explore" aria-current="page">Explore</a>
+        <button type="button" class="section-link" data-open-lab="discover">Discover</button>
+        <button type="button" class="section-link" data-open-lab="wavelength">Analyse</button>
+        <button type="button" class="section-link" data-open-lab="learn">Learn</button>
+      </div>
+      <div class="section-mode">
+        <span class="section-mode-label">VIEW</span>
+        <div class="mode-switch" role="group" aria-label="Detail level">
+          <button id="explorerMode" type="button" class="active" aria-pressed="true">Explorer</button>
+          <button id="researchMode" type="button" aria-pressed="false">Research</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
   <main id="top">
     <section class="hero">
       <div class="hero-copy">
         <p class="kicker">SPHEREX · IRSA DR1</p>
         <h1>See the sky <span>move.</span></h1>
-        <p class="hero-lede">Real infrared visits from NASA’s SPHEREx mission. Pick a patch, press play, and let the frames do the work.</p>
+        <p class="hero-lede">Real infrared visits from NASA’s SPHEREx mission. Start with Barnard’s Star, press play, then open Discover to see what changed between visits.</p>
+        <div class="hero-actions">
+          <button id="startHere" class="button primary" type="button">Start with Barnard’s Star <span aria-hidden="true">→</span></button>
+          <button class="button secondary" type="button" data-open-lab="discover">Discover what changed</button>
+        </div>
+        <p class="hero-note">Every frame is real archive data. No simulated sky, no invented stars.</p>
       </div>
       <div class="hero-targets" aria-label="Suggested moving targets">
         <p class="kicker">JUMP TO A TARGET</p>
@@ -53,58 +76,66 @@
         <div class="field">
           <label for="target">Named target</label>
           <select id="target">
-            <option value="spherex" selected>Wide field · Leo</option>
-            <option value="barnard">Barnard’s Star · Ophiuchus</option>
+            <option value="barnard" selected>Barnard’s Star · Ophiuchus</option>
+            <option value="spherex">Wide field · Leo</option>
             <option value="epsindi">Epsilon Indi B · Indus</option>
             <option value="wise0855">WISE 0855−0714</option>
             <option value="rwaur">RW Aurigae · Auriga</option>
             <option value="rdra">R Draconis · Draco</option>
             <option value="custom">Custom coordinates</option>
           </select>
-          <p id="targetMeta" class="target-meta">A real DR1 field with multiple IRSA visits. Press Load real visits, then press play.</p>
+          <p id="targetMeta" class="target-meta">M4V red dwarf · 5.96 ly · moving 10.3″ per year. One of the fastest stars in our sky.</p>
         </div>
 
-        <div class="coordinate-grid">
-          <div class="field">
-            <label for="ra">Right ascension <span>RA</span></label>
-            <input id="ra" type="text" value="150" placeholder="150 or 10h00m00s" autocomplete="off" spellcheck="false">
+        <p id="modeHint" class="mode-hint">Start with a target. Open Advanced controls for coordinates, field width and detector.</p>
+
+        <details id="advancedControls" class="advanced-controls">
+          <summary><span>Advanced controls</span><small>RA / Dec · field · detector</small></summary>
+          <div class="advanced-body">
+            <div class="coordinate-grid">
+              <div class="field">
+                <label for="ra">Right ascension <span>RA</span></label>
+                <input id="ra" type="text" value="269.45208" placeholder="150 or 10h00m00s" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="dec">Declination <span>Dec</span></label>
+                <input id="dec" type="text" value="4.69339" placeholder="+19.5 or +19°30′" autocomplete="off" spellcheck="false">
+              </div>
+            </div>
+            <p class="field-hint">Decimal degrees, or sexagesimal hours / degrees.</p>
+
+            <div class="field">
+              <label for="fov">Field width</label>
+              <select id="fov">
+                <option value="0.1">0.10° · tight</option>
+                <option value="0.15">0.15°</option>
+                <option value="0.2">0.20°</option>
+                <option value="0.3" selected>0.30° · standard</option>
+                <option value="0.5">0.50° · wide</option>
+                <option value="0.6">0.60° · widest</option>
+                <option value="0.9">0.90°</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="detector">Wavelength band <span>real detector</span></label>
+              <select id="detector">
+                <option value="D1">D1 · 0.73–1.13 μm</option>
+                <option value="D2" selected>D2 · 1.09–1.67 μm</option>
+                <option value="D3">D3 · 1.62–2.44 μm</option>
+                <option value="D4">D4 · 2.40–3.86 μm</option>
+                <option value="D5">D5 · 3.80–4.44 μm</option>
+                <option value="D6">D6 · 4.40–5.02 μm</option>
+              </select>
+              <p id="bandHint" class="field-hint">Measured ranges from real DR1 WCS-WAVE headers. Change bands to compare the same sky at different infrared wavelengths.</p>
+            </div>
+
+            <p class="visit-steps"><strong>How to view a visit:</strong> 1 choose a patch · 2 press <b>Load real visits</b> · 3 pick a visit in the strip or press <b>▶ Play visits</b>.</p>
           </div>
-          <div class="field">
-            <label for="dec">Declination <span>Dec</span></label>
-            <input id="dec" type="text" value="19.5" placeholder="+19.5 or +19°30′" autocomplete="off" spellcheck="false">
-          </div>
-        </div>
-        <p class="field-hint">Decimal degrees, or sexagesimal hours / degrees.</p>
-
-        <div class="field">
-          <label for="fov">Field width</label>
-          <select id="fov">
-            <option value="0.1">0.10° · tight</option>
-            <option value="0.15">0.15°</option>
-            <option value="0.2">0.20°</option>
-            <option value="0.3" selected>0.30° · standard</option>
-            <option value="0.5">0.50° · wide</option>
-            <option value="0.6">0.60° · widest</option>
-            <option value="0.9">0.90°</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="detector">Wavelength band <span>real detector</span></label>
-          <select id="detector">
-            <option value="D1">D1 · 0.73–1.13 μm</option>
-            <option value="D2" selected>D2 · 1.09–1.67 μm</option>
-            <option value="D3">D3 · 1.62–2.44 μm</option>
-            <option value="D4">D4 · 2.40–3.86 μm</option>
-            <option value="D5">D5 · 3.80–4.44 μm</option>
-            <option value="D6">D6 · 4.40–5.02 μm</option>
-          </select>
-          <p id="bandHint" class="field-hint">Measured ranges from real DR1 WCS-WAVE headers. Change bands to compare the same sky at different infrared wavelengths.</p>
-        </div>
+        </details>
 
         <button id="loadReal" class="button primary full" type="button">Load real visits</button>
-        <p id="sourceLabel" class="source-label" role="status">Connecting to the S3 archive…</p>
-        <p class="visit-steps"><strong>How to view a visit:</strong> 1 choose a patch · 2 press <b>Load real visits</b> · 3 pick a visit in the strip or press <b>▶ Play visits</b>.</p>
+        <p id="sourceLabel" class="source-label" role="status">Checking the verified archive for Barnard’s Star…</p>
         <div class="query-note">
           <span class="note-mark">i</span>
           <p>Every image is rendered from a real IRSA SPHEREx level-2 FITS cutout. No simulated sky, no invented stars.</p>
@@ -126,9 +157,13 @@
         </div>
         <div class="viewer-head">
           <div class="viewer-title-block">
-            <p id="fieldConstellation" class="kicker">SKY FIELD</p>
-            <h2 id="viewerTitle">Wide field · Leo</h2>
-            <p id="fieldMeta" class="field-meta">RA 150.000° · Dec +19.500° · 0.30° field</p>
+            <p id="fieldConstellation" class="kicker">OPHIUCHUS · SPHEREX DR1</p>
+            <h2 id="viewerTitle">Barnard’s Star</h2>
+            <p id="fieldMeta" class="field-meta">17h 57m 48.50s · +04° 41′ 36.2″ · 0.30° field</p>
+            <div class="viewer-provenance">
+              <span id="verificationBadge" class="verification-badge" data-state="pending"><i aria-hidden="true"></i><span id="verificationLabel">CHECKING DATA</span></span>
+              <span id="verificationNote" class="verification-note">Integrity and header checks, not a scientific interpretation.</span>
+            </div>
           </div>
           <div class="view-controls" aria-label="View controls">
             <button id="zoomOut" class="icon-button" type="button" title="Zoom out" aria-label="Zoom out">−</button>
@@ -174,8 +209,8 @@
           <div id="emptyState" class="empty-state">
             <div class="empty-orbit" aria-hidden="true"><span></span></div>
             <p id="emptyEyebrow" class="kicker">REAL SPHEREX DATA</p>
-            <h3 id="emptyTitle">Your sky awaits</h3>
-            <p id="emptyMessage">Choose a target on the left and load its real SPHEREx visits.</p>
+            <h3 id="emptyTitle">Loading Barnard’s Star…</h3>
+            <p id="emptyMessage">Finding the first real SPHEREx visits for this patch. The first frame will appear here.</p>
             <button id="emptyReal" class="button primary" type="button">Load this field</button>
           </div>
           <div id="stageLoading" class="stage-loading" hidden>
@@ -234,7 +269,7 @@
             <div class="compare-intro">
               <p class="kicker">A/B COMPARISON</p>
               <h3 id="compareTitle">Choose two visits</h3>
-              <p class="compare-copy">Blink flips between A and B. Difference subtracts them so motion and brightness changes stand out.</p>
+              <p class="compare-copy">Blink flips between A and B. Difference subtracts them so motion and brightness changes stand out. <span class="compare-scale">Amber = brighter in B · ice blue = fainter in B · dates are in the A/B selectors.</span></p>
             </div>
             <div class="compare-actions">
               <button id="blink" class="button secondary compact" type="button" title="Blink between visits A and B" aria-keyshortcuts="B" aria-pressed="false" disabled>Blink A / B</button>
@@ -307,7 +342,7 @@
           <div><dt>Dataset</dt><dd id="detailSource">—</dd></div>
           <div><dt>Pixel route</dt><dd id="detailRoute">—</dd></div>
         </dl>
-        <details class="advanced-details">
+        <details id="fullFitsDetails" class="advanced-details">
           <summary>Full FITS measurements</summary>
           <dl class="detail-list">
             <div><dt>Observation ID</dt><dd id="detailObsid">—</dd></div>
@@ -405,8 +440,8 @@
 
     <section class="lab-panel" id="lab" aria-label="Observation toolkit">
       <div class="lab-heading">
-        <div><p class="kicker">OBSERVATION WORKSPACE</p><h2>Go deeper than one picture.</h2></div>
-        <div class="lab-heading-actions"><span class="lab-caption">WAVELENGTH · SKY · LEARN · DIFFERENCE · VERIFY</span><button id="appToolsClose" class="app-sheet-close" type="button">Close ✕</button></div>
+        <div><p class="kicker">DISCOVER · ANALYSE · LEARN</p><h2>Go deeper than one picture.</h2></div>
+        <div class="lab-heading-actions"><span class="lab-caption">REAL DATA · HONEST LABELS · NO INVENTED SKY</span><button id="appToolsClose" class="app-sheet-close" type="button">Close ✕</button></div>
       </div>
       <div class="tools-sky-context" aria-label="Current sky context">
         <div id="toolsSkyImage" class="tools-sky-thumb" role="img" aria-label="Current SPHEREx sky preview"></div>
@@ -421,8 +456,9 @@
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labConstellation" data-lab-tab="constellation">Constellations</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labVerify" data-lab-tab="verify">Data verification</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learning lab</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labGames" data-lab-tab="games">Challenges</button>
         <a class="lab-tab lab-tab-link" href="game.html">Spot the difference ↗</a>
-        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labDiscover" data-lab-tab="discover">Change finder</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labDiscover" data-lab-tab="discover">Discover changes</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labMail" data-lab-tab="mail">✉ Mail observation</button>
       </div>
       <div class="lab-content" id="labWavelength" role="tabpanel">
@@ -580,7 +616,7 @@
     <div class="tour-scrim" id="tourScrim"></div>
     <div class="tour-spotlight" id="tourSpotlight" hidden aria-hidden="true"></div>
     <section class="tour-card" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle" aria-describedby="tourCopy">
-      <div class="tour-topline"><span id="tourStepLabel">01 / 04</span><button id="tourClose" class="tour-close" type="button">Skip tour</button></div>
+      <div class="tour-topline"><span id="tourStepLabel">01 / 05</span><button id="tourClose" class="tour-close" type="button">Skip tour</button></div>
       <p class="kicker tour-kicker">QUICK WALKTHROUGH</p>
       <h2 id="tourTitle">The sky, visit by visit</h2>
       <p id="tourCopy" class="tour-copy"></p>

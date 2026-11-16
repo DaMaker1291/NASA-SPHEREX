@@ -214,21 +214,10 @@ async function discoverFrames(
 }
 
 async function discover(c: AppContext, ra: number, dec: number, fov: number): Promise<IrsaFind> {
-  // SIA/TAP filter on the actual product footprint, so every returned visit
-  // contains the requested centre. The S3 index is a fast fallback, but its
-  // pointing radius can include frames whose footprint is elsewhere.
-  const indexed = findSpherexInS3Index(c.env.ASSETS, new URL(c.req.url).origin, ra, dec, fov).catch(() => null)
-  let discoveryError: unknown = null
-  try {
-    const live = await findSpherex(ra, dec, fov)
-    if (live.observations.length || !(await indexed)?.observations.length) return live
-  } catch (error) {
-    discoveryError = error
-  }
-  const fallback = await indexed
-  if (fallback) return fallback
-  if (discoveryError) throw discoveryError
-  return findSpherex(ra, dec, fov)
+  // The field endpoints use the same indexed-first footprint check as the
+  // frame viewer. D2 is the detector represented by the S3 index, so it is
+  // the coverage sample used before archive discovery is allowed to win.
+  return (await discoverFrames(c, ra, dec, fov, 'D2')).data
 }
 
 async function bundledFind(c: AppContext): Promise<IrsaFind | null> {

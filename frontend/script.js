@@ -8,6 +8,8 @@ const el = {
   target: $('target'), ra: $('ra'), dec: $('dec'), fov: $('fov'), detector: $('detector'), bandHint: $('bandHint'),
   loadReal: $('loadReal'), emptyReal: $('emptyReal'), sourceLabel: $('sourceLabel'),
   targetMeta: $('targetMeta'), fieldMeta: $('fieldMeta'), fieldConstellation: $('fieldConstellation'),
+  advancedControls: $('advancedControls'), fullFitsDetails: $('fullFitsDetails'), modeHint: $('modeHint'), explorerMode: $('explorerMode'), researchMode: $('researchMode'), startHere: $('startHere'),
+  verificationBadge: $('verificationBadge'), verificationLabel: $('verificationLabel'), verificationNote: $('verificationNote'),
   speed: $('frameSpeed'), speedValue: $('speedValue'),
   quickPrevious: $('quickPrevious'), quickPlay: $('quickPlay'), quickNext: $('quickNext'),
   quickTimeline: $('quickTimeline'), quickVisit: $('quickVisit'), quickBand: $('quickBand'),
@@ -125,6 +127,9 @@ let ownedObjectUrls = [];
 let toastTimeout = null, loadingReal = false, sky = null, realBadge = 'LIVE IRSA • REAL FITS';
 let loadRequest = 0, activeLoadController = null;
 let lastStageKey = '';
+let sourceState = 'pending';
+const DEFAULT_TARGET = 'barnard';
+const MODE_KEY = 'drift-detail-mode-v1';
 
 function notify(message) {
   el.toast.textContent = message;
@@ -270,6 +275,62 @@ function exitMapApp({ top = false } = {}) {
   requestAnimationFrame(() => window.scrollTo({ top: destination, left: 0, behavior: 'instant' }));
 }
 
+function storedMode() {
+  try { return localStorage.getItem(MODE_KEY) === 'research' ? 'research' : 'explorer'; } catch { return 'explorer'; }
+}
+
+function applyMode(mode, { persist = false } = {}) {
+  const research = mode === 'research';
+  document.body.classList.toggle('research-mode', research);
+  document.body.classList.toggle('explorer-mode', !research);
+  if (el.explorerMode) {
+    el.explorerMode.classList.toggle('active', !research);
+    el.explorerMode.setAttribute('aria-pressed', String(!research));
+  }
+  if (el.researchMode) {
+    el.researchMode.classList.toggle('active', research);
+    el.researchMode.setAttribute('aria-pressed', String(research));
+  }
+  if (el.modeHint) {
+    el.modeHint.textContent = research
+      ? 'Research mode: exact coordinates, field width, detector and provenance controls are open. The data is identical in both modes.'
+      : 'Start with a target. Open Advanced controls for coordinates, field width and detector.';
+  }
+  if (el.advancedControls) el.advancedControls.open = research;
+  if (el.fullFitsDetails) el.fullFitsDetails.open = research;
+  if (persist) {
+    try { localStorage.setItem(MODE_KEY, research ? 'research' : 'explorer'); } catch { /* private modes can block storage */ }
+    notify(research ? 'Research mode: full coordinates, FITS details and provenance are open.' : 'Explorer mode: the guided view is back. Advanced controls are still one click away.');
+  }
+}
+
+function setSectionActive(name) {
+  document.querySelectorAll('.section-link').forEach(link => {
+    const key = link.dataset.section || (link.dataset.openLab === 'wavelength' ? 'analyse' : link.dataset.openLab);
+    const active = key === name;
+    link.classList.toggle('active', active);
+    if (active) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+}
+
+function openSection(name) {
+  if (name === 'explore') {
+    setSectionActive('explore');
+    document.getElementById('explorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  const tab = name === 'analyse' ? 'wavelength' : name;
+  setSectionActive(name);
+  setLabTab(tab);
+  document.getElementById('lab')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function startFirstObservation() {
+  if (!loadingReal && (el.target.value !== DEFAULT_TARGET || !frames.length)) setTarget(DEFAULT_TARGET);
+  document.getElementById('explorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function restoreFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const key = params.get('target');
@@ -298,7 +359,7 @@ function restoreFromUrl() {
     el.fieldMeta.textContent = `${coordinateText(ra, dec)} · ${fov.toFixed(2)}° field`;
     return;
   }
-  setTarget('spherex', false);
+  setTarget(DEFAULT_TARGET, false);
 }
 
 function setTarget(key, shouldLoad = true) {
@@ -1508,6 +1569,11 @@ function updateVerification() {
     });
   }
   labState.lastChecks = checks.map(check => ({ state: check.state, title: check.title, detail: check.detail }));
+  if (available && verified === available) {
+    setVerificationBadge(sourceState, `${verified} / ${available} independent checks agree. Integrity and header agreement, not a scientific interpretation.`);
+  } else if (available) {
+    setVerificationBadge('partial', `${verified} / ${available} checks agree; ${available - verified} need attention. Open Data verification for the exact rows.`);
+  }
   el.verificationScore.textContent = `${verified} / ${available} checks agree`;
   el.verificationScore.className = `verify-score ${verified === available && available ? 'good' : available ? 'mixed' : ''}`;
   for (const check of checks) el.verificationList.append(verificationRow(check));
@@ -2025,11 +2091,37 @@ function setLoading(isLoading, { quietStage = false } = {}) {
   updateVisitNotice();
 }
 
+const VERIFICATION_STATES = {
+  pending: { label: 'CHECKING DATA', note: 'Integrity and header checks, not a scientific interpretation.' },
+  live: { label: 'LIVE VERIFIED', note: 'Retrieved from the live archive. Headers and checksums are checked; this is not a claim of scientific correctness.' },
+  s3: { label: 'LIVE VERIFIED', note: 'Live archive rows with FITS pixels read from IRSA S3. Integrity checks pass; interpretation is still yours.' },
+  partial: { label: 'PARTIALLY VERIFIED', note: 'Some independent header checks disagree or are unavailable. Inspect the verification panel before interpreting this frame.' },
+  cached: { label: 'CACHED VERIFIED', note: 'A previously validated real-data sample, not a live query. The timestamp and route stay labelled.' },
+  mirror: { label: 'CACHED VERIFIED', note: 'A bundled real SPHEREx sample. It is not a live observation, and it is labelled as a mirror.' },
+  mosaic: { label: 'PARTIALLY VERIFIED · CONTEXT', note: 'NASA all-sky context only. It is not a visit, light curve or per-visit measurement.' },
+  local: { label: 'LOCAL IMAGE · UNVERIFIED', note: 'This PNG is not archive pixels and has no SPHEREx visit identity.' },
+  'no-coverage': { label: 'NO VISIT COVERAGE', note: 'No real visits cover this patch in the current release. Nothing was substituted.' },
+  noCoverage: { label: 'NO VISIT COVERAGE', note: 'No real visits cover this patch in the current release. Nothing was substituted.' },
+  offline: { label: 'VERIFICATION FAILED', note: 'The archive request did not complete. This is a request-level failure, not proof of a mission-wide outage.' },
+  failed: { label: 'VERIFICATION FAILED', note: 'A required integrity or retrieval check failed. Do not treat this frame as verified.' }
+};
+
+function setVerificationBadge(state = 'pending', note = '') {
+  if (!el.verificationBadge) return;
+  const config = VERIFICATION_STATES[state] || VERIFICATION_STATES.pending;
+  el.verificationBadge.dataset.state = state;
+  el.verificationBadge.title = note || config.note;
+  if (el.verificationLabel) el.verificationLabel.textContent = config.label;
+  if (el.verificationNote) el.verificationNote.textContent = note || config.note;
+}
+
 function updateAppLive(state = 'live') {
   if (!el.appLive) return;
   const labels = { live: 'LIVE IRSA', cached: 'CACHED IRSA', s3: 'S3 INDEX', offline: 'ARCHIVE QUERY FAILED', local: 'LOCAL PNG', mirror: 'LOCAL MIRROR', mosaic: 'LOCAL MOSAIC', 'no-coverage': 'NO COVERAGE' };
   if (el.appLiveText) el.appLiveText.textContent = labels[state] || labels.live;
   el.appLive.dataset.state = state;
+  sourceState = state;
+  setVerificationBadge(state);
 }
 
 function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
@@ -2378,6 +2470,7 @@ async function loadRealFrames(options = {}) {
   const controller = new AbortController();
   activeLoadController = controller;
   setLoading(true, { quietStage: preserveCurrent });
+  if (!preserveCurrent) setVerificationBadge('pending');
   // Keep the current real visit set visible until a replacement is fully
   // received. A failed navigation must never erase data already on screen.
   el.empty.hidden = true;
@@ -2561,12 +2654,12 @@ async function loadRealFrames(options = {}) {
       showNearestMirrorFallback(fallback, 'archive query failed · nearest verified field');
       return;
     }
-    updateAppLive('offline');
     if (frames.length) {
       el.sourceLabel.textContent = `Archive query failed: ${archiveError} · keeping ${frames.length} real visit${frames.length === 1 ? '' : 's'} already loaded`;
       el.stageBadge.hidden = false;
       el.stageBadge.textContent = realBadge;
     } else {
+      updateAppLive('offline');
       el.sourceLabel.textContent = `Archive query failed: ${archiveError}`;
       el.empty.hidden = false;
       const isDefaultField = Math.abs(field.ra - 150) < 0.01 && Math.abs(field.dec - 19.5) < 0.01 && Math.abs(field.fov - 0.3) < 0.01;
@@ -4284,9 +4377,25 @@ function initLab() {
 }
 
 const bootParams = new URLSearchParams(window.location.search);
-const shouldOpenMapApp = bootParams.get('app') !== '0' &&
-  (bootParams.get('app') === '1' || bootParams.has('target') || (bootParams.has('ra') && bootParams.has('dec')));
+// Only an explicit app=1 opens the focus-mode shell. Target and coordinate
+// links stay on the main page so the automatic first observation, section
+// navigation and guided controls remain visible on refresh.
+const shouldOpenMapApp = bootParams.get('app') === '1';
 if (shouldOpenMapApp) document.body.classList.add('map-app');
+applyMode(storedMode());
+for (const button of document.querySelectorAll('[data-open-lab]')) {
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    openSection(button.dataset.openLab === 'wavelength' ? 'analyse' : button.dataset.openLab);
+  });
+}
+document.querySelector('[data-section="explore"]')?.addEventListener('click', (event) => {
+  event.preventDefault();
+  openSection('explore');
+});
+el.explorerMode?.addEventListener('click', () => applyMode('explorer', { persist: true }));
+el.researchMode?.addEventListener('click', () => applyMode('research', { persist: true }));
+el.startHere?.addEventListener('click', startFirstObservation);
 restoreFromUrl();
 syncQuickFilters();
 syncQuickTime();
@@ -4340,6 +4449,11 @@ function tourSteps() {
       copy: appIsActive()
         ? 'Open Compare. Choose A and B, then use Blink to flip between them or Difference to subtract them. Side by side puts both visits next to each other.'
         : 'Choose two visits, then use Blink to flip between them or Difference to subtract them. Side by side puts both visits next to each other.'
+    },
+    {
+      target: '.section-links [data-open-lab="discover"]',
+      title: 'Go from watching to discovering',
+      copy: 'Discover compares two real visits, ranks the strongest pixel residuals and plots the light curve. Switch between Explorer and Research at the top whenever you want more instrumentation.'
     }
   ];
 }
