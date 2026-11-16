@@ -111,10 +111,6 @@ function skyToPixel(hdu: FitsHdu, ra: number, dec: number) {
   let u = linearU
   let v = linearV
 
-  // SIP is defined around CRPIX. A few fixed-point passes solve
-  // u + A(u, v) = linearU and v + B(u, v) = linearV. Keep the linear
-  // coordinates fixed; subtracting from the running coordinates instead
-  // would walk away from the solution.
   if (numberValue(header, 'A_ORDER') > 0 || numberValue(header, 'B_ORDER') > 0) {
     for (let iteration = 0; iteration < 12; iteration += 1) {
       const nextU = linearU - sipValue(header, 'A', u, v)
@@ -258,11 +254,6 @@ function joinChunks(chunks: Uint8Array[]) {
   return output.buffer
 }
 
-/**
- * Crop a full SPHEREx MEF product directly from S3. The archive cutout
- * service is the primary source; this path exists so a real S3 product can
- * still be served when the IRSA HTTP service is unavailable.
- */
 export function cropS3Product(buffer: ArrayBuffer, ra: number, dec: number, size: string) {
   const fits = parseFits(buffer)
   const primary: FitsHeader = new Map()
@@ -399,9 +390,6 @@ async function s3Layouts(url: string) {
 }
 
 async function fetchS3WaveTableTail(url: string) {
-  // The WCS-WAVE binary table sits at the end of a level-2 product. Reading
-  // the last block window preserves the measured wavelength range on the fast
-  // PNG path without fetching the full 60 MB file.
   const size = await s3Head(url)
   const window = Math.min(size, 65_536)
   if (window < BLOCK) return null
@@ -424,7 +412,6 @@ async function fetchS3WaveTableTail(url: string) {
         return new Uint8Array(await s3Range(url, size - window + at, size - window + at + length - 1))
       }
     } catch {
-      // Keep looking for an earlier extension header.
     }
     cursor = at
   }
@@ -484,9 +471,6 @@ async function fetchS3SelectedHdus(url: string, imageOnly = false) {
   const selected = layouts.filter((layout) => layout.name === 'PRIMARY' || layout.name === 'IMAGE' || (!imageOnly && CUTOUT_HDUS.has(layout.name)))
   if (!selected.length) throw new Error('The S3 product has no cutout HDUs.')
 
-  // Read the independent HDU byte ranges in parallel. The old sequential walk
-  // paid a full S3 round trip for every extension, which dominated the first
-  // cutout latency on Render.
   const chunks = await Promise.all(selected.map(async (layout) => {
     const length = layout.headerBytes + layout.dataBytes
     if (length < BLOCK) return new Uint8Array()
@@ -512,11 +496,6 @@ export type S3HipsPlane = {
   url: string
 }
 
-/**
- * Read one spectral plane from a real SPHEREx HiPS cube in S3. The bucket has
- * FITS cubes, not the PNG tree IRSA's web server exposes, so the Worker wraps
- * the selected 512x512 plane as a small FITS image and rasterizes it locally.
- */
 export async function fetchS3HipsPlane(pixel: number, frame: number): Promise<S3HipsPlane> {
   if (!Number.isInteger(pixel) || pixel < 0 || pixel >= 12 * 4 ** HIPS_ORDER) {
     throw new ApiError(400, 'HiPS pixel is outside Norder 5.', 'OUT_OF_RANGE')
@@ -534,7 +513,6 @@ export async function fetchS3HipsPlane(pixel: number, frame: number): Promise<S3
   const url = `${BUCKET}/${key}`
   const primaryHeader = await s3Range(url, 0, HEADER_WINDOW - 1)
   const primary = headerFromPrefix(primaryHeader)
-  // HiPS cubes have an empty primary HDU followed by the IMAGE extension.
   const extensionOffset = Math.ceil(primary.headerBytes / BLOCK) * BLOCK
   const extensionHeader = await s3Range(url, extensionOffset, extensionOffset + HEADER_WINDOW - 1)
   const parsed = headerFromPrefix(extensionHeader)
@@ -588,7 +566,6 @@ export async function fetchS3Cutout(uri: string, ra: number, dec: number, size: 
     try {
       return { buffer: await fetchS3Cropped(url, ra, dec, size, imageOnly), key, url }
     } catch {
-      // A non-standard image layout can still use the full selected-HDU path.
     }
     const buffer = await fetchS3SelectedHdus(url, imageOnly)
     return { buffer: cropS3Product(buffer, ra, dec, size), key, url }

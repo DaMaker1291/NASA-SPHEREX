@@ -40,7 +40,6 @@ async function readAsset(request) {
       })
       return new Response(request.method === 'HEAD' ? null : body, { headers })
     } catch {
-      // Try the next asset root.
     }
   }
 

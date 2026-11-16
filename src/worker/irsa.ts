@@ -226,7 +226,6 @@ function rememberLastGood(cacheKey: string, data: IrsaFind) {
       )
       .catch(() => {})
   } catch {
-    // Local dev may not expose the Cache API; the in-isolate copy still works.
   }
 }
 
@@ -242,7 +241,6 @@ async function lastGoodResult(cacheKey: string): Promise<IrsaFind | null> {
         lastGoodSearch.set(cacheKey, entry)
       }
     } catch {
-      // No persistent cache available; fall back to the in-isolate copy only.
     }
   }
   if (!entry) return null
@@ -274,8 +272,6 @@ export async function findSpherex(ra: number, dec: number, fov: number): Promise
 
   return searchFlights.run(cacheKey, async () => {
     try {
-      // TAP is the zero-lag path: it includes newly ingested artifacts before
-      // SIA2's index catches up. SIA2 remains the availability fallback.
       const [tapResult, siaResult] = await Promise.allSettled([
         queryTap(ra, dec, fov),
         querySia(ra, dec, fov, cacheKey),
@@ -339,9 +335,6 @@ function parseSiaHtml(text: string): Array<Record<string, string>> {
 }
 
 async function fetchSiaRows(ra: number, dec: number, collection: string, budgetMs: number): Promise<Array<Record<string, string>>> {
-  // SIA is a coverage query: ask for products whose footprint overlaps the
-  // target point, not every product inside the display FOV. A 0.02-degree
-  // cone is enough for a valid cutout and avoids enormous SIA result sets.
   const deadline = Date.now() + Math.max(0, budgetMs)
   const remaining = () => Math.max(0, deadline - Date.now())
   if (remaining() < 1_000) {
@@ -555,9 +548,6 @@ async function querySia(ra: number, dec: number, fov: number, cacheKey: string):
     }
 
     if (!rows.length) {
-      // A successful empty SIA2 response is a coverage result. If another
-      // collection failed, do not turn an availability problem into a false
-      // "not observed" claim.
       if (deadlineExpired) {
         if (lastError instanceof ApiError) throw lastError
         throw new ApiError(504, `Archive discovery did not answer within ${SIA_TOTAL_BUDGET_MS / 1000}s.`, 'UPSTREAM_TIMEOUT')
@@ -799,9 +789,6 @@ async function fetchCutoutWithFallback(uri: string, ra: number, dec: number, siz
       const direct = await fetchS3Cutout(uri, ra, dec, size, imageOnly)
       return { buffer: direct.buffer, source: `NASA IRSA S3 · direct ${direct.key.split('/')[0].toUpperCase()} product` }
     } catch (s3Error) {
-      // The S3 index can point at a product whose sibling bytes are missing.
-      // Fall back to the cutout service, but do not make S3-first wait on IRSA
-      // when S3 itself answered.
       try {
         const buffer = await fetchCutout(uri, ra, dec, size)
         return { buffer, source: 'IRSA SPHEREx cutout service' }

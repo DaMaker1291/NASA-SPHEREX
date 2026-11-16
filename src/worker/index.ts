@@ -62,8 +62,6 @@ function withCacheState(response: Response, state: 'HIT' | 'MISS') {
 function cacheKey(request: Request): Request | null {
   if (request.method !== 'GET') return null
   const url = new URL(request.url)
-  // Query order is not significant. Canonicalising it prevents the same
-  // real request from filling several edge-cache slots.
   url.searchParams.sort()
   url.hash = ''
   return new Request(url.toString(), { method: 'GET' })
@@ -119,8 +117,6 @@ async function edgeMatch(request: Request) {
     const maxAge = cacheMaxAgeMs(cached)
     const tooOld = Number.isFinite(storedAt) && maxAge !== null && Date.now() - storedAt > maxAge
     if (tooOld || (cacheExpired(cached) && !Number.isFinite(storedAt))) {
-      // Cache API entries are not guaranteed to expire on their own. Enforce
-      // the response TTL explicitly instead of serving stale JSON forever.
       cache.delete(key).catch(() => {})
       return null
     }
@@ -157,7 +153,6 @@ function edgeStore(c: AppContext, response: Response) {
         .catch(() => {}),
     )
   } catch {
-    // Local dev and tests may not expose a Cache API; the origin response still works.
   }
 }
 
@@ -403,8 +398,6 @@ app.get('/api/spherex/frames', async (c) => {
       throw new ApiError(502, `No ${detector} products were returned for this field.`, 'NO_PRODUCTS')
     }
 
-    // S3 range-cutouts are slower than the IRSA cutout service. Keep indexed
-    // fields responsive while still sampling the full visit range.
     const frameLimit = data.source.label.includes('S3 index') ? Math.min(limit, 12) : limit
     const picked = frames.length <= frameLimit
       ? frames
@@ -469,9 +462,6 @@ app.get('/api/spherex/png', async (c) => {
     if (cached) return withCacheState(cached, 'HIT')
 
     const preferS3 = c.req.query('preferS3') !== '0'
-    // Use the same real image, variance, zodi and WCS-WAVE planes for the
-    // interactive PNG as the FITS route; both now crop S3 rows instead of
-    // downloading the full 60 MB product.
     const cutout = await getCutout(uri, ra, dec, fov, sizeOverride, preferS3)
     let rasterResult
     try {
@@ -505,8 +495,6 @@ app.get('/api/spherex/png', async (c) => {
     c.header('X-Frame-Mean', String(raster.stats.mean))
     c.header('X-Frame-Variance-Median', String(raster.varianceStats?.median ?? ''))
     c.header('X-Frame-Zodi-Median', String(raster.zodiStats?.median ?? ''))
-    // The fast PNG path reads only the IMAGE plane, so do not claim "0 flags"
-    // when the flag HDU was intentionally not fetched.
     c.header('X-Frame-Flagged', raster.varianceStats ? String(raster.flaggedPixels) : '')
     c.header('X-Frame-Pixel-Scale', String(raster.pixelScale ?? ''))
     c.header('X-Frame-Wave-Min', String(raster.wave?.minWavelength ?? ''))

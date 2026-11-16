@@ -66,12 +66,10 @@ export function skyNeighborhood(ra: number, dec: number, radiusDeg = 1.5) {
 }
 
 export function skyContext(ra: number, dec: number) {
-  // astronomy-engine's Constellation() takes right ascension in hours, not degrees.
   const constellation = Constellation(ra / 15, dec)
   const vector = unitVector(ra, dec)
 
   const galacticRotation = Rotation_EQJ_GAL().rot
-  // astronomy-engine stores rotation matrices row-major and applies them by columns.
   const gx = galacticRotation[0][0] * vector.x + galacticRotation[1][0] * vector.y + galacticRotation[2][0] * vector.z
   const gy = galacticRotation[0][1] * vector.x + galacticRotation[1][1] * vector.y + galacticRotation[2][1] * vector.z
   const gz = galacticRotation[0][2] * vector.x + galacticRotation[1][2] * vector.y + galacticRotation[2][2] * vector.z

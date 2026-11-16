@@ -94,8 +94,6 @@ async function buildHealth(): Promise<SourceHealth> {
   const pixelsOk = sources.some((source) => (source.id === 's3' || source.id === 'hips') && source.ok)
   return {
     checkedAt: new Date().toISOString(),
-    // Individual providers can be degraded without taking the viewer down.
-    // The core paths are discovery and direct pixels, not a unanimous probe.
     ok: discoveryOk && pixelsOk,
     discoveryOk,
     pixelsOk,

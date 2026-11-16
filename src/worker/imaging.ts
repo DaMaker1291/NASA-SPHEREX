@@ -183,9 +183,6 @@ export async function rasterizeCutout(
     : Number.isFinite(cd11) && Number.isFinite(cd21)
       ? Math.atan2(cd21, cd11)
       : Number.NaN
-  // PNG rows are written from the FITS array in storage order, so the top of
-  // the displayed image is the last FITS row. Expose corners in display order
-  // so the browser can turn a screen position back into a real sky position.
   const topLeft = skyAt(image, 0, image.height - 1)
   const topRight = skyAt(image, image.width - 1, image.height - 1)
   const bottomLeft = skyAt(image, 0, 0)

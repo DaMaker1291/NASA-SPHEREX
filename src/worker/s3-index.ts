@@ -137,9 +137,6 @@ export async function findSpherexInS3Index(
   const manifest = await loadManifest(assets, origin)
   if (!manifest) return null
 
-  // A 3.5-degree detector frame can cover a target whose centre is up to
-  // roughly 2.4 degrees away. Add the requested cutout half-width and a small
-  // margin, then fetch only the cells intersecting that search circle.
   const radius = 2.45 + fov / 2
   const cells = nearbyCells(manifest, ra, dec, radius + manifest.cellDegrees)
   const shards = await Promise.all(cells.map((key) => loadShard(assets, origin, key)))
