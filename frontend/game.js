@@ -4,6 +4,7 @@ const HIT_RADIUS = 0.066;
 const MIN_HIT_PX = 44;
 const HINT_MS = 3200;
 const CLICK_MS = 850;
+const BLINK_MS = 850;
 
 const el = {
   board: document.getElementById('gameBoard'),
@@ -13,6 +14,11 @@ const el = {
   loadingB: document.getElementById('frameLoadingB'),
   dateA: document.getElementById('frameDateA'),
   dateB: document.getElementById('frameDateB'),
+  labelA: document.getElementById('frameLabelA'),
+  labelB: document.getElementById('frameLabelB'),
+  viewHint: document.getElementById('gameViewHint'),
+  viewBadge: document.getElementById('gameViewBadge'),
+  viewButtons: [...document.querySelectorAll('[data-view]')],
   score: document.getElementById('gameScore'),
   misses: document.getElementById('gameMisses'),
   hints: document.getElementById('gameHints'),
@@ -40,6 +46,9 @@ const state = {
   clickMark: null,
   clickTimer: 0,
   revealed: false,
+  viewMode: 'side',
+  blinkShowB: false,
+  trailImage: null,
   busy: true,
   lastPairKey: '',
   lastPairFrames: new Set(),
@@ -48,6 +57,13 @@ const state = {
 const imageCache = new Map();
 const pointerStarts = new Map();
 let lastPointerGuess = 0;
+let blinkTimer = 0;
+
+const VIEW_COPY = {
+  side: 'Compare the two visits side by side.',
+  blink: 'The same view flips between visit A and visit B.',
+  trail: 'Amber is visit A, cyan is visit B. A star that moved leaves a split-colour trail.',
+};
 
 function randomInt(max) {
   return Math.floor(Math.random() * max);
@@ -64,6 +80,9 @@ function updateControls() {
   el.next.disabled = state.busy;
   el.hint.disabled = state.busy || !hasRound || complete || state.revealed;
   el.reveal.disabled = state.busy || !hasRound || complete || state.revealed;
+  for (const button of el.viewButtons) {
+    button.disabled = state.busy || !state.imageA || !state.imageB;
+  }
 }
 
 function updateScore() {
@@ -536,9 +555,90 @@ function drawPanel(canvas, image, side) {
   drawMarkers(context, side);
 }
 
+function buildTrailImage(imageA, imageB) {
+  const canvas = document.createElement('canvas');
+  canvas.width = CANVAS_SIZE;
+  canvas.height = CANVAS_SIZE;
+  if (!imageA || !imageB) return canvas;
+  const context = canvas.getContext('2d');
+  const pixelsA = imageData(imageA, CANVAS_SIZE, CANVAS_SIZE);
+  const pixelsB = imageData(imageB, CANVAS_SIZE, CANVAS_SIZE);
+  const output = context.createImageData(CANVAS_SIZE, CANVAS_SIZE);
+  for (let index = 0; index < CANVAS_SIZE * CANVAS_SIZE; index += 1) {
+    const offset = index * 4;
+    const lumaA = 0.2126 * pixelsA[offset] + 0.7152 * pixelsA[offset + 1] + 0.0722 * pixelsA[offset + 2];
+    const lumaB = 0.2126 * pixelsB[offset] + 0.7152 * pixelsB[offset + 1] + 0.0722 * pixelsB[offset + 2];
+    const a = Math.min(255, Math.pow(lumaA / 255, 0.82) * 255);
+    const b = Math.min(255, Math.pow(lumaB / 255, 0.82) * 255);
+    output.data[offset] = a;
+    output.data[offset + 1] = Math.min(a, b) + Math.abs(a - b) * 0.45;
+    output.data[offset + 2] = b;
+    output.data[offset + 3] = 255;
+  }
+  context.putImageData(output, 0, 0);
+  return canvas;
+}
+
+function stopBlink() {
+  if (blinkTimer) clearInterval(blinkTimer);
+  blinkTimer = 0;
+  state.blinkShowB = false;
+}
+
+function startBlink() {
+  stopBlink();
+  if (!state.imageA || !state.imageB) return;
+  blinkTimer = setInterval(() => {
+    state.blinkShowB = !state.blinkShowB;
+    draw();
+  }, BLINK_MS);
+}
+
+function updateViewChrome() {
+  const mode = state.viewMode;
+  el.board.classList.remove('mode-side', 'mode-blink', 'mode-trail');
+  el.board.classList.add(`mode-${mode}`);
+  for (const button of el.viewButtons) {
+    const active = button.dataset.view === mode;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  el.viewHint.textContent = VIEW_COPY[mode];
+  el.viewBadge.hidden = !state.imageA || mode === 'side';
+  el.labelA.textContent = mode === 'blink' ? 'A ↔ B' : mode === 'trail' ? 'VISIT A + B' : 'VISIT A';
+  el.labelB.textContent = 'VISIT B';
+  if (!state.pair) return;
+  el.dateA.textContent = mode === 'blink'
+    ? `${stampDay(state.pair.first)} ↔ ${stampDay(state.pair.second)}`
+    : stamp(state.pair.first);
+  el.dateB.textContent = stamp(state.pair.second);
+}
+
 function draw() {
-  drawPanel(el.canvasA, state.imageA, 'A');
-  drawPanel(el.canvasB, state.imageB, 'B');
+  const mode = state.viewMode;
+  if (mode === 'blink') {
+    drawPanel(el.canvasA, state.blinkShowB ? state.imageB : state.imageA, 'A');
+    if (state.imageA) {
+      el.viewBadge.textContent = state.blinkShowB
+        ? `BLINK · B ${state.pair ? stampDay(state.pair.second) : ''}`
+        : `BLINK · A ${state.pair ? stampDay(state.pair.first) : ''}`;
+    }
+  } else if (mode === 'trail') {
+    drawPanel(el.canvasA, state.trailImage || state.imageA, 'A');
+    if (state.imageA) el.viewBadge.textContent = 'A AMBER · B CYAN';
+  } else {
+    drawPanel(el.canvasA, state.imageA, 'A');
+    drawPanel(el.canvasB, state.imageB, 'B');
+  }
+}
+
+function setViewMode(mode) {
+  if (!VIEW_COPY[mode] || state.viewMode === mode) return;
+  stopBlink();
+  state.viewMode = mode;
+  updateViewChrome();
+  if (mode === 'blink' && state.imageA && state.imageB && !state.busy) startBlink();
+  draw();
 }
 
 function stamp(frame) {
@@ -546,6 +646,13 @@ function stamp(frame) {
   const date = new Date(frame.iso || frame.date);
   if (Number.isNaN(date.getTime())) return frame.date || 'Time unavailable';
   return `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+function stampDay(frame) {
+  if (!frame) return '';
+  const date = new Date(frame.iso || frame.date);
+  if (Number.isNaN(date.getTime())) return frame.date || '';
+  return date.toISOString().slice(0, 10);
 }
 
 function fieldName(field) {
@@ -595,6 +702,7 @@ function flashClick(x, y, side, hit) {
 async function newRound() {
   if (state.busy) return;
   state.busy = true;
+  stopBlink();
   clearTimers();
   state.found.clear();
   state.misses = 0;
@@ -603,10 +711,13 @@ async function newRound() {
   state.candidates = [];
   state.imageA = null;
   state.imageB = null;
+  state.trailImage = null;
   state.pair = null;
   setLoading(true);
   setStatus('Finding a pair of real visits with measurable changes…');
   updateScore();
+  updateViewChrome();
+  draw();
   el.roundMeta.textContent = 'LOADING REAL VISITS';
   el.roundTitle.textContent = 'Preparing a sky pair…';
 
@@ -640,10 +751,13 @@ async function newRound() {
     state.lastPairFrames = new Set([selected.first.png, selected.second.png]);
     state.imageA = selected.imageA;
     state.imageB = selected.imageB;
+    state.trailImage = buildTrailImage(selected.imageA, selected.imageB);
     state.candidates = selected.analysis.candidates;
     updateRoundCopy(selected.group, selected.first, selected.second, selected.rotated || selected.shifted);
+    updateViewChrome();
     draw();
     updateScore();
+    if (state.viewMode === 'blink') startBlink();
     setStatus(`Find ${state.candidates.length} real change${state.candidates.length === 1 ? '' : 's'} between the two visits. Click a star or smudge in either image.`);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : 'The real-visit game could not load.', 'warn');
@@ -784,6 +898,9 @@ function boot() {
   el.hint.addEventListener('click', showHint);
   el.reveal.addEventListener('click', reveal);
   el.next.addEventListener('click', newRound);
+  for (const button of el.viewButtons) {
+    button.addEventListener('click', () => setViewMode(button.dataset.view));
+  }
 
   setLoading(true);
   setStatus('Loading the real SPHEREx visit index…');

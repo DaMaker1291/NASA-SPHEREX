@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#080b12">
   <meta name="description" content="Spot real changes between two SPHEREx visits of the same patch of sky.">
   <title>Spot the difference | SPHEREx Explorer</title>
-  <link rel="stylesheet" href="style.css?v=next-39">
-  <link rel="stylesheet" href="game.css?v=next-1">
-  <script type="module" src="game.js?v=next-8"></script>
+  <link rel="stylesheet" href="style.css?v=next-44">
+  <link rel="stylesheet" href="game.css?v=next-3">
+  <script type="module" src="game.js?v=next-9"></script>
 </head>
 <body class="game-page">
   <header class="site-header game-header">
@@ -55,16 +55,27 @@
         </div>
       </div>
 
-      <div id="gameBoard" class="game-board" data-candidates="0">
+      <div class="game-viewbar">
+        <span class="game-view-label">VIEW</span>
+        <div class="game-viewmodes" role="group" aria-label="Comparison view">
+          <button class="game-viewmode is-active" type="button" data-view="side" aria-pressed="true">Side by side</button>
+          <button class="game-viewmode" type="button" data-view="blink" aria-pressed="false">Blink A/B</button>
+          <button class="game-viewmode" type="button" data-view="trail" aria-pressed="false">Star paths</button>
+        </div>
+        <span id="gameViewHint" class="game-view-hint">Blink between visits or overlap them to see changes.</span>
+      </div>
+
+      <div id="gameBoard" class="game-board mode-side" data-candidates="0">
         <article class="game-frame">
-          <div class="game-frame-head"><span>VISIT A</span><time id="frameDateA">Loading…</time></div>
+          <div class="game-frame-head"><span id="frameLabelA">VISIT A</span><time id="frameDateA">Loading…</time></div>
           <div class="game-canvas-wrap">
             <canvas id="frameA" width="480" height="480" role="img" aria-label="First SPHEREx visit. Click a difference in either image.">Visit A image</canvas>
+            <div id="gameViewBadge" class="game-view-badge" hidden></div>
             <div id="frameLoadingA" class="game-frame-loading">Loading real visit…</div>
           </div>
         </article>
         <article class="game-frame">
-          <div class="game-frame-head"><span>VISIT B</span><time id="frameDateB">Loading…</time></div>
+          <div class="game-frame-head"><span id="frameLabelB">VISIT B</span><time id="frameDateB">Loading…</time></div>
           <div class="game-canvas-wrap">
             <canvas id="frameB" width="480" height="480" role="img" aria-label="Second SPHEREx visit. Click a difference in either image.">Visit B image</canvas>
             <div id="frameLoadingB" class="game-frame-loading">Loading real visit…</div>
