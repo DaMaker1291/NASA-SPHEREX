@@ -7,8 +7,8 @@
   <meta name="description" content="Spot real changes between two SPHEREx visits of the same patch of sky.">
   <title>Spot the difference | SPHEREx Explorer</title>
   <link rel="stylesheet" href="style.css?v=next-44">
-  <link rel="stylesheet" href="game.css?v=next-3">
-  <script type="module" src="game.js?v=next-9"></script>
+  <link rel="stylesheet" href="game.css?v=next-4">
+  <script type="module" src="game.js?v=next-10"></script>
 </head>
 <body class="game-page">
   <header class="site-header game-header">
@@ -60,9 +60,9 @@
         <div class="game-viewmodes" role="group" aria-label="Comparison view">
           <button class="game-viewmode is-active" type="button" data-view="side" aria-pressed="true">Side by side</button>
           <button class="game-viewmode" type="button" data-view="blink" aria-pressed="false">Blink A/B</button>
-          <button class="game-viewmode" type="button" data-view="trail" aria-pressed="false">Star paths</button>
+          <button class="game-viewmode" type="button" data-view="overlay" aria-pressed="false">A/B overlay</button>
         </div>
-        <span id="gameViewHint" class="game-view-hint">Blink between visits or overlap them to see changes.</span>
+        <span id="gameViewHint" class="game-view-hint">Blink between visits or blend them into one colour image.</span>
       </div>
 
       <div id="gameBoard" class="game-board mode-side" data-candidates="0">

@@ -72,8 +72,8 @@
 .game-viewmode:disabled { cursor: not-allowed; opacity: .45; }
 .game-view-hint { margin-left: auto; color: #73869b; font-size: 10px; line-height: 1.4; }
 .game-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.game-board.mode-blink, .game-board.mode-trail { grid-template-columns: minmax(0, min(620px, 72vh)); justify-content: center; }
-.game-board.mode-blink .game-frame:nth-child(2), .game-board.mode-trail .game-frame:nth-child(2) { display: none; }
+.game-board.mode-blink, .game-board.mode-overlay { grid-template-columns: minmax(0, min(620px, 72vh)); justify-content: center; }
+.game-board.mode-blink .game-frame:nth-child(2), .game-board.mode-overlay .game-frame:nth-child(2) { display: none; }
 .game-view-badge {
   position: absolute; top: 9px; left: 9px; z-index: 2; padding: 5px 8px;
   border: 1px solid rgba(91, 120, 151, .65); border-radius: 5px;

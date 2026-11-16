@@ -48,7 +48,7 @@ const state = {
   revealed: false,
   viewMode: 'side',
   blinkShowB: false,
-  trailImage: null,
+  overlayImage: null,
   busy: true,
   lastPairKey: '',
   lastPairFrames: new Set(),
@@ -62,7 +62,7 @@ let blinkTimer = 0;
 const VIEW_COPY = {
   side: 'Compare the two visits side by side.',
   blink: 'The same view flips between visit A and visit B.',
-  trail: 'Amber is visit A, cyan is visit B. A star that moved leaves a split-colour trail.',
+  overlay: 'A colour blend of both visits: amber is A, cyan is B. This is not a motion trail; it only combines the two images.',
 };
 
 function randomInt(max) {
@@ -555,7 +555,7 @@ function drawPanel(canvas, image, side) {
   drawMarkers(context, side);
 }
 
-function buildTrailImage(imageA, imageB) {
+function buildOverlayImage(imageA, imageB) {
   const canvas = document.createElement('canvas');
   canvas.width = CANVAS_SIZE;
   canvas.height = CANVAS_SIZE;
@@ -596,7 +596,7 @@ function startBlink() {
 
 function updateViewChrome() {
   const mode = state.viewMode;
-  el.board.classList.remove('mode-side', 'mode-blink', 'mode-trail');
+  el.board.classList.remove('mode-side', 'mode-blink', 'mode-overlay');
   el.board.classList.add(`mode-${mode}`);
   for (const button of el.viewButtons) {
     const active = button.dataset.view === mode;
@@ -605,7 +605,7 @@ function updateViewChrome() {
   }
   el.viewHint.textContent = VIEW_COPY[mode];
   el.viewBadge.hidden = !state.imageA || mode === 'side';
-  el.labelA.textContent = mode === 'blink' ? 'A ↔ B' : mode === 'trail' ? 'VISIT A + B' : 'VISIT A';
+  el.labelA.textContent = mode === 'blink' ? 'A ↔ B' : mode === 'overlay' ? 'A/B OVERLAY' : 'VISIT A';
   el.labelB.textContent = 'VISIT B';
   if (!state.pair) return;
   el.dateA.textContent = mode === 'blink'
@@ -623,8 +623,8 @@ function draw() {
         ? `BLINK · B ${state.pair ? stampDay(state.pair.second) : ''}`
         : `BLINK · A ${state.pair ? stampDay(state.pair.first) : ''}`;
     }
-  } else if (mode === 'trail') {
-    drawPanel(el.canvasA, state.trailImage || state.imageA, 'A');
+  } else if (mode === 'overlay') {
+    drawPanel(el.canvasA, state.overlayImage || state.imageA, 'A');
     if (state.imageA) el.viewBadge.textContent = 'A AMBER · B CYAN';
   } else {
     drawPanel(el.canvasA, state.imageA, 'A');
@@ -711,7 +711,7 @@ async function newRound() {
   state.candidates = [];
   state.imageA = null;
   state.imageB = null;
-  state.trailImage = null;
+  state.overlayImage = null;
   state.pair = null;
   setLoading(true);
   setStatus('Finding a pair of real visits with measurable changes…');
@@ -751,7 +751,7 @@ async function newRound() {
     state.lastPairFrames = new Set([selected.first.png, selected.second.png]);
     state.imageA = selected.imageA;
     state.imageB = selected.imageB;
-    state.trailImage = buildTrailImage(selected.imageA, selected.imageB);
+    state.overlayImage = buildOverlayImage(selected.imageA, selected.imageB);
     state.candidates = selected.analysis.candidates;
     updateRoundCopy(selected.group, selected.first, selected.second, selected.rotated || selected.shifted);
     updateViewChrome();
