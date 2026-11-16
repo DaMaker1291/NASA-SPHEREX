@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-15T22:46:27.469Z",
+  "generatedAt": "2026-11-16T15:48:10.441Z",
   "bucket": "https://nasa-irsa-spherex.s3.us-east-1.amazonaws.com",
   "prefix": "dr1/level2/",
   "detector": "D2",
@@ -9,8 +9,13 @@
   "yCells": 18,
   "pagesListed": 1180,
   "objectsScanned": 71319,
-  "pointings": 71319,
-  "complete": true,
-  "failures": [],
+  "pointings": 71318,
+  "complete": false,
+  "failures": [
+    {
+      "key": "dr1/level2/2025W51_1A/l2b-v27-2026-210/2/level2_2025W51_1A_0691_1D2_spx_l2b-v27-2026-210.fits",
+      "reason": "range returned HTTP 500"
+    }
+  ],
   "source": "NASA/IPAC Infrared Science Archive (IRSA) SPHEREx DR1 public S3 bucket"
 }
