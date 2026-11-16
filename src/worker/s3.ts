@@ -427,6 +427,61 @@ function numericHeader(layout: S3Layout): FitsHeader {
   return header
 }
 
+const coverageCache = new Map<string, { covers: boolean; at: number }>()
+const COVERAGE_TTL_MS = 10 * 60_000
+
+/**
+ * Check a real level-2 image footprint before the S3 fallback is allowed to
+ * return it. The S3 index radius is deliberately loose, so a candidate can be
+ * several degrees away; cropping that frame would silently clamp to an edge
+ * and show unrelated sky as if it were the requested patch. If the footprint
+ * cannot be verified, the frame is rejected rather than risk showing an
+ * edge-clamped crop of unrelated sky.
+ */
+export async function s3ProductCovers(uri: string, ra: number, dec: number): Promise<boolean> {
+  const key = s3KeyForUri(uri)
+  if (!key) return false
+  const cacheKey = `${key}|${ra.toFixed(5)}|${dec.toFixed(5)}`
+  const cached = coverageCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < COVERAGE_TTL_MS) return cached.covers
+
+  let covers = false
+  try {
+    const layouts = await s3Layouts(`${BUCKET}/${key}`)
+    const image = layouts.find((layout) => layout.name === 'IMAGE')
+    const width = Number(image?.header.NAXIS1)
+    const height = Number(image?.header.NAXIS2)
+    if (image && Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0) {
+      const header = numericHeader(image)
+      if (String(header.get('CTYPE1') ?? '').startsWith('RA---TAN')) {
+        const hdu: FitsHdu = {
+          index: 0,
+          name: image.name,
+          width,
+          height,
+          depth: 1,
+          bitPix: Number(image.header.BITPIX ?? 0),
+          dataStart: 0,
+          dataBytes: 0,
+          header,
+        }
+        const point = skyToPixel(hdu, ra, dec)
+        covers = Number.isFinite(point.x) && Number.isFinite(point.y)
+          && point.x >= 1 && point.x <= width - 2 && point.y >= 1 && point.y <= height - 2
+      }
+    }
+  } catch {
+    covers = false
+  }
+
+  if (coverageCache.size >= 512) {
+    const oldest = coverageCache.keys().next()
+    if (!oldest.done) coverageCache.delete(oldest.value)
+  }
+  coverageCache.set(cacheKey, { covers, at: Date.now() })
+  return covers
+}
+
 async function fetchS3Cropped(url: string, ra: number, dec: number, size: string, imageOnly: boolean) {
   const layouts = await s3Layouts(url)
   const selected = layouts.filter((layout) => layout.name === 'IMAGE' || (!imageOnly && CUTOUT_HDUS.has(layout.name) && (layout.header.XTENSION || '').toUpperCase() === 'IMAGE'))

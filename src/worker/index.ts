@@ -14,7 +14,7 @@ import {
 } from './irsa'
 import { ApiError, TtlCache, queryEnum, queryNumber, validateIrsaProductUri } from './http'
 import { rasterizeCutoutCached } from './imaging'
-import { fetchS3HipsPlane } from './s3'
+import { fetchS3HipsPlane, s3ProductCovers } from './s3'
 import { findSpherexInS3Index } from './s3-index'
 import { skyContext, skyNeighborhood } from './sky'
 import { getSourceHealth } from './sources'
@@ -82,9 +82,153 @@ function cacheExpired(response: Response) {
   return Number.isFinite(date) && Date.now() - date > maxAge
 }
 
+type FrameRow = {
+  row: IrsaObservation
+  product: IrsaFind['observations'][number]['detectors'][number]
+}
+
+type FrameSet = {
+  detector: string
+  available: Set<string>
+  frames: FrameRow[]
+}
+
+type FrameDiscovery = {
+  data: IrsaFind
+  frameSet: FrameSet | null
+}
+
+// Two covering visits are enough for the A/B and blink comparisons. Below
+// that, ask SIA/TAP for a complete footprint-aware visit set.
+const MIN_INDEXED_FRAMES = 2
+
+function frameSetFor(data: IrsaFind, requestedDetector: string): FrameSet | null {
+  const groups = new Map<string, IrsaObservation[]>()
+  for (const observation of data.observations) {
+    const key = observation.obsid.replace(/_\d+$/, '')
+    const rows = groups.get(key) ?? []
+    rows.push(observation)
+    groups.set(key, rows)
+  }
+
+  const available = new Set<string>()
+  for (const rows of groups.values()) {
+    for (const observation of rows) for (const detector of observation.detectors) available.add(detector.detector)
+  }
+  if (!available.size) return null
+
+  const detector = available.has(requestedDetector) ? requestedDetector : [...available].sort()[0]
+  const frames = [...groups.values()]
+    .map((rows) => {
+      const ordered = [...rows].sort((a, b) => a.mjd - b.mjd)
+      const row = ordered.find((observation) => observation.detectors.some((item) => item.detector === detector))
+      const product = row?.detectors.find((item) => item.detector === detector)
+      return row && product ? { row, product } : null
+    })
+    .filter((item): item is FrameRow => item !== null)
+    .sort((a, b) => a.row.mjd - b.row.mjd)
+
+  return { detector, available, frames }
+}
+
+async function coveredFrameSet(data: IrsaFind, ra: number, dec: number, requestedDetector: string): Promise<FrameSet | null> {
+  const groups = new Map<string, IrsaObservation[]>()
+  for (const observation of data.observations) {
+    const key = observation.obsid.replace(/_\d+$/, '')
+    const rows = groups.get(key) ?? []
+    rows.push(observation)
+    groups.set(key, rows)
+  }
+
+  const available = new Set<string>()
+  for (const rows of groups.values()) {
+    for (const observation of rows) for (const detector of observation.detectors) available.add(detector.detector)
+  }
+  if (!available.size) return null
+
+  const detector = available.has(requestedDetector) ? requestedDetector : [...available].sort()[0]
+  const covered = await Promise.all(
+    [...groups.values()].map(async (rows) => {
+      const ordered = [...rows].sort((a, b) => a.mjd - b.mjd)
+      for (const row of ordered) {
+        const product = row.detectors.find((item) => item.detector === detector)
+        if (product && (await s3ProductCovers(product.uri, ra, dec))) return { row, product }
+      }
+      return null
+    }),
+  )
+  return {
+    detector,
+    available,
+    frames: covered.filter((item): item is FrameRow => item !== null).sort((a, b) => a.row.mjd - b.row.mjd),
+  }
+}
+
+async function discoverFrames(
+  c: AppContext,
+  ra: number,
+  dec: number,
+  fov: number,
+  requestedDetector: string,
+): Promise<FrameDiscovery> {
+  // Start archive discovery while the indexed frames are being checked. If the
+  // index has enough coverage, return immediately and leave the archive answer
+  // in its cache; otherwise the slower request is already in flight.
+  let discoveryError: unknown = null
+  const livePromise = findSpherex(ra, dec, fov).then(
+    (value) => value,
+    (error) => {
+      discoveryError = error
+      return null
+    },
+  )
+
+  let indexed: IrsaFind | null = null
+  let indexedSet: FrameSet | null = null
+  try {
+    indexed = await findSpherexInS3Index(c.env.ASSETS, new URL(c.req.url).origin, ra, dec, fov)
+    if (indexed?.observations.length) indexedSet = await coveredFrameSet(indexed, ra, dec, requestedDetector)
+  } catch {
+  }
+
+  if (indexed && indexedSet && indexedSet.frames.length >= MIN_INDEXED_FRAMES) {
+    return { data: indexed, frameSet: indexedSet }
+  }
+
+  const live = await livePromise
+
+  // TAP already returns one row per pointing and filters with CONTAINS, so its
+  // first product per visit is safe. SIA can group several pointings under one
+  // visit; select the covering pointing instead of trusting the first row.
+  const liveSet = live
+    ? live.source.label.includes('TAP')
+      ? frameSetFor(live, requestedDetector)
+      : await coveredFrameSet(live, ra, dec, requestedDetector)
+    : null
+  if (live && liveSet?.frames.length) return { data: live, frameSet: liveSet }
+  if (indexed && indexedSet?.frames.length) return { data: indexed, frameSet: indexedSet }
+  if (live) return { data: live, frameSet: liveSet }
+  if (indexed) return { data: indexed, frameSet: indexedSet }
+  if (discoveryError) throw discoveryError
+  throw new ApiError(502, 'No archive discovery result was returned for this field.', 'UPSTREAM_UNAVAILABLE')
+}
+
 async function discover(c: AppContext, ra: number, dec: number, fov: number): Promise<IrsaFind> {
-  const indexed = await findSpherexInS3Index(c.env.ASSETS, new URL(c.req.url).origin, ra, dec, fov)
-  return indexed ?? findSpherex(ra, dec, fov)
+  // SIA/TAP filter on the actual product footprint, so every returned visit
+  // contains the requested centre. The S3 index is a fast fallback, but its
+  // pointing radius can include frames whose footprint is elsewhere.
+  const indexed = findSpherexInS3Index(c.env.ASSETS, new URL(c.req.url).origin, ra, dec, fov).catch(() => null)
+  let discoveryError: unknown = null
+  try {
+    const live = await findSpherex(ra, dec, fov)
+    if (live.observations.length || !(await indexed)?.observations.length) return live
+  } catch (error) {
+    discoveryError = error
+  }
+  const fallback = await indexed
+  if (fallback) return fallback
+  if (discoveryError) throw discoveryError
+  return findSpherex(ra, dec, fov)
 }
 
 async function bundledFind(c: AppContext): Promise<IrsaFind | null> {
@@ -331,8 +475,9 @@ app.get('/api/spherex/frames', async (c) => {
     if (cached) return withCacheState(cached, 'HIT')
 
     let data: IrsaFind
+    let frameSet: FrameSet | null
     try {
-      data = await discover(c, ra, dec, fov)
+      ({ data, frameSet } = await discoverFrames(c, ra, dec, fov, requestedDetector))
     } catch (error) {
       const fallback =
         Math.abs(ra - DEFAULT_FIELD.ra) < 1e-9 &&
@@ -342,6 +487,7 @@ app.get('/api/spherex/frames', async (c) => {
           : null
       if (!fallback) throw error
       data = fallback
+      frameSet = frameSetFor(fallback, requestedDetector)
     }
 
     if (!data.observations.length) {
@@ -369,33 +515,39 @@ app.get('/api/spherex/frames', async (c) => {
       return withCacheState(response, 'MISS')
     }
 
-    const groups = new Map<string, IrsaObservation[]>()
-    for (const observation of data.observations) {
-      const key = observation.obsid.replace(/_\d+$/, '')
-      const rows = groups.get(key) ?? []
-      rows.push(observation)
-      groups.set(key, rows)
+    if (!frameSet) {
+      throw new ApiError(502, 'No detector products were returned for this field.', 'NO_DETECTORS')
     }
-
-    const available = new Set<string>()
-    for (const rows of groups.values()) {
-      for (const observation of rows) for (const detector of observation.detectors) available.add(detector.detector)
-    }
-    const detector = available.has(requestedDetector) ? requestedDetector : [...available].sort()[0]
-    if (!detector) throw new ApiError(502, 'No detector products were returned for this field.', 'NO_DETECTORS')
-
-    const frames = [...groups.values()]
-      .map((rows) => {
-        const ordered = [...rows].sort((a, b) => a.mjd - b.mjd)
-        const row = ordered.find((observation) => observation.detectors.some((item) => item.detector === detector))
-        const product = row?.detectors.find((item) => item.detector === detector)
-        return row && product ? { row, product } : null
-      })
-      .filter((item): item is { row: IrsaObservation; product: IrsaFind['observations'][number]['detectors'][number] } => item !== null)
-      .sort((a, b) => a.row.mjd - b.row.mjd)
+    const { detector, available, frames } = frameSet
 
     if (!frames.length) {
-      throw new ApiError(502, `No ${detector} products were returned for this field.`, 'NO_PRODUCTS')
+      c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
+      c.header('X-Data-Source', asciiHeader(data.source.label))
+      if (data.source.label.includes('S3 index')) c.header('X-Data-Fallback', 's3-index')
+      const response = c.json({
+        source: data.source,
+        field: { ra, dec, fov },
+        summary: null,
+        sky: skyContext(ra, dec),
+        detector,
+        detectorRequested: requestedDetector,
+        availableDetectors: [...available].sort(),
+        palette,
+        stretch,
+        frames: [],
+        coverage: data.coverage?.observed === false
+          ? data.coverage
+          : {
+              observed: false,
+              message: data.source.label.includes('S3 index')
+                ? 'No indexed S3 frame actually covers this exact patch; the local all-sky mosaic remains available until archive discovery returns.'
+                : 'Archive discovery returned visits, but none has a frame that covers this exact patch.',
+              checkedAt: new Date().toISOString(),
+              releases: ['DR1'],
+            },
+      })
+      edgeStore(c, response)
+      return withCacheState(response, 'MISS')
     }
 
     const frameLimit = data.source.label.includes('S3 index') ? Math.min(limit, 12) : limit

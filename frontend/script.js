@@ -2434,7 +2434,7 @@ async function loadRealFrames(options = {}) {
     }
 
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '24', v: '10',
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '24', v: '12',
       detector, palette, stretch
     });
     const timeout = setTimeout(() => controller.abort(), 50_000);
