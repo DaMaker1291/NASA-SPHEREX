@@ -214,8 +214,8 @@ img, canvas { max-width: 100%; }
 .viewer-stage img.pixelated { image-rendering: pixelated; }
 .image-transform img.frame-enter { animation: frameReveal .46s cubic-bezier(.22,.61,.36,1); }
 @keyframes frameReveal {
-  from { opacity: .35; transform: scale(1.012); filter: saturate(.65) brightness(.7); }
-  to { opacity: 1; transform: scale(1); filter: none; }
+  from { transform: scale(1.006); }
+  to { transform: scale(1); }
 }
 .stage-progress { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; height: 2px; background: rgba(119, 143, 169, .16); pointer-events: none; }
 .stage-progress span { display: block; width: 100%; height: 100%; transform: scaleX(0); transform-origin: left center; background: linear-gradient(90deg, rgba(208, 141, 54, .55), var(--gold)); box-shadow: 0 0 10px rgba(242, 187, 109, .45); transition: transform .32s cubic-bezier(.22,.61,.36,1); }
