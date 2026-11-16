@@ -514,7 +514,7 @@ function setBand(value, shouldReload = true) {
   if (!BAND_INFO[value]) return;
   detector = value;
   updateBandUI();
-  if (shouldReload && frames.some(frame => frame.real)) loadRealFrames();
+  if (shouldReload && frames.some(frame => frame.real)) loadRealFrames({ preserveCurrent: true });
 }
 
 function syncQuickFilters() {
@@ -558,7 +558,7 @@ function applyDisplayFilters() {
   palette = el.paletteSelect.value;
   stretch = el.stretchSelect.value;
   syncQuickFilters();
-  if (frames.some(frame => frame.real)) loadRealFrames();
+  if (frames.some(frame => frame.real)) loadRealFrames({ preserveCurrent: true });
   else notify('Load a real archive field to apply archive display filters.');
 }
 
@@ -2013,10 +2013,10 @@ async function loadSourceHealth() {
   }
 }
 
-function setLoading(isLoading) {
+function setLoading(isLoading, { quietStage = false } = {}) {
   loadingReal = isLoading;
   const current = frames[frameIndex];
-  el.stageLoading.hidden = isLoading ? false : !(current?.real && !current.mosaic && !current.objectUrl && !current.loadError);
+  el.stageLoading.hidden = isLoading ? quietStage : !(current?.real && !current.mosaic && !current.objectUrl && !current.loadError);
   el.loadReal.disabled = isLoading;
   el.emptyReal.disabled = isLoading;
   el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Load real visits';
@@ -2366,6 +2366,7 @@ async function fetchFramesWithRetry(url, signal) {
 
 async function loadRealFrames(options = {}) {
   const record = options?.record !== false;
+  const preserveCurrent = Boolean(options?.preserveCurrent) && frames.length > 0;
   let field;
   try { field = readField(); } catch (error) { notify(error.message); return; }
   updateHipsContext(field);
@@ -2374,13 +2375,13 @@ async function loadRealFrames(options = {}) {
   activeLoadController?.abort();
   const controller = new AbortController();
   activeLoadController = controller;
-  setLoading(true);
+  setLoading(true, { quietStage: preserveCurrent });
   // Keep the current real visit set visible until a replacement is fully
   // received. A failed navigation must never erase data already on screen.
   el.empty.hidden = true;
   el.sourceLabel.classList.remove('error');
-  el.sourceLabel.textContent = 'Checking verified local mirror…';
-  notify('Checking the verified local mirror before contacting the archive.');
+  el.sourceLabel.textContent = preserveCurrent ? 'Refreshing visits with new filters…' : 'Checking verified local mirror…';
+  notify(preserveCurrent ? 'Refreshing the current visits with the new display filters.' : 'Checking the verified local mirror before contacting the archive.');
   let mirror = null;
   let mosaicShown = false;
   try {
@@ -2390,12 +2391,19 @@ async function loadRealFrames(options = {}) {
       return;
     }
     if (mirror) {
-      showMirrorField(mirror, field, { record, note: 'refreshing archive…' });
-      el.stageLoading.hidden = true;
-      // The mirror is usable now; the IRSA request is the background refresh.
-      setLoading(false);
-      notify(`Showing ${mirror.frames.length} verified local visits while the archive refreshes.`);
+      if (preserveCurrent) discardFrameObjects(mirror.frames);
+      else {
+        showMirrorField(mirror, field, { record, note: 'refreshing archive…' });
+        el.stageLoading.hidden = true;
+        // The mirror is usable now; the IRSA request is the background refresh.
+        setLoading(false);
+        notify(`Showing ${mirror.frames.length} verified local visits while the archive refreshes.`);
+      }
     } else if (archiveUnavailableUntil > Date.now()) {
+      if (preserveCurrent) {
+        el.sourceLabel.textContent = 'The archive is temporarily unavailable; keeping the current visits.';
+        return;
+      }
       // Every arbitrary sky position now has real local context from the
       // checked-in NASA/JPL-Caltech mosaic. Do not make a recent failure empty.
       mosaicShown = await showMosaicField(field, 'archive query failed');
@@ -2406,6 +2414,8 @@ async function loadRealFrames(options = {}) {
       }
       el.sourceLabel.textContent = 'Querying the S3 archive for real visits…';
       notify('Finding real SPHEREx visits for this patch.');
+    } else if (preserveCurrent) {
+      el.sourceLabel.textContent = 'Refreshing visits with new filters…';
     } else {
       // Show the real local all-sky mosaic immediately, then replace it with
       // per-visit FITS frames if IRSA answers. The mosaic is context only, not
@@ -2436,6 +2446,11 @@ async function loadRealFrames(options = {}) {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `Archive frame discovery returned ${response.status}.`);
     if (Array.isArray(payload.frames) && payload.frames.length === 0 && payload.coverage?.observed === false) {
+      if (preserveCurrent) {
+        el.sourceLabel.textContent = 'No visits match this filter; keeping the current visits.';
+        notify('No visits match this filter; keeping the current visits.');
+        return;
+      }
       if (mosaicShown) {
         updateAppLive('mosaic');
         el.sourceLabel.classList.remove('error');
@@ -2483,6 +2498,16 @@ async function loadRealFrames(options = {}) {
     archiveUnavailableUntil = 0;
     emptyDefaultFallback = false;
     el.emptyReal.textContent = 'Load this field';
+    if (preserveCurrent) {
+      await loadFrameData(realFrames[0], { detached: true, timeoutMs: 30_000 });
+      if (request !== loadRequest) return;
+      if (!realFrames[0].objectUrl) {
+        discardFrameObjects(realFrames);
+        el.sourceLabel.textContent = 'The filtered frame did not load; keeping the current visits.';
+        notify('The filtered frame did not load; keeping the current visits.');
+        return;
+      }
+    }
     loadFrames(realFrames, `${realFrames.length} real visits · ${payload.detector}${range ? ` · ${range}` : ''}`, badge);
     const target = targets[el.target.value];
     el.viewerTitle.textContent = target?.label || 'Custom sky region';
@@ -2503,6 +2528,11 @@ async function loadRealFrames(options = {}) {
     const archiveError = error?.name === 'AbortError' ? 'The archive API did not answer within 50 seconds.' : error.message;
     el.stageLoading.hidden = true;
     el.sourceLabel.classList.add('error');
+    if (preserveCurrent) {
+      el.sourceLabel.textContent = `Filter refresh failed: ${archiveError} · keeping ${frames.length} current visit${frames.length === 1 ? '' : 's'}`;
+      notify(`Filter refresh failed: ${archiveError}. Keeping the current visits.`);
+      return;
+    }
     if (mirror) {
       updateAppLive('mirror');
       el.sourceLabel.textContent = `${mirror.source} · archive refresh failed: ${archiveError}`;
