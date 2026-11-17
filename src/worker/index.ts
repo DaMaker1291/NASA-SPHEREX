@@ -33,7 +33,7 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 const MAX_SPECTRUM_DETECTORS = 6
 const SPECTRUM_CONCURRENCY = 3
-const CACHE_NAME = 'drift-api-v9'
+const CACHE_NAME = 'drift-api-v10'
 const CACHE_STORED_AT = 'x-edge-stored-at'
 const API_VERSION = '2026-11-15'
 const DEFAULT_FIELD = { ra: 150, dec: 19.5, fov: 0.3 }
@@ -101,6 +101,14 @@ type FrameDiscovery = {
 // Two covering visits are enough for the A/B and blink comparisons. Below
 // that, ask SIA/TAP for a complete footprint-aware visit set.
 const MIN_INDEXED_FRAMES = 2
+
+function frameDetectors(row: IrsaObservation) {
+  const byName = new Map<string, { detector: string; band: string; uri: string }>()
+  for (const item of row.detectors) {
+    if (!byName.has(item.detector)) byName.set(item.detector, { detector: item.detector, band: item.band, uri: item.uri })
+  }
+  return [...byName.values()].sort((a, b) => a.detector.localeCompare(b.detector))
+}
 
 function frameSetFor(data: IrsaFind, requestedDetector: string): FrameSet | null {
   const groups = new Map<string, IrsaObservation[]>()
@@ -548,7 +556,7 @@ app.get('/api/spherex/frames', async (c) => {
     const query = (uri: string) =>
       `/api/spherex/png?${new URLSearchParams({
         uri, ra: String(ra), dec: String(dec), fov: String(fov),
-        palette, stretch, v: '7', preferS3: '1',
+        palette, stretch, v: '8', preferS3: '1',
       }).toString()}`
 
     c.header('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=60')
@@ -575,6 +583,7 @@ app.get('/api/spherex/frames', async (c) => {
         file: product.file,
         uri: product.uri,
         pngUrl: query(product.uri),
+        detectors: frameDetectors(row),
       })),
     })
     edgeStore(c, response)
@@ -647,6 +656,7 @@ app.get('/api/spherex/png', async (c) => {
     c.header('X-Frame-Bunit', asciiHeader(raster.bunit))
     c.header('X-Frame-Detector', asciiHeader(raster.detector))
     c.header('X-Frame-Band', asciiHeader(raster.band))
+    if (Number.isFinite(raster.orientationDeg)) c.header('X-Frame-Orientation', String(raster.orientationDeg))
     c.header('X-Frame-Obsid', asciiHeader(raster.obsid))
     if (raster.center) {
       c.header('X-Frame-Ra', String(raster.center.ra))

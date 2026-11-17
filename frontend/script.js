@@ -4,6 +4,12 @@ import { angularSeparation, healpixNest, luma, normalizeRa, robustChangeThreshol
 
 const $ = (id) => document.getElementById(id);
 const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+function frameDisplaySrc(frame) {
+  if (!frame) return '';
+  return frame.objectUrl || (frame.real && !frame.mosaic ? TRANSPARENT_PIXEL : frame.src || '');
+}
 const el = {
   target: $('target'), ra: $('ra'), dec: $('dec'), fov: $('fov'), detector: $('detector'), bandHint: $('bandHint'),
   loadReal: $('loadReal'), emptyReal: $('emptyReal'), sourceLabel: $('sourceLabel'),
@@ -14,11 +20,11 @@ const el = {
   quickPrevious: $('quickPrevious'), quickPlay: $('quickPlay'), quickNext: $('quickNext'),
   quickTimeline: $('quickTimeline'), quickVisit: $('quickVisit'), quickBand: $('quickBand'),
   quickPalette: $('quickPalette'), quickStretch: $('quickStretch'), quickMore: $('quickMore'),
-  crosshairCheck: $('showCrosshair'), crosshair: $('crosshair'),
+  crosshairCheck: $('showCrosshair'), crosshair: $('crosshair'), spectrumPickMarker: $('spectrumPickMarker'),
   stage: $('viewerStage'), transform: $('imageTransform'), image: $('skyImage'),
   differenceCanvas: $('differenceCanvas'), difference: $('difference'),
   empty: $('emptyState'), emptyEyebrow: $('emptyEyebrow'), emptyTitle: $('emptyTitle'), emptyMessage: $('emptyMessage'),
-  stageLoading: $('stageLoading'), stageBadge: $('stageBadge'), viewerTitle: $('viewerTitle'),
+  stageLoading: $('stageLoading'), stageLoadingTitle: $('stageLoadingTitle'), stageLoadingNote: $('stageLoadingNote'), stageBadge: $('stageBadge'), viewerTitle: $('viewerTitle'),
   stageDate: $('stageDate'), stageMode: $('stageMode'), filmstrip: $('filmstrip'),
   zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomNative: $('zoomNative'), resetView: $('resetView'), zoomLevel: $('zoomLevel'), copyLink: $('copyLink'),
   hdToggle: $('hdToggle'), hdToggleLab: $('hdToggleLab'), stageResolution: $('stageResolution'), fullscreen: $('fullscreen'),
@@ -39,7 +45,7 @@ const el = {
   toolsSkyImage: $('toolsSkyImage'), toolsSkyTitle: $('toolsSkyTitle'), toolsSkyMeta: $('toolsSkyMeta'),
   mapCursor: $('mapCursor'), mapScaleBar: $('mapScaleBar'), mapScaleText: $('mapScaleText'), mapCompass: $('mapCompass'), mapHelp: $('mapHelp'),
   paletteSelect: $('paletteSelect'), stretchSelect: $('stretchSelect'), sharpPixels: $('sharpPixels'),
-  bandRail: $('bandRail'), wavelengthBandName: $('wavelengthBandName'), wavelengthRange: $('wavelengthRange'),
+  bandRail: $('bandRail'), spectralRail: $('spectralRail'), spectralRailStatus: $('spectralRailStatus'), wavelengthBandName: $('wavelengthBandName'), wavelengthRange: $('wavelengthRange'),
   wavelengthBandwidth: $('wavelengthBandwidth'), wavelengthPixelScale: $('wavelengthPixelScale'), wavelengthFrames: $('wavelengthFrames'),
   bandSummary: $('bandSummary'),
   constellationName: $('constellationName'), constellationSymbol: $('constellationSymbol'), constellationCopy: $('constellationCopy'),
@@ -114,8 +120,12 @@ let differenceToken = 0;
 let frames = [];
 let frameIndex = 0, interval = null, blinkMode = false, comparisonOpen = false;
 const MAX_ZOOM = 12;
+const ORIENTATION_TOLERANCE_DEG = 3;
 let zoom = 1, panX = 0, panY = 0;
 let detector = 'D2', palette = 'iridescent', stretch = 'asinh', hdMode = false;
+// Detector of the frames that are actually on screen. A band becomes active only
+// after its visits have replaced the frame in the viewer, never while loading.
+let appliedDetector = null;
 const activePointers = new Map();
 let singleGesture = null, pinchGesture = null;
 const navHistory = [];
@@ -306,7 +316,7 @@ function applyMode(mode, { persist = false } = {}) {
 
 function setSectionActive(name) {
   document.querySelectorAll('.section-link').forEach(link => {
-    const key = link.dataset.section || (link.dataset.openLab === 'wavelength' ? 'analyse' : link.dataset.openLab);
+    const key = link.dataset.section || (['wavelength', 'spectrum'].includes(link.dataset.openLab) ? 'analyse' : link.dataset.openLab);
     const active = key === name;
     link.classList.toggle('active', active);
     if (active) link.setAttribute('aria-current', 'page');
@@ -320,7 +330,7 @@ function openSection(name) {
     document.getElementById('explorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
-  const tab = name === 'analyse' ? 'wavelength' : name;
+  const tab = name === 'analyse' ? 'spectrum' : name;
   setSectionActive(name);
   setLabTab(tab);
   document.getElementById('lab')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -329,6 +339,7 @@ function openSection(name) {
 function startFirstObservation() {
   if (!loadingReal && (el.target.value !== DEFAULT_TARGET || !frames.length)) setTarget(DEFAULT_TARGET);
   document.getElementById('explorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!tourSeen()) setTimeout(() => startTour(), 900);
 }
 
 function restoreFromUrl() {
@@ -546,27 +557,67 @@ function updateDetails(frame) {
   if (analysis?.constellation) el.fieldConstellation.textContent = `${analysis.constellation.toUpperCase()} · SPHEREX DR1`;
 }
 
+function onScreenDetector() {
+  const frame = frames[frameIndex];
+  if (frame?.detector && BAND_INFO[frame.detector]) return frame.detector;
+  if (appliedDetector && BAND_INFO[appliedDetector]) return appliedDetector;
+  return detector;
+}
+
 function updateBandUI() {
   const frame = frames[frameIndex];
   const analysis = frame?.analysis || frame?.displayAnalysis;
+  const shown = onScreenDetector();
+  // The requested band while the frame on screen still belongs to another one.
+  const awaiting = shown === detector ? '' : detector;
   const info = BAND_INFO[detector] || BAND_INFO.D2;
   el.wavelengthBandName.textContent = `${detector} · ${info.low.toFixed(3)}–${info.high.toFixed(3)} μm`;
-  el.wavelengthRange.textContent = analysis && Number.isFinite(analysis.waveMin)
-    ? `${analysis.waveMin.toFixed(3)}–${analysis.waveMax.toFixed(3)} μm`
-    : 'Load a real frame';
-  el.wavelengthBandwidth.textContent = analysis && Number.isFinite(analysis.waveBwMin)
+  el.wavelengthRange.textContent = awaiting
+    ? `Loading ${awaiting} · the ${shown} frame is still on screen`
+    : analysis && Number.isFinite(analysis.waveMin)
+      ? `${analysis.waveMin.toFixed(3)}–${analysis.waveMax.toFixed(3)} μm`
+      : 'Load a real frame';
+  el.wavelengthBandwidth.textContent = !awaiting && analysis && Number.isFinite(analysis.waveBwMin)
     ? `${analysis.waveBwMin.toFixed(3)}–${analysis.waveBwMax.toFixed(3)} μm`
     : '—';
-  el.wavelengthPixelScale.textContent = analysis && Number.isFinite(analysis.pixelScale)
+  el.wavelengthPixelScale.textContent = !awaiting && analysis && Number.isFinite(analysis.pixelScale)
     ? `${analysis.pixelScale.toFixed(2)}″ / px`
     : '—';
-  el.wavelengthFrames.textContent = frames.filter(item => item.real).length
-    ? `${frames.length} · ${detector}`
-    : '0';
-  el.bandSummary.textContent = `The archive returned ${frames.length || 0} real ${detector} visits for this field. The measured range comes from the FITS WCS-WAVE table.`;
-  for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
-    chip.classList.toggle('active', chip.dataset.band === detector);
-    chip.setAttribute('aria-pressed', String(chip.dataset.band === detector));
+  el.wavelengthFrames.textContent = awaiting
+    ? 'Loading…'
+    : frames.filter(item => item.real).length ? `${frames.length} · ${shown}` : '0';
+  el.bandSummary.textContent = awaiting
+    ? `Querying the archive for real ${awaiting} visits. The viewer still shows ${shown}; ${awaiting} is marked as loading, not as displayed.`
+    : `The archive returned ${frames.length || 0} real ${detector} visits for this field. The measured range comes from the FITS WCS-WAVE table.`;
+  for (const rail of [el.bandRail, el.spectralRail]) {
+    if (!rail) continue;
+    rail.dataset.pending = String(Boolean(awaiting));
+    if (awaiting) rail.setAttribute('aria-busy', 'true');
+    else rail.removeAttribute('aria-busy');
+    for (const chip of rail.querySelectorAll('[data-band]')) {
+      const band = chip.dataset.band;
+      const isAwaiting = Boolean(awaiting) && band === awaiting;
+      const isShown = band === shown && !isAwaiting;
+      chip.classList.toggle('active', isShown);
+      chip.classList.toggle('pending', isAwaiting);
+      chip.setAttribute('aria-pressed', String(isShown));
+      if (isAwaiting) {
+        chip.setAttribute('aria-busy', 'true');
+        chip.setAttribute('aria-label', `${band} — loading ${band} visits, the ${shown} frame is still displayed`);
+      } else if (awaiting && isShown) {
+        chip.removeAttribute('aria-busy');
+        chip.setAttribute('aria-label', `${band} — on screen, ${awaiting} is loading`);
+      } else {
+        chip.removeAttribute('aria-busy');
+        chip.removeAttribute('aria-label');
+      }
+    }
+  }
+  if (el.spectralRailStatus) {
+    // Only rewrite the live region when the state really changes, so assistive
+    // technology is not re-announced on every frame measurement.
+    const status = awaiting ? `Loading ${awaiting} · ${shown} still shown` : 'Choose a detector';
+    if (el.spectralRailStatus.textContent !== status) el.spectralRailStatus.textContent = status;
   }
   el.detector.value = detector;
   syncQuickFilters();
@@ -575,9 +626,15 @@ function updateBandUI() {
 
 function setBand(value, shouldReload = true) {
   if (!BAND_INFO[value]) return;
+  // A load already in flight is still querying the previous detector. Restart
+  // it for this band, otherwise that query would commit its own detector while
+  // this one stayed marked as loading with nothing left to deliver it.
+  const reload = Boolean(shouldReload) && (frames.some(frame => frame.real) || loadingReal);
   detector = value;
+  // With no load in flight nothing can contradict the choice.
+  if (!reload) appliedDetector = value;
   updateBandUI();
-  if (shouldReload && frames.some(frame => frame.real)) loadRealFrames({ preserveCurrent: true });
+  if (reload) loadRealFrames({ preserveCurrent: true });
 }
 
 function syncQuickFilters() {
@@ -782,7 +839,7 @@ function skyAtStagePoint(clientX, clientY) {
   const analysis = activeFrameAnalysis();
   if (analysis?.wcsCorners) {
     const skyPoint = bilinearSky(analysis.wcsCorners, fractionX, fractionY);
-    if (skyPoint) return { ...skyPoint, exact: true };
+    if (skyPoint) return { ...skyPoint, exact: true, fractionX, fractionY };
   }
   const center = currentSkyCenter();
   const fov = Number(frame.fov) || Number(el.fov.value) || 0.3;
@@ -790,7 +847,9 @@ function skyAtStagePoint(clientX, clientY) {
   return {
     ra: normalizeRa(center.ra - (fractionX - 0.5) * fov / cosDec),
     dec: Math.max(-90, Math.min(90, center.dec + (0.5 - fractionY) * fov)),
-    exact: false
+    exact: false,
+    fractionX,
+    fractionY
   };
 }
 
@@ -1499,6 +1558,25 @@ function updateVerification() {
     return;
   }
   const checks = [];
+  const identityFailed = /identity check failed/i.test(frame.measurementError || '');
+  if (identityFailed) {
+    checks.push({
+      state: 'note',
+      title: 'Visit identity check failed',
+      detail: frame.measurementError
+    });
+  } else if (!frame.mirror) {
+    const productMatch = frame.uri && analysis?.dataUrl ? analysis.dataUrl === frame.uri : null;
+    checks.push({
+      state: productMatch === null ? 'pending' : productMatch ? 'verified' : 'note',
+      title: 'Rendered pixels belong to this visit product',
+      detail: productMatch === null
+        ? 'Waiting for the PNG product-identity header.'
+        : productMatch
+          ? 'The PNG X-Data-Url is exactly the FITS product URI recorded for this visit.'
+          : `The PNG names ${analysis?.dataUrl || 'another product'}, not the visit URI.`
+    });
+  }
   const siaDate = frame.date || '';
   const fitsDate = analysis?.dateAvg ? analysis.dateAvg.slice(0, 10) : '';
   checks.push({
@@ -1509,9 +1587,8 @@ function updateVerification() {
       : 'FITS DATE-AVG has not arrived yet.'
   });
   const fitsDetector = analysis?.detector || analysis?.band || '';
-  const normalizeDetector = value => String(value || '').replace(/^D/i, '');
   checks.push({
-    state: fitsDetector ? normalizeDetector(fitsDetector) === normalizeDetector(frame.detector) ? 'verified' : 'note' : 'pending',
+    state: fitsDetector ? normalizeDetectorName(fitsDetector) === normalizeDetectorName(frame.detector) ? 'verified' : 'note' : 'pending',
     title: 'Detector agrees',
     detail: fitsDetector ? `Discovery ${frame.detector} · FITS detector ${fitsDetector}` : 'FITS DETECTOR header not available.'
   });
@@ -1522,6 +1599,17 @@ function updateVerification() {
     state: idMatch === null ? 'pending' : idMatch ? 'verified' : 'note',
     title: 'Observation identity agrees',
     detail: analysis?.obsid ? `Discovery ${frame.obsid || '—'} · FITS ${analysis.obsid}` : 'FITS OBSID header not available.'
+  });
+  const orientation = frameOrientation(frame);
+  const reference = frames.find(item => item !== frame && item.real && !item.mirror && frameOrientation(item) !== null);
+  const orientationDelta = reference ? orientationDifference(frame, reference) : null;
+  const rotated = orientationDelta !== null && orientationDelta >= ORIENTATION_TOLERANCE_DEG;
+  checks.push({
+    state: orientation === null ? 'pending' : rotated ? 'note' : 'verified',
+    title: rotated ? 'Detector orientation differs from another visit' : 'Detector orientation recorded',
+    detail: orientation === null
+      ? 'Waiting for the FITS WCS orientation.'
+      : `FITS x-axis position angle ${orientation.toFixed(1)}°${orientationDelta !== null ? ` · ${orientationDelta.toFixed(1)}° from another loaded visit` : ''}. A rotation is a real detector orientation, not a replaced image; raw pixels are not aligned, and Difference is blocked above ${ORIENTATION_TOLERANCE_DEG}°.`
   });
   const separation = angularSeparation(Number(frame.ra), Number(frame.dec), analysis?.ra, analysis?.dec);
   const wideActive = hdMode && Boolean(frame.hdObjectUrl);
@@ -1702,6 +1790,8 @@ function readFrameHeaders(response) {
     eclipticLon: number('X-Frame-Ecliptic-Lon'),
     eclipticLat: number('X-Frame-Ecliptic-Lat'),
     cutoutSize: response.headers.get('X-Cutout-Size') || '',
+    dataUrl: response.headers.get('X-Data-Url') || '',
+    orientationDeg: number('X-Frame-Orientation'),
     dataSource: response.headers.get('X-Data-Source') || '',
     dataFallback: response.headers.get('X-Data-Fallback') || '',
     palette: response.headers.get('X-Frame-Palette') || '',
@@ -1730,6 +1820,42 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 45_000) {
   });
 }
 
+function normalizeDetectorName(value) {
+  return String(value || '').trim().replace(/^D/i, '');
+}
+
+function frameOrientation(frame) {
+  const analysis = frame?.analysis || frame?.mirrorAnalysis;
+  return Number.isFinite(analysis?.orientationDeg) ? analysis.orientationDeg : null;
+}
+
+function orientationDifference(first, second) {
+  const a = frameOrientation(first);
+  const b = frameOrientation(second);
+  if (a === null || b === null) return null;
+  return Math.abs(((a - b + 540) % 360) - 180);
+}
+
+function frameIdentityProblem(frame, analysis) {
+  if (!frame?.real || frame.mirror || !analysis) return '';
+  if (!analysis.dataUrl) return 'the PNG did not return its X-Data-Url identity header';
+  if (!frame.uri) return 'the visit record has no FITS product URI';
+  if (analysis.dataUrl !== frame.uri) {
+    return `the PNG identifies product ${analysis.dataUrl}, not ${frame.uri}`;
+  }
+  if (analysis.obsid && frame.obsid
+    && analysis.obsid !== frame.obsid
+    && !analysis.obsid.startsWith(`${frame.obsid}_`)
+    && !frame.obsid.startsWith(`${analysis.obsid}_`)) {
+    return `the PNG identifies observation ${analysis.obsid}, not ${frame.obsid}`;
+  }
+  if (analysis.detector && frame.detector
+    && normalizeDetectorName(analysis.detector) !== normalizeDetectorName(frame.detector)) {
+    return `the PNG identifies detector ${analysis.detector}, not ${frame.detector}`;
+  }
+  return '';
+}
+
 async function loadFrameData(frame, { detached = false, timeoutMs = 45_000 } = {}) {
   if (frame.loading || frame.objectUrl) return;
   frame.loading = true;
@@ -1742,6 +1868,8 @@ async function loadFrameData(frame, { detached = false, timeoutMs = 45_000 } = {
     }
     if (!response?.ok) throw new Error(`FITS frame returned ${response?.status ?? 'no response'}.`);
     const analysis = readFrameHeaders(response);
+    const identityProblem = frameIdentityProblem(frame, analysis);
+    if (identityProblem) throw new Error(`Visit identity check failed: ${identityProblem}.`);
     const bytes = await response.arrayBuffer();
     if (!detached && !frames.includes(frame)) return;
     let checksum = '';
@@ -1854,7 +1982,7 @@ function buildFilmstrip() {
     button.className = 'film-thumb';
     button.title = `View ${frame.label}`;
     const image = document.createElement('img');
-    image.src = frame.objectUrl || (frame.real ? TRANSPARENT_PIXEL : frame.src);
+    image.src = frameDisplaySrc(frame);
     image.alt = '';
     image.loading = 'lazy';
     const label = document.createElement('span');
@@ -1913,8 +2041,8 @@ function updateVisitWindow() {
   const count = dated.length;
   el.visitWindowText.textContent = `${count} loaded visit${count === 1 ? '' : 's'} · ${range}`;
   el.visitWindowDetail.textContent = frames.every(frame => frame.mirror)
-    ? `The bundled mirror is a real-data sample of ${count} verified visit${count === 1 ? '' : 's'} for this field and detector, not every SPHEREx observation. The window above is exactly those visits. It stops at its last selected visit and is not automatically extended as new data arrives; run the mirror ingestor to refresh it. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A live archive query can return more visits.`
-    : `The archive returned these ${count} visit${count === 1 ? '' : 's'} for this query (the viewer asks for up to 24). The window above is exactly those visits. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A different field or release can have a different window.`;
+    ? `The bundled mirror is a real-data sample of ${count} verified visit${count === 1 ? '' : 's'} for this field and detector, not every SPHEREx observation. The window above is exactly those visits. It stops at its last selected visit and is not automatically extended as new data arrives; run the mirror ingestor to refresh it. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A live archive query can return more visits. Visits can be rotated or edge-cropped; those are real observation differences.`
+    : `The archive returned these ${count} visit${count === 1 ? '' : 's'} for this query (the viewer asks for up to 24). The window above is exactly those visits. SPHEREx launched in March 2025, so its DR1 archive begins with the 2025 survey; there is no earlier SPHEREx data. A different field or release can have a different window. Visits can be rotated or edge-cropped; those are real observation differences, not replacement images.`;
 }
 
 function updateVisitNotice() {
@@ -2081,10 +2209,19 @@ async function loadSourceHealth() {
   }
 }
 
-function setLoading(isLoading, { quietStage = false } = {}) {
+function bandLoadingOverlayActive() {
+  return loadingReal && el.stageLoading.classList.contains('is-band-change');
+}
+
+function setLoading(isLoading, { quietStage = false, title = '', note = '' } = {}) {
   loadingReal = isLoading;
   const current = frames[frameIndex];
   el.stageLoading.hidden = isLoading ? quietStage : !(current?.real && !current.mosaic && !current.objectUrl && !current.loadError);
+  el.stageLoading.classList.toggle('is-band-change', isLoading && Boolean(title));
+  if (isLoading) {
+    if (el.stageLoadingTitle) el.stageLoadingTitle.textContent = title || 'Finding real visits…';
+    if (el.stageLoadingNote) el.stageLoadingNote.textContent = note || 'Querying the S3 archive and preparing detector cutouts';
+  }
   el.loadReal.disabled = isLoading;
   el.emptyReal.disabled = isLoading;
   el.loadReal.textContent = isLoading ? 'Finding real visits…' : 'Load real visits';
@@ -2128,6 +2265,8 @@ function loadFrames(newFrames, source, badge = 'LIVE IRSA • REAL FITS') {
   stopPlayback();
   releaseImages(new Set(newFrames.map((frame) => frame.objectUrl).filter(Boolean)));
   frames = newFrames; frameIndex = 0; comparisonOpen = false; realBadge = badge;
+  const shownBand = newFrames.find(frame => BAND_INFO[frame.detector])?.detector;
+  if (shownBand) appliedDetector = shownBand;
   const localOnly = newFrames.length > 0 && newFrames.every(frame => !frame.real);
   const mirrorOnly = newFrames.length > 0 && newFrames.every(frame => frame.mirror);
   const mosaicOnly = newFrames.length > 0 && newFrames.every(frame => frame.mosaic);
@@ -2462,21 +2601,38 @@ async function loadRealFrames(options = {}) {
   const record = options?.record !== false;
   const preserveCurrent = Boolean(options?.preserveCurrent) && frames.length > 0;
   let field;
-  try { field = readField(); } catch (error) { notify(error.message); return; }
+  try { field = readField(); } catch (error) {
+    detector = onScreenDetector();
+    el.detector.value = detector;
+    updateBandUI();
+    notify(error.message);
+    return;
+  }
   updateHipsContext(field);
 
   const request = ++loadRequest;
   activeLoadController?.abort();
   const controller = new AbortController();
   activeLoadController = controller;
-  setLoading(true, { quietStage: preserveCurrent });
+  const currentBand = onScreenDetector();
+  const bandSwitch = preserveCurrent && detector !== currentBand ? detector : '';
+  setLoading(true, {
+    // A band change always shows the stage overlay: the frame behind it is the
+    // previous detector and must not look like the new one.
+    quietStage: preserveCurrent && !bandSwitch,
+    title: bandSwitch ? `Loading ${bandSwitch} detector` : '',
+    note: bandSwitch ? `Waiting for real ${bandSwitch} visits. The ${currentBand} frame is still on screen and has not changed.` : ''
+  });
   if (!preserveCurrent) setVerificationBadge('pending');
   // Keep the current real visit set visible until a replacement is fully
   // received. A failed navigation must never erase data already on screen.
   el.empty.hidden = true;
   el.sourceLabel.classList.remove('error');
-  el.sourceLabel.textContent = preserveCurrent ? 'Refreshing visits with new filters…' : 'Checking verified local mirror…';
-  notify(preserveCurrent ? 'Refreshing the current visits with the new display filters.' : 'Checking the verified local mirror before contacting the archive.');
+  const refreshCopy = bandSwitch ? `Querying real ${bandSwitch} visits…` : 'Refreshing visits with new filters…';
+  el.sourceLabel.textContent = preserveCurrent ? refreshCopy : 'Checking verified local mirror…';
+  notify(bandSwitch
+    ? `Loading real ${bandSwitch} visits. The ${currentBand} frame stays on screen until they arrive.`
+    : preserveCurrent ? 'Refreshing the current visits with the new display filters.' : 'Checking the verified local mirror before contacting the archive.');
   let mirror = null;
   let mosaicShown = false;
   try {
@@ -2510,7 +2666,7 @@ async function loadRealFrames(options = {}) {
       el.sourceLabel.textContent = 'Querying the S3 archive for real visits…';
       notify('Finding real SPHEREx visits for this patch.');
     } else if (preserveCurrent) {
-      el.sourceLabel.textContent = 'Refreshing visits with new filters…';
+      el.sourceLabel.textContent = refreshCopy;
     } else {
       // Show the real local all-sky mosaic immediately, then replace it with
       // per-visit FITS frames if IRSA answers. The mosaic is context only, not
@@ -2527,7 +2683,7 @@ async function loadRealFrames(options = {}) {
     }
 
     const params = new URLSearchParams({
-      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '24', v: '12',
+      ra: String(field.ra), dec: String(field.dec), fov: String(field.fov), limit: '24', v: '13',
       detector, palette, stretch
     });
     const timeout = setTimeout(() => controller.abort(), 50_000);
@@ -2576,6 +2732,8 @@ async function loadRealFrames(options = {}) {
       detector: frame.detector,
       uri: frame.uri,
       obsid: frame.obsid,
+      id: frame.id || frame.obsid,
+      detectors: Array.isArray(frame.detectors) ? frame.detectors : [],
       ra: payload.field?.ra ?? field.ra,
       dec: payload.field?.dec ?? field.dec,
       analysis: null,
@@ -2676,6 +2834,14 @@ async function loadRealFrames(options = {}) {
     notify(`Archive request failed: ${archiveError}`);
   } finally {
     if (request === loadRequest) {
+      // A band stays selected only once its visits actually reached the viewer;
+      // a kept or failed refresh falls back to the detector that is on screen.
+      if (frames.length && detector !== onScreenDetector()) {
+        detector = onScreenDetector();
+        el.detector.value = detector;
+        syncQuickFilters();
+        updateBandUI();
+      }
       setLoading(false);
       if (activeLoadController === controller) activeLoadController = null;
     }
@@ -2768,7 +2934,7 @@ function render() {
   }
   el.empty.hidden = true;
   const useHd = hdMode && Boolean(f.hdObjectUrl) && !differenceMode;
-  const stageSrc = useHd ? f.hdObjectUrl : f.objectUrl || f.src || (f.real ? TRANSPARENT_PIXEL : '');
+  const stageSrc = useHd ? f.hdObjectUrl : frameDisplaySrc(f);
   const stageKey = `${frameIndex}|${stageSrc.length}|${useHd ? 'hd' : 'native'}|${differenceMode ? 'diff' : 'frame'}`;
   if (!differenceMode && stageKey !== lastStageKey) {
     el.image.classList.remove('frame-enter');
@@ -2779,7 +2945,7 @@ function render() {
   if (el.stageProgress) el.stageProgress.style.transform = `scaleX(${frames.length > 1 ? frameIndex / (frames.length - 1) : frames.length ? 1 : 0})`;
   if ((!differenceMode || !el.differenceCanvas.width) && el.image.src !== new URL(stageSrc, window.location.href).href) el.image.src = stageSrc;
   if (hdMode && f.real && !f.hdObjectUrl && !f.hdLoading) loadHDFrame(f);
-  if (!f.width) el.stageLoading.hidden = Boolean(f.loadError);
+  if (!f.width && !bandLoadingOverlayActive()) el.stageLoading.hidden = Boolean(f.loadError);
   el.stageResolution.textContent = useHd
     ? `WIDE ${f.hdWidth || 490} PX`
     : hdMode && f.hdLoading ? 'FETCHING WIDE…'
@@ -2787,11 +2953,14 @@ function render() {
   el.image.classList.toggle('pixelated', Boolean(el.sharpPixels?.checked) && zoom > 1.05);
   updateHDControls();
   el.image.onload = () => {
-    el.stageLoading.hidden = true;
+    if (!bandLoadingOverlayActive()) el.stageLoading.hidden = true;
     if (!f.width) { f.width = el.image.naturalWidth; f.height = el.image.naturalHeight; }
     if (frames[frameIndex] === f) { updateDetails(f); updateTransform(); drawMinimap(); }
   };
-  el.image.onerror = () => { el.stageLoading.hidden = true; notify('That archive FITS cutout could not be loaded as a PNG.'); };
+  el.image.onerror = () => {
+    if (!bandLoadingOverlayActive()) el.stageLoading.hidden = true;
+    notify('That archive FITS cutout could not be loaded as a PNG.');
+  };
   el.frameLabel.textContent = f.date ? `${f.date} · ${f.detector || 'SPHEREx'}` : f.label;
   el.frameCount.textContent = `${frameIndex + 1} / ${frames.length}`;
   el.timeline.value = String(frameIndex);
@@ -2828,7 +2997,7 @@ function togglePlay() { if (interval && !blinkMode) { stopPlayback(); return; } 
 
 function renderComparisonFrame(frame, imageEl, labelEl) {
   labelEl.textContent = frame.label;
-  imageEl.src = frame.src;
+  imageEl.src = frameDisplaySrc(frame);
 }
 function renderComparison() {
   if (!frames.length) return;
@@ -2884,9 +3053,22 @@ async function showDifference() {
     el.difference.textContent = 'Difference';
     return;
   }
+  if ((a.real && !a.objectUrl) || (b.real && !b.objectUrl)) {
+    notify('Wait for both visits to finish loading before subtracting them.');
+    return;
+  }
+  const rotation = orientationDifference(a, b);
+  if (rotation !== null && rotation >= ORIENTATION_TOLERANCE_DEG) {
+    el.difference.textContent = 'Difference';
+    notify(`Difference refused: the selected visits are rotated ${rotation.toFixed(1)}° apart (limit ${ORIENTATION_TOLERANCE_DEG}°). Raw pixels would not correspond; choose visits with a similar detector orientation.`);
+    return;
+  }
   const token = ++differenceToken;
   try {
-    const [imageA, imageB] = await Promise.all([loadImage(a.src), loadImage(b.src)]);
+    const [imageA, imageB] = await Promise.all([
+      loadImage(a.objectUrl || a.src),
+      loadImage(b.objectUrl || b.src)
+    ]);
     if (token !== differenceToken) return;
     const width = Math.max(imageA.naturalWidth, imageB.naturalWidth);
     const height = Math.max(imageA.naturalHeight, imageB.naturalHeight);
@@ -2959,6 +3141,26 @@ function updateTransform() {
   el.stage.classList.toggle('is-navigating', zoom > 1.01);
   updateMapScale();
   updateCompass();
+  positionSpectrumMarker();
+}
+
+function positionSpectrumMarker() {
+  const marker = el.spectrumPickMarker;
+  if (!marker) return;
+  const pick = labState.spectrumPick;
+  const frame = frames[frameIndex];
+  if (!pick || !frame || frame.mosaic || differenceMode || !Number.isFinite(pick.fractionX) || !Number.isFinite(pick.fractionY)) {
+    marker.hidden = true;
+    return;
+  }
+  const base = imageBaseRect();
+  const centerX = base.stageWidth / 2;
+  const centerY = base.stageHeight / 2;
+  const imageX = base.left + pick.fractionX * base.width;
+  const imageY = base.top + pick.fractionY * base.height;
+  marker.style.left = `${centerX + (imageX - centerX) * zoom + panX}px`;
+  marker.style.top = `${centerY + (imageY - centerY) * zoom + panY}px`;
+  marker.hidden = false;
 }
 
 function resetView() {
@@ -3011,8 +3213,10 @@ el.emptyReal.addEventListener('click', () => {
 });
 el.receiptDownload?.addEventListener('click', downloadVerificationReceipt);
 el.detector.addEventListener('change', () => setBand(el.detector.value, true));
-for (const chip of el.bandRail.querySelectorAll('[data-band]')) {
-  chip.addEventListener('click', () => setBand(chip.dataset.band, true));
+for (const rail of [el.bandRail, el.spectralRail]) {
+  for (const chip of rail?.querySelectorAll('[data-band]') || []) {
+    chip.addEventListener('click', () => setBand(chip.dataset.band, true));
+  }
 }
 for (const select of [el.paletteSelect, el.stretchSelect]) {
   select.addEventListener('change', applyDisplayFilters);
@@ -3210,6 +3414,11 @@ el.appScrim?.addEventListener('click', closeAppSheets);
 document.querySelector('.viewer-panel')?.appendChild(el.appScrim);
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
+  if (labState.spectrumPickMode) {
+    event.preventDefault();
+    cancelSpectrumPick();
+    return;
+  }
   if (Object.values(APP_SHEETS).some(sheet => document.body.classList.contains(sheet.className))) {
     event.preventDefault();
     closeAppSheets();
@@ -3265,6 +3474,10 @@ el.stage.addEventListener('wheel', e => {
 
 el.stage.addEventListener('pointerdown', e => {
   if (!frames.length || e.target.closest('.sky-minimap, button, a, input, select, textarea')) return;
+  if (labState.spectrumPickMode) {
+    e.preventDefault();
+    return;
+  }
   const local = stageLocalPoint(e);
   activePointers.set(e.pointerId, local);
   try { el.stage.setPointerCapture(e.pointerId); } catch { /* synthetic events have no capture target */ }
@@ -3336,9 +3549,23 @@ el.stage.addEventListener('pointerup', e => {
   }
 });
 
+el.stage.addEventListener('click', e => {
+  if (!labState.spectrumPickMode) return;
+  if (e.target.closest('.sky-minimap, button, a, input, select, textarea')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const point = skyAtStagePoint(e.clientX, e.clientY);
+  if (!point) {
+    notify('Click inside the displayed image to pick a spectrum position.');
+    return;
+  }
+  pickSpectrumAt(point);
+}, true);
+
 el.stage.addEventListener('pointercancel', e => { activePointers.delete(e.pointerId); stopStageGesture(); resetView(); });
 el.stage.addEventListener('pointerleave', () => { if (!activePointers.size) updateMapCenter(); });
 el.stage.addEventListener('dblclick', e => {
+  if (labState.spectrumPickMode) return;
   if (!frames.length || e.target.closest('.sky-minimap, button, a, input, select, textarea')) return;
   const point = skyAtStagePoint(e.clientX, e.clientY);
   if (!point) { notify('Double-click inside the image to move the field.'); return; }
@@ -3351,7 +3578,7 @@ el.stage.addEventListener('dblclick', e => {
 window.addEventListener('resize', () => { clampPan(); updateTransform(); drawMinimap(); });
 document.addEventListener('keydown', e => {
   if (document.body.classList.contains('tour-open')) return;
-  if (e.target.matches('input, textarea, select, button') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if ((e.target instanceof Element && e.target.matches('input, textarea, select, button')) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(zoom * 1.25); }
   else if (e.key === '-' || e.key === '_') { e.preventDefault(); setZoom(zoom / 1.25); }
   else if (e.key === '0') { e.preventDefault(); resetView(); }
@@ -3362,7 +3589,7 @@ updateNavButtons();
 const lab = {
   tabs: Array.from(document.querySelectorAll('[data-lab-tab]')),
   panels: {
-    wavelength: $('labWavelength'), constellation: $('labConstellation'), verify: $('labVerify'),
+    wavelength: $('labWavelength'), spectrum: $('labSpectrum'), constellation: $('labConstellation'), verify: $('labVerify'),
     discover: $('labDiscover'), mail: $('labMail'), learn: $('labLearn'), games: $('labGames')
   },
   shortcut: $('mailShortcut'), mailTo: $('mailTo'), mailNote: $('mailNote'),
@@ -3380,7 +3607,12 @@ const lab = {
   discoveryCanvas: $('discoveryCanvas'), discoveryEmpty: $('discoveryEmpty'), discoveryHint: $('discoveryHint'),
   scanFrameA: $('scanFrameA'), scanFrameB: $('scanFrameB'), swapScan: $('swapScan'),
   candidateList: $('candidateList'), candidateCount: $('candidateCount'),
-  lightCurve: $('lightCurve'), lightCurveBand: $('lightCurveBand'), lightCurveCaption: $('lightCurveCaption')
+  lightCurve: $('lightCurve'), lightCurveBand: $('lightCurveBand'), lightCurveCaption: $('lightCurveCaption'),
+  pickSpectrum: $('pickSpectrum'), extractSpectrum: $('extractSpectrum'), spectrumCanvas: $('spectrumCanvas'), spectrumEmpty: $('spectrumEmpty'),
+  spectrumSamples: $('spectrumSamples'), spectrumStatus: $('spectrumStatus'), spectrumCaption: $('spectrumCaption'),
+  spectrumObsid: $('spectrumObsid'), spectrumDetectors: $('spectrumDetectors'), spectrumAperture: $('spectrumAperture'),
+  spectrumAlgorithm: $('spectrumAlgorithm'), spectrumUnit: $('spectrumUnit'), spectrumFlags: $('spectrumFlags'),
+  spectrumProvenance: $('spectrumProvenance')
 };
 
 const labState = {
@@ -3403,7 +3635,15 @@ const labState = {
   scanning: false,
   verifyGaiaKey: '',
   verifyGaia: null,
-  lastChecks: []
+  lastChecks: [],
+  spectrum: null,
+  spectrumKey: '',
+  spectrumLoading: false,
+  spectrumError: '',
+  spectrumPick: null,
+  spectrumPickMode: false,
+  spectrumPickFieldKey: '',
+  spectrumToken: 0
 };
 
 function shuffle(values) {
@@ -3573,6 +3813,7 @@ function setLabTab(name) {
   for (const [key, panel] of Object.entries(lab.panels)) panel.hidden = key !== name;
   if (name === 'mail') updateLab();
   if (name === 'discover') updateDiscovery();
+  if (name === 'spectrum') updateSpectrumPanel();
 }
 
 function labFactPosition(data) {
@@ -3647,6 +3888,7 @@ function updateLab() {
 
   if (!labState.brighter) newBrighterRound();
   updateDiscovery();
+  if (!lab.panels.spectrum.hidden) updateSpectrumPanel();
 }
 
 // Discovery engine: real pixel residuals, real sky coordinates, Gaia context and light curve.
@@ -4026,6 +4268,390 @@ function drawLightCurve() {
   lab.lightCurveCaption.textContent = `${measured.length} real visits · median range ${formatNumber(low)}–${formatNumber(high)} ${unit}. These are FITS cutout medians, not calibrated photometry.`;
 }
 
+const SPECTRUM_TINTS = ['#cdbaff', '#74e3ff', '#ff8ad8', '#b9a2ff', '#ffffff', '#ffcf8a'];
+
+function spectrumFieldKey(frame) {
+  if (!frame) return '';
+  const analysis = frame.analysis || frame.displayAnalysis;
+  const ra = Number(frame.ra ?? analysis?.ra);
+  const dec = Number(frame.dec ?? analysis?.dec);
+  const fov = Number(frame.fov ?? el.fov.value);
+  if (!Number.isFinite(ra) || !Number.isFinite(dec) || !Number.isFinite(fov)) return '';
+  return [ra.toFixed(6), dec.toFixed(6), fov.toFixed(3)].join('|');
+}
+
+function spectrumFrameKey(frame, point = labState.spectrumPick) {
+  if (!frame?.real || frame.mosaic) return '';
+  const analysis = frame.analysis || frame.displayAnalysis;
+  const ra = Number(point?.ra ?? frame.ra ?? analysis?.ra);
+  const dec = Number(point?.dec ?? frame.dec ?? analysis?.dec);
+  if (!Number.isFinite(ra) || !Number.isFinite(dec)) return '';
+  return [frame.id || frame.obsid || frame.uri, ra.toFixed(6), dec.toFixed(6)].join('|');
+}
+
+function spectrumUrisFor(frame) {
+  const available = Array.isArray(frame?.detectors) ? frame.detectors : [];
+  const fallback = frame?.uri ? [{ detector: frame.detector, band: frame.band, uri: frame.uri }] : [];
+  const byDetector = new Map();
+  for (const item of [...available, ...fallback]) {
+    if (!item?.uri || !isIrsaUri(item.uri)) continue;
+    const detectorName = String(item.detector || 'D?').toUpperCase();
+    if (!byDetector.has(detectorName)) {
+      byDetector.set(detectorName, { detector: detectorName, band: item.band || '', uri: item.uri });
+    }
+  }
+  return [...byDetector.values()].sort((a, b) => a.detector.localeCompare(b.detector));
+}
+
+function updateSpectrumControls() {
+  const frame = frames[frameIndex];
+  const unavailable = !frame?.real || Boolean(frame.mosaic) || labState.spectrumLoading;
+  if (lab.extractSpectrum) {
+    lab.extractSpectrum.disabled = unavailable;
+    lab.extractSpectrum.textContent = labState.spectrumLoading ? 'Extracting…' : 'Extract at centre';
+  }
+  if (lab.pickSpectrum) {
+    lab.pickSpectrum.disabled = unavailable;
+    lab.pickSpectrum.textContent = labState.spectrumPickMode ? 'Cancel pick' : 'Pick point on image';
+  }
+}
+
+function clearSpectrumDisplay({ message = 'No current measurement.', status = message, error = false } = {}) {
+  const canvas = lab.spectrumCanvas;
+  if (canvas) {
+    const context = canvas.getContext('2d');
+    canvas.width = 840;
+    canvas.height = 320;
+    if (context) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#070f19';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+  labState.spectrum = null;
+  labState.spectrumError = error ? message : '';
+  lab.spectrumEmpty.hidden = false;
+  lab.spectrumEmpty.textContent = message;
+  lab.spectrumSamples.textContent = 'NO DATA';
+  lab.spectrumStatus.textContent = status;
+  lab.spectrumCaption.textContent = 'Pink points carry at least one real FLAGS bit. The curve is an aperture mean, not calibrated photometry.';
+  lab.spectrumObsid.textContent = '—';
+  lab.spectrumDetectors.textContent = '—';
+  lab.spectrumAperture.textContent = '—';
+  lab.spectrumAlgorithm.textContent = '—';
+  lab.spectrumUnit.textContent = '—';
+  lab.spectrumFlags.textContent = '—';
+  lab.spectrumProvenance.textContent = 'No measurement is current. Extract a real visit to create a new provenance record.';
+  updateSpectrumControls();
+}
+
+function clearSpectrumPick() {
+  labState.spectrumPick = null;
+  labState.spectrumPickMode = false;
+  labState.spectrumPickFieldKey = '';
+  document.body.classList.remove('spectrum-pick-mode');
+  if (el.spectrumPickMarker) el.spectrumPickMarker.hidden = true;
+  updateSpectrumControls();
+  updateMapScale();
+}
+
+function cancelSpectrumPick() {
+  const wasPicking = labState.spectrumPickMode;
+  clearSpectrumPick();
+  if (labState.spectrum) renderSpectrum();
+  else if (labState.spectrumError) lab.spectrumStatus.textContent = labState.spectrumError;
+  else lab.spectrumStatus.textContent = 'Load a real visit to extract its spectrum.';
+  if (wasPicking) notify('Spectrum point picking cancelled.');
+}
+
+function toggleSpectrumPick() {
+  if (labState.spectrumPickMode) { cancelSpectrumPick(); return; }
+  const frame = frames[frameIndex];
+  if (!frame?.real || frame.mosaic) { notify('Load a real visit before picking a spectrum point.'); return; }
+  labState.spectrumPickMode = true;
+  labState.spectrumPickFieldKey = spectrumFieldKey(frame);
+  document.body.classList.add('spectrum-pick-mode');
+  updateSpectrumControls();
+  lab.spectrumStatus.textContent = 'Pick mode active: click the image to choose a spectrum position.';
+  el.mapHelp.textContent = 'Click a point in the image to extract its spectrum';
+  notify('Pick mode: click any point in the displayed image. Escape cancels.');
+  el.stage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function pickSpectrumAt(point) {
+  const frame = frames[frameIndex];
+  if (!frame?.real || frame.mosaic) { cancelSpectrumPick(); notify('Load a real visit before picking a spectrum point.'); return; }
+  labState.spectrumPickMode = false;
+  document.body.classList.remove('spectrum-pick-mode');
+  labState.spectrumPick = {
+    ra: normalizeRa(point.ra),
+    dec: Math.max(-90, Math.min(90, point.dec)),
+    exact: Boolean(point.exact),
+    fractionX: point.fractionX,
+    fractionY: point.fractionY,
+    fieldKey: spectrumFieldKey(frame)
+  };
+  updateSpectrumControls();
+  positionSpectrumMarker();
+  updateMapScale();
+  const message = `Extracting at RA ${formatRaHms(labState.spectrumPick.ra)} · Dec ${formatDecDms(labState.spectrumPick.dec)}…`;
+  notify(`${message} The provenance will record this clicked position.`);
+  void extractSpectrum({ ra: labState.spectrumPick.ra, dec: labState.spectrumPick.dec, pick: labState.spectrumPick });
+  document.getElementById('lab')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function spectrumPercentile(values, fraction) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * fraction)))];
+}
+
+function renderSpectrum() {
+  const canvas = lab.spectrumCanvas;
+  if (!canvas) return;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const spectrum = labState.spectrum;
+  const segments = Array.isArray(spectrum?.segments) ? spectrum.segments : [];
+  const points = segments.flatMap(segment =>
+    (Array.isArray(segment.points) ? segment.points : []).filter(point => Number.isFinite(point.lambda) && Number.isFinite(point.flux))
+  );
+  const width = 840;
+  const height = 320;
+  canvas.width = width;
+  canvas.height = height;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = '#070f19';
+  context.fillRect(0, 0, width, height);
+
+  if (!points.length) {
+    lab.spectrumEmpty.hidden = false;
+    if (labState.spectrumError) {
+      lab.spectrumEmpty.textContent = labState.spectrumError;
+      lab.spectrumStatus.textContent = labState.spectrumError;
+    } else if (!labState.spectrumLoading && !labState.spectrum) {
+      lab.spectrumEmpty.textContent = 'Load a real visit, then extract its aperture spectrum.';
+    }
+    lab.spectrumSamples.textContent = 'NO DATA';
+    updateSpectrumControls();
+    return;
+  }
+
+  lab.spectrumEmpty.hidden = true;
+  const lambdas = points.map(point => point.lambda);
+  const fluxes = points.map(point => point.flux);
+  const lowLambda = Math.max(1e-6, Math.min(...lambdas));
+  const highLambda = Math.max(lowLambda * 1.000001, Math.max(...lambdas));
+  const lowFlux = spectrumPercentile(fluxes, .02);
+  const highFlux = spectrumPercentile(fluxes, .98);
+  const spanFlux = Math.max(highFlux - lowFlux, Math.abs(highFlux) * .002 || 1e-6);
+  const pad = { left: 62, right: 20, top: 28, bottom: 42 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const logLow = Math.log(lowLambda);
+  const logSpan = Math.log(highLambda) - logLow || 1;
+  const xFor = lambda => pad.left + ((Math.log(Math.max(lowLambda, lambda)) - logLow) / logSpan) * plotWidth;
+  const yLow = lowFlux - spanFlux * .08;
+  const ySpan = spanFlux * 1.16;
+  const yFor = flux => pad.top + (1 - (flux - yLow) / ySpan) * plotHeight;
+
+  context.strokeStyle = 'rgba(120,151,180,.17)';
+  context.fillStyle = '#71859a';
+  context.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  context.lineWidth = 1;
+  for (let tick = 0; tick <= 4; tick += 1) {
+    const y = pad.top + (plotHeight * tick) / 4;
+    context.beginPath();
+    context.moveTo(pad.left, y);
+    context.lineTo(width - pad.right, y);
+    context.stroke();
+    const value = yLow + ySpan * (1 - tick / 4);
+    context.fillText(formatNumber(value), 5, y + 4);
+  }
+
+  for (let tick = 0; tick <= 4; tick += 1) {
+    const lambda = lowLambda * Math.pow(highLambda / lowLambda, tick / 4);
+    const x = xFor(lambda);
+    context.beginPath();
+    context.moveTo(x, height - pad.bottom);
+    context.lineTo(x, height - pad.bottom + 4);
+    context.stroke();
+    context.fillText(lambda < 1 ? lambda.toFixed(2) : lambda.toFixed(1), x - 12, height - 16);
+  }
+
+  context.strokeStyle = 'rgba(255,255,255,.2)';
+  context.beginPath();
+  context.moveTo(pad.left, height - pad.bottom);
+  context.lineTo(width - pad.right, height - pad.bottom);
+  context.stroke();
+  context.fillStyle = 'rgba(255,255,255,.45)';
+  context.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+  context.fillText('mean aperture flux', pad.left, 17);
+  context.fillText('observed wavelength · µm', width - pad.right - 142, height - 16);
+
+  const firstProvenance = segments.find(segment => segment.provenance)?.provenance || null;
+  const fluxUnit = firstProvenance?.units?.flux || 'native image units';
+  context.fillText(fluxUnit, 5, 17);
+
+  segments.forEach((segment, index) => {
+    const color = SPECTRUM_TINTS[index % SPECTRUM_TINTS.length];
+    const ordered = (Array.isArray(segment.points) ? segment.points : [])
+      .filter(point => Number.isFinite(point.lambda) && Number.isFinite(point.flux))
+      .sort((a, b) => a.lambda - b.lambda);
+    if (!ordered.length) return;
+
+    context.strokeStyle = color;
+    context.lineWidth = 1.8;
+    context.beginPath();
+    ordered.forEach((point, pointIndex) => {
+      const x = xFor(point.lambda);
+      const y = yFor(point.flux);
+      if (pointIndex === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+
+    context.strokeStyle = `${color}66`;
+    context.lineWidth = 1;
+    const stride = Math.max(1, Math.ceil(ordered.length / 70));
+    ordered.forEach((point, pointIndex) => {
+      if (pointIndex % stride !== 0 || !Number.isFinite(point.variance) || point.variance <= 0) return;
+      const sigma = Math.sqrt(point.variance);
+      const x = xFor(point.lambda);
+      context.beginPath();
+      context.moveTo(x, yFor(point.flux - sigma));
+      context.lineTo(x, yFor(point.flux + sigma));
+      context.stroke();
+    });
+
+    context.fillStyle = '#ff8ad8';
+    for (const point of ordered) {
+      if (point.flag === 0) continue;
+      context.beginPath();
+      context.arc(xFor(point.lambda), yFor(point.flux), 1.8, 0, Math.PI * 2);
+      context.fill();
+    }
+  });
+
+  const flagged = segments.reduce((sum, segment) => sum + (Number.isFinite(segment.flagged) ? segment.flagged : 0), 0);
+  lab.spectrumSamples.textContent = `${points.length.toLocaleString()} SAMPLES · ${segments.length} SEGMENT${segments.length === 1 ? '' : 'S'}`;
+  lab.spectrumCaption.textContent = `${segments.map(segment => segment.detector || 'detector').join(' · ')} · ${flagged} flagged sample${flagged === 1 ? '' : 's'} · each segment is drawn separately; gaps are not interpolated.`;
+  if (!labState.spectrumError) {
+    const cacheLabel = spectrum?.cache === 'HIT' ? 'cached archive response' : 'live archive response';
+    lab.spectrumStatus.textContent = `${segments.length} detector segment${segments.length === 1 ? '' : 's'} · ${points.length.toLocaleString()} real samples · ${cacheLabel}.`;
+  }
+
+  if (firstProvenance) {
+    lab.spectrumObsid.textContent = firstProvenance.observationId || frames[frameIndex]?.obsid || 'not in header';
+    lab.spectrumDetectors.textContent = segments.map(segment => `${segment.detector || '—'} (${segment.points?.length || 0})`).join(' · ');
+    lab.spectrumAperture.textContent = `${firstProvenance.aperture?.width || 5}-pixel row · ${firstProvenance.aperture?.samples || points.length} rows`;
+    lab.spectrumAlgorithm.textContent = `${firstProvenance.method} · ${firstProvenance.algorithmVersion}`;
+    lab.spectrumUnit.textContent = firstProvenance.units?.flux || fluxUnit;
+    lab.spectrumFlags.textContent = `${flagged} / ${points.length}`;
+    const measurementIds = segments.map(segment => segment.provenance?.measurementId).filter(Boolean);
+    const skyLabel = labState.spectrumPick ? 'clicked WCS position' : firstProvenance.skySource === 'wcs' ? 'WCS aperture centre' : 'requested aperture centre';
+    lab.spectrumProvenance.textContent = `${segments.length} segment measurement${segments.length === 1 ? '' : 's'} · ${measurementIds.length} versioned ID${measurementIds.length === 1 ? '' : 's'} · first ${firstProvenance.measurementId} · ${firstProvenance.uri} · ${skyLabel} ${Number(firstProvenance.sky?.ra).toFixed(5)}°, ${Number(firstProvenance.sky?.dec).toFixed(5)}° · cutout pixel ${firstProvenance.pixel?.x ?? '—'}, ${firstProvenance.pixel?.y ?? '—'} · ${firstProvenance.quality?.flags || 'FITS FLAGS bitmask'}.`;
+  } else {
+    lab.spectrumObsid.textContent = frames[frameIndex]?.obsid || '—';
+    lab.spectrumDetectors.textContent = segments.map(segment => segment.detector || '—').join(' · ');
+    lab.spectrumAperture.textContent = '5-pixel row';
+    lab.spectrumAlgorithm.textContent = 'aperture extraction';
+    lab.spectrumUnit.textContent = fluxUnit;
+    lab.spectrumFlags.textContent = `${flagged} / ${points.length}`;
+    lab.spectrumProvenance.textContent = 'This response did not include the versioned provenance object; the values above are still from the real archive cutout.';
+  }
+  updateSpectrumControls();
+}
+
+async function extractSpectrum(options = {}) {
+  if (labState.spectrumLoading) {
+    labState.spectrumToken += 1;
+    labState.spectrumLoading = false;
+  }
+  const token = ++labState.spectrumToken;
+  const frame = frames[frameIndex];
+  if (!frame?.real || frame.mosaic) {
+    clearSpectrumDisplay({ message: 'Load a real visit before extracting a spectrum.', status: 'Load a real visit before extracting a spectrum.' });
+    return;
+  }
+  const uris = spectrumUrisFor(frame);
+  if (!uris.length) {
+    const message = 'This visit has no allowlisted IRSA product URI to extract.';
+    clearSpectrumDisplay({ message, status: message, error: true });
+    return;
+  }
+  const analysis = frame.analysis || frame.displayAnalysis;
+  const pick = options.pick ?? labState.spectrumPick;
+  const ra = Number(options.ra ?? pick?.ra ?? frame.ra ?? analysis?.ra);
+  const dec = Number(options.dec ?? pick?.dec ?? frame.dec ?? analysis?.dec);
+  if (!Number.isFinite(ra) || !Number.isFinite(dec)) {
+    const message = 'The visit sky centre is not available yet.';
+    clearSpectrumDisplay({ message, status: message, error: true });
+    return;
+  }
+
+  const key = spectrumFrameKey(frame, pick);
+  labState.spectrumLoading = true;
+  labState.spectrumError = '';
+  labState.spectrumKey = key;
+  const where = pick
+    ? `RA ${formatRaHms(ra)} · Dec ${formatDecDms(dec)}`
+    : 'the field centre';
+  const loading = `Extracting ${uris.length} real detector segment${uris.length === 1 ? '' : 's'} at ${where}…`;
+  clearSpectrumDisplay({ message: loading, status: loading });
+  updateSpectrumControls();
+  try {
+    const params = new URLSearchParams({ ra: String(ra), dec: String(dec), v: '2' });
+    for (const item of uris) params.append('uri', item.uri);
+    const response = await fetch(`/api/spherex/spectrum?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(90_000)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (token !== labState.spectrumToken) return;
+    if (!response.ok) throw new Error(payload.error || `Spectrum extraction returned ${response.status}.`);
+    if (!Array.isArray(payload.segments) || !payload.segments.length) throw new Error('No real spectral segments were returned.');
+    labState.spectrum = { ...payload, cache: response.headers.get('X-Cache') || '' };
+    labState.spectrumKey = key;
+    renderSpectrum();
+    notify(`Extracted ${payload.segments.length} real detector segment${payload.segments.length === 1 ? '' : 's'} at ${where}.`);
+  } catch (error) {
+    if (token !== labState.spectrumToken) return;
+    const failure = `Spectrum extraction failed: ${error.message}`;
+    clearSpectrumDisplay({ message: failure, status: failure, error: true });
+    notify(failure);
+  } finally {
+    if (token === labState.spectrumToken) {
+      labState.spectrumLoading = false;
+      updateSpectrumControls();
+    }
+  }
+}
+
+function updateSpectrumPanel() {
+  const frame = frames[frameIndex];
+  updateSpectrumControls();
+  if (!frame?.real || frame.mosaic) {
+    labState.spectrumToken += 1;
+    labState.spectrumKey = '';
+    clearSpectrumPick();
+    clearSpectrumDisplay({ message: 'Load a real visit, then extract its aperture spectrum.', status: 'Load a real visit to extract its spectrum.' });
+    return;
+  }
+  const fieldKey = spectrumFieldKey(frame);
+  if (labState.spectrumPickMode && labState.spectrumPickFieldKey !== fieldKey) clearSpectrumPick();
+  if (labState.spectrumPick && labState.spectrumPick.fieldKey !== fieldKey) clearSpectrumPick();
+  const key = spectrumFrameKey(frame, labState.spectrumPick);
+  if (labState.spectrumKey && labState.spectrumKey !== key) {
+    labState.spectrumToken += 1;
+    labState.spectrumKey = '';
+    labState.spectrumLoading = false;
+    clearSpectrumDisplay({ message: 'The visit changed; waiting for a new measurement.', status: 'The visit changed; waiting for a new measurement.' });
+  }
+  if (!labState.spectrum && !labState.spectrumLoading && !labState.spectrumError) void extractSpectrum();
+  else renderSpectrum();
+}
+
 function updateDiscovery() {
   syncScanSelectors();
   drawLightCurve();
@@ -4331,6 +4957,14 @@ function initLab() {
   lab.brighterNext.addEventListener('click', newBrighterRound);
   lab.waveNext.addEventListener('click', newWaveRound);
   lab.bandNext.addEventListener('click', newBandRound);
+  lab.pickSpectrum.addEventListener('click', toggleSpectrumPick);
+  lab.extractSpectrum.addEventListener('click', () => {
+    clearSpectrumPick();
+    labState.spectrum = null;
+    labState.spectrumKey = '';
+    labState.spectrumError = '';
+    void extractSpectrum();
+  });
   lab.runDiscovery.addEventListener('click', runDiscoveryScan);
   lab.swapScan.addEventListener('click', () => {
     const first = lab.scanFrameA.value;
@@ -4386,7 +5020,7 @@ applyMode(storedMode());
 for (const button of document.querySelectorAll('[data-open-lab]')) {
   button.addEventListener('click', (event) => {
     event.preventDefault();
-    openSection(button.dataset.openLab === 'wavelength' ? 'analyse' : button.dataset.openLab);
+    openSection(['wavelength', 'spectrum'].includes(button.dataset.openLab) ? 'analyse' : button.dataset.openLab);
   });
 }
 document.querySelector('[data-section="explore"]')?.addEventListener('click', (event) => {
@@ -4625,8 +5259,7 @@ document.addEventListener('keydown', event => {
 });
 
 const tourParam = bootParams.get('tour');
-if (tourParam === '1') {
-  setTimeout(() => startTour({ force: true }), 450);
-} else if (tourParam !== '0' && !tourSeen()) {
-  setTimeout(() => startTour(), 1600);
+if (tourParam === '1') setTimeout(() => startTour({ force: true }), 450);
+if (!location.hash && !appIsActive()) {
+  requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
 }

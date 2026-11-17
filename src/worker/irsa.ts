@@ -1,4 +1,5 @@
 import { imageStats, numberValue, parseFits, pixelScale, readImage, skyAt, textValue, waveAt, type FitsFile, type FitsHdu } from '../lib/fits'
+import { createMeasurementProvenance, type MeasurementProvenance } from '../lib/measurement'
 import { fetchS3Cutout } from './s3'
 import {
   ApiError,
@@ -92,6 +93,7 @@ export type SpectrumSegment = {
   minLambda: number
   maxLambda: number
   flagged: number
+  provenance: MeasurementProvenance
 }
 
 export type CatalogSource = {
@@ -988,6 +990,7 @@ export async function getSpectrum(uri: string, ra: number, dec: number, preferS3
     const mask = flags ? readImage(buffer, flags) : null
     const offset = cropOffset(image)
     const centerX = Math.floor(image.width / 2)
+    const centerY = Math.floor(image.height / 2)
     const lowX = Math.max(0, centerX - 2)
     const highX = Math.min(image.width - 1, centerX + 2)
     const stride = Math.max(1, Math.ceil(image.height / 180))
@@ -1029,15 +1032,36 @@ export async function getSpectrum(uri: string, ra: number, dec: number, preferS3
     const finitePoints = points.filter((point) => finite(point.flux))
     if (!finitePoints.length) throw new ApiError(502, 'No finite spectral samples were found.', 'BAD_UPSTREAM_RESPONSE')
     const flagged = finitePoints.filter((point) => point.flag !== 0).length
+    const rawDetector = textValue(image.header, 'DETECTOR')
+    const detector = /^\d+$/.test(rawDetector) ? `D${rawDetector}` : rawDetector
+    const rawBand = textValue(image.header, 'BAND', '')
+    const band = /^\d+$/.test(rawBand) ? `D${rawBand}` : rawBand
+    const fluxUnit = textValue(image.header, 'BUNIT', 'native image units')
     const segment: SpectrumSegment = {
-      detector: textValue(image.header, 'DETECTOR'),
-      band: textValue(image.header, 'BAND', ''),
+      detector,
+      band,
       uri: safeUri,
       source,
       points: finitePoints,
       minLambda: Math.min(...finitePoints.map((point) => point.lambda)),
       maxLambda: Math.max(...finitePoints.map((point) => point.lambda)),
       flagged,
+      provenance: createMeasurementProvenance({
+        uri: safeUri,
+        detector,
+        band,
+        observationId: textValue(image.header, 'OBSID'),
+        ra,
+        dec,
+        skySource: 'requested',
+        pixelX: centerX,
+        pixelY: centerY,
+        apertureSamples: finitePoints.length,
+        fluxUnit,
+        varianceUnit: `${fluxUnit} squared`,
+        flaggedSamples: flagged,
+        totalSamples: finitePoints.length,
+      }),
     }
     spectrumCache.set(key, segment)
     return segment

@@ -9,7 +9,7 @@
     "start": "node server.mjs",
     "preview": "vite preview",
     "stress": "node scripts/stress.mjs",
-    "test": "node --experimental-strip-types --test tests/spherex-math.test.mjs tests/spherex-mirror.test.mjs",
+    "test": "node --experimental-strip-types --test tests/spherex-math.test.mjs tests/spherex-mirror.test.mjs tests/measurement.test.mjs",
     "mirror:default": "node scripts/mirror-spherex.mjs",
     "mirror:verify": "node scripts/mirror-spherex.mjs --verify",
     "index:s3": "node scripts/build-s3-index.mjs",

@@ -1,3 +1,4 @@
+import type { MeasurementProvenance } from './measurement'
 import {
   flagBitCounts,
   imageStats,
@@ -106,6 +107,7 @@ export type RealSpectrumSegment = {
   minLambda: number
   maxLambda: number
   flagged: number
+  provenance?: MeasurementProvenance
 }
 
 export type RealSpectrum = {

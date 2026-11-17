@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#080b12">
+  <meta name="theme-color" content="#04070d">
   <meta name="description" content="Explore real SPHEREx infrared observations of the sky, visit by visit. Search a target, press play, and blink between frames to spot motion.">
-  <title>SPHEREx Explorer | The sky in motion</title>
-  <link rel="stylesheet" href="style.css?v=next-47">
-  <script type="module" src="script.js?v=next-83"></script>
+  <title>SPHEREx Explorer | The universe, in infrared</title>
+  <link rel="stylesheet" href="style.css?v=next-56">
+  <script type="module" src="script.js?v=next-101"></script>
 </head>
 <body>
   <header class="site-header">
@@ -33,7 +33,7 @@
       <div class="section-links">
         <a href="#explorer" class="section-link active" data-section="explore" aria-current="page">Explore</a>
         <button type="button" class="section-link" data-open-lab="discover">Discover</button>
-        <button type="button" class="section-link" data-open-lab="wavelength">Analyse</button>
+        <button type="button" class="section-link" data-open-lab="spectrum">Analyse</button>
         <button type="button" class="section-link" data-open-lab="learn">Learn</button>
       </div>
       <div class="section-mode">
@@ -47,19 +47,32 @@
   </nav>
 
   <main id="top">
-    <section class="hero">
-      <div class="hero-copy">
-        <p class="kicker">SPHEREX · IRSA DR1</p>
-        <h1>See the sky <span>move.</span></h1>
-        <p class="hero-lede">Real infrared visits from NASA’s SPHEREx mission. Start with Barnard’s Star, press play, then open Discover to see what changed between visits.</p>
-        <div class="hero-actions">
-          <button id="startHere" class="button primary" type="button">Start with Barnard’s Star <span aria-hidden="true">→</span></button>
-          <button class="button secondary" type="button" data-open-lab="discover">Discover what changed</button>
-        </div>
-        <p class="hero-note">Every frame is real archive data. No simulated sky, no invented stars.</p>
+    <section class="hero" aria-labelledby="heroTitle">
+      <div class="hero-visual" aria-hidden="true">
+        <img class="hero-sky" src="assets/spherex-allsky-2025.jpg" alt="">
+        <figure class="hero-frame">
+          <img src="mirror/fields/default-d2/frames/2025W17_4B_0351_1-D2-845a84e39ddb9307e4e5c28f.png" alt="">
+          <figcaption><span>REAL D2 OBSERVATION</span><b>2025-04-27</b></figcaption>
+        </figure>
       </div>
-      <div class="hero-targets" aria-label="Suggested moving targets">
-        <p class="kicker">JUMP TO A TARGET</p>
+      <div class="hero-copy">
+        <p class="hero-live"><span class="live-dot"></span> REAL NASA ARCHIVE DATA · SPHEREX DR1</p>
+        <p class="kicker">A WINDOW INTO THE INFRARED UNIVERSE</p>
+        <h1 id="heroTitle">The universe,<br><span>in infrared.</span></h1>
+        <p class="hero-lede">Explore real observations across the infrared sky. Change wavelength bands, follow the same patch through time, and investigate what changes between visits.</p>
+        <div class="hero-actions">
+          <button id="startHere" class="button primary" type="button">Enter the observatory <span aria-hidden="true">→</span></button>
+          <button class="button secondary" type="button" data-open-lab="discover">Investigate a change</button>
+        </div>
+        <div class="hero-signals" aria-label="Observatory capabilities">
+          <span>REAL NASA ARCHIVE DATA</span>
+          <span>SIX DETECTOR BANDS</span>
+          <span>INTERACTIVE OBSERVATIONS</span>
+          <span>SCIENTIFIC INVESTIGATION</span>
+        </div>
+      </div>
+      <div class="hero-targets" aria-label="Suggested targets">
+        <p class="kicker">START WITH SOMETHING EXTRAORDINARY</p>
         <div class="preset-list">
           <button type="button" class="preset" data-target="barnard"><span>Barnard’s Star</span><small>10.3″ / yr</small></button>
           <button type="button" class="preset" data-target="epsindi"><span>Epsilon Indi B</span><small>brown dwarfs</small></button>
@@ -180,6 +193,18 @@
           </div>
         </div>
 
+        <div id="spectralRail" class="spectral-rail" aria-label="SPHEREx infrared detector bands">
+          <div class="spectral-rail-head"><span>INFRARED</span><strong>0.73–5.02 μm</strong><small id="spectralRailStatus" aria-live="polite">Choose a detector</small></div>
+          <div class="spectral-bands">
+            <button type="button" class="spectral-band" data-band="D1"><b>D1</b><span>0.73–1.13</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+            <button type="button" class="spectral-band active" data-band="D2"><b>D2</b><span>1.09–1.67</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+            <button type="button" class="spectral-band" data-band="D3"><b>D3</b><span>1.62–2.44</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+            <button type="button" class="spectral-band" data-band="D4"><b>D4</b><span>2.40–3.86</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+            <button type="button" class="spectral-band" data-band="D5"><b>D5</b><span>3.80–4.44</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+            <button type="button" class="spectral-band" data-band="D6"><b>D6</b><span>4.40–5.02</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+          </div>
+        </div>
+
         <div class="map-nav">
           <form id="mapSearchForm" class="map-search" role="search">
             <span class="map-search-icon" aria-hidden="true">⌖</span>
@@ -213,12 +238,13 @@
             <p id="emptyMessage">Finding the first real SPHEREx visits for this patch. The first frame will appear here.</p>
             <button id="emptyReal" class="button primary" type="button">Load this field</button>
           </div>
-          <div id="stageLoading" class="stage-loading" hidden>
+          <div id="stageLoading" class="stage-loading" role="status" aria-live="polite" hidden>
             <span class="loader-orbit" aria-hidden="true"></span>
-            <strong>Finding real visits…</strong>
-            <small>Querying the S3 archive and preparing detector cutouts</small>
+            <strong id="stageLoadingTitle">Finding real visits…</strong>
+            <small id="stageLoadingNote">Querying the S3 archive and preparing detector cutouts</small>
           </div>
           <div id="crosshair" class="crosshair" aria-hidden="true"><span></span></div>
+          <div id="spectrumPickMarker" class="spectrum-pick-marker" aria-hidden="true" hidden><span></span></div>
           <div id="skyMinimapWrap" class="sky-minimap" aria-label="All-sky navigation map. Background: the real NASA/JPL-Caltech SPHEREx 2025 all-sky mosaic.">
             <div class="minimap-head"><span id="minimapTitle">3D SKY GLOBE</span><span id="minimapField">IAU J2000</span></div>
             <canvas id="skyMinimap" width="420" height="210" aria-label="3D sky globe using the real NASA/JPL-Caltech SPHEREx 2025 mosaic. Drag to rotate, scroll to zoom, click to jump."></canvas>
@@ -453,6 +479,7 @@
       </div>
       <div class="lab-tabs" role="tablist" aria-label="Observation workspace tools">
         <button class="lab-tab active" type="button" role="tab" aria-selected="true" aria-controls="labWavelength" data-lab-tab="wavelength">Wavelength & filters</button>
+        <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labSpectrum" data-lab-tab="spectrum">Spectrum</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labConstellation" data-lab-tab="constellation">Constellations</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labVerify" data-lab-tab="verify">Data verification</button>
         <button class="lab-tab" type="button" role="tab" aria-selected="false" aria-controls="labLearn" data-lab-tab="learn">Learning lab</button>
@@ -467,12 +494,12 @@
             <div class="desk-card-head"><h3>Six ways to see the same sky</h3><span id="wavelengthBandName" class="lab-score">D2</span></div>
             <p class="desk-copy">These are real SPHEREx detector bands, not colour filters. Each visit is a spectral image; changing the band changes the physical wavelengths recorded by the detector.</p>
             <div id="bandRail" class="band-rail" aria-label="SPHEREx wavelength bands">
-              <button type="button" class="band-chip" data-band="D1"><strong>D1</strong><span>0.73–1.13 μm</span></button>
-              <button type="button" class="band-chip active" data-band="D2"><strong>D2</strong><span>1.09–1.67 μm</span></button>
-              <button type="button" class="band-chip" data-band="D3"><strong>D3</strong><span>1.62–2.44 μm</span></button>
-              <button type="button" class="band-chip" data-band="D4"><strong>D4</strong><span>2.40–3.86 μm</span></button>
-              <button type="button" class="band-chip" data-band="D5"><strong>D5</strong><span>3.80–4.44 μm</span></button>
-              <button type="button" class="band-chip" data-band="D6"><strong>D6</strong><span>4.40–5.02 μm</span></button>
+              <button type="button" class="band-chip" data-band="D1"><strong>D1</strong><span>0.73–1.13 μm</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+              <button type="button" class="band-chip active" data-band="D2"><strong>D2</strong><span>1.09–1.67 μm</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+              <button type="button" class="band-chip" data-band="D3"><strong>D3</strong><span>1.62–2.44 μm</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+              <button type="button" class="band-chip" data-band="D4"><strong>D4</strong><span>2.40–3.86 μm</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+              <button type="button" class="band-chip" data-band="D5"><strong>D5</strong><span>3.80–4.44 μm</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
+              <button type="button" class="band-chip" data-band="D6"><strong>D6</strong><span>4.40–5.02 μm</span><i class="band-loading" aria-hidden="true">LOADING</i></button>
             </div>
             <dl class="lab-facts wavelength-facts">
               <div><dt>Measured range</dt><dd id="wavelengthRange">Load a real frame</dd></div>
@@ -490,6 +517,43 @@
             <button id="hdToggleLab" class="button secondary full" type="button" disabled>Load 0.90° wide window</button>
             <p class="field-hint">Loads a native-scale 0.90° cutout for a wider sky view. Near a detector edge the cutout may clip the window and shift its actual centre; the verification panel reports the measured WCS centre. Pixel detail is archive-limited by SPHEREx sampling, not invented by upscaling.</p>
             <label class="marker-toggle sharp-toggle" for="sharpPixels"><input id="sharpPixels" type="checkbox"> Sharpen native pixels when zoomed</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-content" id="labSpectrum" role="tabpanel" hidden>
+        <div class="spectrum-head">
+          <div>
+            <p class="kicker">REAL APERTURE SPECTRUM</p>
+            <h3>Inspect the light at this sky position.</h3>
+            <p class="desk-copy">The server averages a real five-pixel aperture across each detector strip and reads wavelength from WCS-WAVE. Each detector is drawn as its own segment; gaps are detector coverage, not interpolated data.</p>
+          </div>
+          <div class="discover-actions">
+            <button id="pickSpectrum" class="button primary" type="button" disabled>Pick point on image</button>
+            <button id="extractSpectrum" class="button secondary" type="button" disabled>Extract at centre</button>
+            <span id="spectrumStatus" class="desk-status" role="status">Load a real visit to extract its spectrum.</span>
+          </div>
+        </div>
+        <div class="spectrum-grid">
+          <div class="desk-card">
+            <div class="desk-card-head"><h3>Measured flux versus wavelength</h3><span id="spectrumSamples" class="lab-score">NO DATA</span></div>
+            <div class="spectrum-frame">
+              <canvas id="spectrumCanvas" width="840" height="320" aria-label="Real SPHEREx aperture spectrum. Flux versus observed wavelength, split by detector segment."></canvas>
+              <p id="spectrumEmpty" class="discovery-empty">Load a real visit, then extract its aperture spectrum.</p>
+            </div>
+            <p id="spectrumCaption" class="candidate-note">Pink points carry at least one real FLAGS bit. The curve is an aperture mean, not calibrated photometry.</p>
+          </div>
+          <div class="desk-card">
+            <div class="desk-card-head"><h3>Measurement provenance</h3><span class="kicker">VERSIONED CONTRACT</span></div>
+            <dl class="lab-facts">
+              <div><dt>Observation</dt><dd id="spectrumObsid">—</dd></div>
+              <div><dt>Detector segments</dt><dd id="spectrumDetectors">—</dd></div>
+              <div><dt>Aperture</dt><dd id="spectrumAperture">—</dd></div>
+              <div><dt>Algorithm</dt><dd id="spectrumAlgorithm">—</dd></div>
+              <div><dt>Flux unit</dt><dd id="spectrumUnit">—</dd></div>
+              <div><dt>Flagged samples</dt><dd id="spectrumFlags">—</dd></div>
+            </dl>
+            <p id="spectrumProvenance" class="candidate-note">The measurement ID, source URI, sky position, pixel coordinates and quality flags will appear after extraction.</p>
           </div>
         </div>
       </div>
